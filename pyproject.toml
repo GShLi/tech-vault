@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "techvault"
+version = "0.1.0"
+description = "Private team knowledge base with hybrid RAG retrieval"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+api = [
+  "fastapi>=0.115",
+  "pydantic>=2.7",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.30",
+]
+tasks = [
+  "celery[redis]>=5.4",
+  "redis>=5",
+]
+test = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["backend/tests"]
+addopts = "-ra"
+

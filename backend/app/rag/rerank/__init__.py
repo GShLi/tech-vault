@@ -1,0 +1,2 @@
+"""Candidate reranking adapters."""
+

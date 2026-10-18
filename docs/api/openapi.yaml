@@ -3058,7 +3058,7 @@ components:
             type: string
     Role:
       type: string
-      enum: [team_admin, member, viewer, platform_admin]
+      enum: [admin, leader, member, viewer]
     Visibility:
       type: string
       enum: [private, team_shared]

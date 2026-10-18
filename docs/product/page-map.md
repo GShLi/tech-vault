@@ -20,8 +20,8 @@
 
 | 角色 | 标识 | 权限摘要 |
 | --- | --- | --- |
-| 平台管理员 | `platform_admin` | 供应商、全局模型策略、系统健康 |
-| 团队管理员 | `team_admin` | 团队、成员、知识库、审计、评测、模型策略 |
+| `admin` | `admin` | 供应商、全局模型策略、系统健康 |
+| `leader` | `leader` | 团队、成员、知识库、审计、评测、模型策略 |
 | 普通成员 | `member` | 上传文档、添加来源、管理自己的私有文档、问答 |
 | 只读成员 | `viewer` | 查看有权限文档、问答、查看引用，不可修改资料 |
 
@@ -173,7 +173,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 路由 | `/teams/:teamId/traces`、`/teams/:teamId/traces/:traceId` |
-| 主要用户 | 团队管理员、研发 |
+| 主要用户 | `leader`、研发 |
 | 页面目标 | 查看 Query Rewrite、过滤条件、候选、RRF、Rerank、最终上下文和模型信息 |
 | 主要组件 | Trace 列表、阶段时间线、候选表格、引用映射、降级标记 |
 | 依赖 API | `GET /teams/{teamId}/traces`、`GET /teams/{teamId}/traces/{traceId}` |

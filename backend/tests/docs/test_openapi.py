@@ -58,10 +58,10 @@ def test_openapi_enums_match_design_separation():
     schemas = _spec()["components"]["schemas"]
 
     assert schemas["Role"]["enum"] == [
-        "team_admin",
+        "admin",
+        "leader",
         "member",
         "viewer",
-        "platform_admin",
     ]
     assert schemas["Visibility"]["enum"] == ["private", "team_shared"]
     assert "restricted" in schemas["DataClassification"]["enum"]

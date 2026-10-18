@@ -53,6 +53,7 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 
 | 角色 | 主要能力 |
 | --- | --- |
+| 平台管理员 | 管理部署级模型策略、全局供应商准入和系统健康 |
 | 团队管理员 | 管理成员、团队策略、知识库、模型策略、审计和评测配置 |
 | 普通成员 | 上传文档、添加 GitHub 仓库、管理自己的私有文档、问答和反馈 |
 | 只读成员 | 查看有权限的共享文档、问答和查看引用，不能上传或修改资料 |
@@ -121,10 +122,10 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
    - GitHub 仓库地址、分支和路径过滤。
    - Markdown、TXT、HTML 和允许的源码文件。
    - GitHub 增量同步、checkpoint、分支快照和内容指纹。
-3. 文档权限支持：
+3. 文档可见性支持：
    - `private`：仅上传者本人和明确授权用户可见。
    - `team_shared`：知识库成员范围内可见。
-   - `restricted`：即使共享也禁止进入外部模型或需要额外审批。
+   数据分类单独使用 `public`、`internal`、`private`、`restricted`；`restricted` 表示禁止进入外部模型，不改变文档的可见性。
 4. 文档元数据包括：
    - `source_type`、`source_uri`、`source_revision`。
    - `product`、`version_family`、`version_values`。
@@ -137,7 +138,7 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 ### 2.3 异步入库与任务管理
 
 1. 上传和同步任务进入 Celery 队列。
-2. 任务状态包括：`queued`、`fetching`、`parsing`、`chunking`、`embedding`、`indexing`、`validating`、`active`、`failed`、`deleting`。
+2. 任务状态包括：`queued`、`fetching`、`parsing`、`chunking`、`embedding`、`indexing`、`validating`、`active`、`failed`、`deleting`、`cancelled`。
 3. 前端展示每个阶段的进度、失败原因、可重试性和最近一次成功时间。
 4. 任务日志记录阶段耗时、输入输出数量、错误类型和重试次数。
 5. 可恢复失败从阶段边界或 checkpoint 继续，不可恢复失败停止并保留原始文件。
@@ -987,32 +988,33 @@ techvault-b-es-hybrid-<generation>
 
 ### 12.1 核心接口
 
+完整接口目录、请求字段、SSE 事件和错误码以 [`docs/api/api-contract.md`](./docs/api/api-contract.md) 与 [`docs/api/openapi.yaml`](./docs/api/openapi.yaml) 为准。下表只列出主链路入口。
+
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `POST` | `/api/v1/auth/login` | 登录 |
 | `GET/POST` | `/api/v1/teams` | 团队管理 |
-| `GET/POST` | `/api/v1/knowledge-bases` | 知识库管理 |
-| `POST` | `/api/v1/knowledge-bases/{id}/documents` | 上传文件 |
-| `POST` | `/api/v1/knowledge-bases/{id}/sources/github` | 添加 GitHub 来源 |
-| `GET` | `/api/v1/documents/{id}/versions` | 查看文档版本 |
-| `GET/PATCH` | `/api/v1/chunks/{id}` | 查看或编辑 chunk |
-| `POST` | `/api/v1/chunks/{id}/disable` | 禁用 chunk |
-| `POST` | `/api/v1/chunks/{id}/regenerate` | 重新生成 chunk |
-| `POST` | `/api/v1/knowledge-bases/{id}/ask` | 问答 |
-| `POST` | `/api/v1/messages/{id}/feedback` | 用户反馈 |
-| `GET` | `/api/v1/traces/{trace_id}` | 检索调试 Trace |
-| `GET/PATCH` | `/api/v1/model-policies` | 模型出境策略 |
-| `GET/POST` | `/api/v1/evaluations` | 黄金集和评测任务 |
-| `POST` | `/api/v1/index-generations/{id}/activate` | 激活索引 generation |
+| `GET/POST` | `/api/v1/teams/{team_id}/knowledge-bases` | 知识库管理 |
+| `POST` | `/api/v1/teams/{team_id}/knowledge-bases/{kb_id}/documents/upload` | 上传文件 |
+| `POST` | `/api/v1/teams/{team_id}/knowledge-bases/{kb_id}/sources/github` | 添加 GitHub 来源 |
+| `GET` | `/api/v1/teams/{team_id}/documents/{document_id}/versions` | 查看文档版本 |
+| `GET/PATCH` | `/api/v1/teams/{team_id}/chunks/{chunk_id}` | 查看或编辑 chunk |
+| `POST` | `/api/v1/teams/{team_id}/chunks/{chunk_id}/disable` | 禁用 chunk |
+| `POST` | `/api/v1/teams/{team_id}/chunks/{chunk_id}/regenerate` | 重新生成 chunk |
+| `POST` | `/api/v1/teams/{team_id}/conversations/{conversation_id}/ask` | 问答 |
+| `POST` | `/api/v1/teams/{team_id}/messages/{message_id}/feedback` | 用户反馈 |
+| `GET` | `/api/v1/teams/{team_id}/traces/{trace_id}` | 检索调试 Trace |
+| `GET/PATCH` | `/api/v1/teams/{team_id}/model-policy` | 模型出境策略 |
+| `GET/POST` | `/api/v1/teams/{team_id}/evaluation-datasets` | 黄金集管理 |
+| `POST` | `/api/v1/teams/{team_id}/index-generations/{generation_id}/activate` | 激活索引 generation |
 
 ### 12.2 问答请求示例
 
 ```json
 {
-  "knowledge_base_id": "kb_001",
-  "conversation_id": "conv_001",
   "question": "Spring Boot 3.2 如何配置虚拟线程？",
   "filters": {
+    "knowledge_base_ids": ["kb_001"],
     "product": "spring-boot",
     "version_values": ["3.2"]
   },
@@ -1028,6 +1030,7 @@ techvault-b-es-hybrid-<generation>
 - `citation`：引用编号、文档和定位信息。
 - `delta`：增量文本。
 - `done`：最终 token、成本和引用列表。
+- `refused`：证据不足，返回拒答原因。
 - `error`：策略拒绝、证据不足或系统错误。
 
 ### 12.4 错误语义

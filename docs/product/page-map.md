@@ -139,6 +139,15 @@
 | 主要组件 | 原文预览、版本切换、质量标记、chunk 入口 |
 | 依赖 API | `GET /teams/{teamId}/documents/{documentId}/versions/{versionId}`、`GET /teams/{teamId}/documents/{documentId}/chunks` |
 
+### 4.7 知识库策略
+
+| 项目 | 内容 |
+| --- | --- |
+| 路由 | `/teams/:teamId/knowledge-bases/:kbId/settings` |
+| 页面目标 | 在团队策略上限内收紧知识库模型策略和默认数据分类 |
+| 主要组件 | 数据分类默认值、模型策略、供应商范围、策略继承说明 |
+| 依赖 API | `GET/PATCH /teams/{teamId}/knowledge-bases/{kbId}/policy` |
+
 ## 5. 任务与内容治理
 
 ### 5.1 任务中心
@@ -232,7 +241,7 @@
 
 | 优先级 | 页面 |
 | --- | --- |
-| P0 | 登录/注册、问答工作台、会话历史、知识库列表/详情、文件上传、GitHub 来源、文档版本、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、审计、索引管理 |
+| P0 | 登录/注册、问答工作台、会话历史、知识库列表/详情/策略、文件上传、GitHub 来源、文档版本、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
 | P1 | 知识缺口、Trace 回放、评测 A/B 对比、供应商测试、找回密码 |
 | P2 | Confluence/Notion/Slack/Drive 等连接器、源系统 ACL、知识图谱、Agentic Retrieval、多租户管理 |
 

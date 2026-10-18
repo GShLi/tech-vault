@@ -2876,9 +2876,22 @@ components:
         filters:
           type: object
           additionalProperties: true
-        candidates:
-          type: object
-          additionalProperties: true
+        bm25_candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalCandidate'
+        dense_candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalCandidate'
+        rrf_candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalCandidate'
+        rerank_candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalCandidate'
         final_context:
           type: array
           items:
@@ -2898,6 +2911,19 @@ components:
         created_at:
           type: string
           format: date-time
+    RetrievalCandidate:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        rank:
+          type: integer
+        score:
+          type: number
+          format: float
+        source:
+          type: string
+          enum: [bm25, dense, rrf, rerank]
     EvaluationDataset:
       type: object
       properties:

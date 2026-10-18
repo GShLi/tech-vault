@@ -28,6 +28,12 @@ Authorization: Bearer <access_token>
 
 登录接口返回短期 Access Token，并通过 `HttpOnly + Secure + SameSite=Lax` Cookie 保存 Refresh Token。前端不得把 Refresh Token 写入 `localStorage`。
 
+权限规则：
+
+- 默认拒绝，缺少团队或知识库范围时不执行无过滤检索。
+- `team_admin` 和 `platform_admin` 默认都不能查看成员私有文档正文，只有所有者或显式授权用户可以访问。
+- 团队管理员只能收紧部署级策略；普通成员只能选择比团队和知识库策略更严格的模型范围。
+
 ### 1.3 通用请求头
 
 | Header | 必填 | 用途 |

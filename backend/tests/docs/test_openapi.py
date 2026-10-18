@@ -53,3 +53,32 @@ def test_openapi_operations_have_summaries():
             if method in {"get", "post", "patch", "delete"}:
                 assert operation.get("summary"), "{0} {1}".format(method, path)
 
+
+def test_openapi_enums_match_design_separation():
+    schemas = _spec()["components"]["schemas"]
+
+    assert schemas["Role"]["enum"] == [
+        "team_admin",
+        "member",
+        "viewer",
+        "platform_admin",
+    ]
+    assert schemas["Visibility"]["enum"] == ["private", "team_shared"]
+    assert "restricted" in schemas["DataClassification"]["enum"]
+    assert "cancelled" in schemas["IngestionStatus"]["enum"]
+
+
+def test_trace_contract_exposes_all_retrieval_stages():
+    trace = _spec()["components"]["schemas"]["RetrievalTrace"]["properties"]
+
+    assert {
+        "bm25_candidates",
+        "dense_candidates",
+        "rrf_candidates",
+        "rerank_candidates",
+        "final_context",
+        "model",
+        "stage_latency_ms",
+        "degraded",
+    }.issubset(trace)
+

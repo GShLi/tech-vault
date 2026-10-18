@@ -1,0 +1,3066 @@
+openapi: 3.0.3
+info:
+  title: TechVault API
+  version: 0.1.0
+  description: |
+    TechVault P0 API contract. The Markdown contract in
+    `docs/api/api-contract.md` is the integration guide; this file is the
+    machine-readable baseline for generated clients and mocks.
+servers:
+  - url: /api/v1
+    description: Versioned API
+tags:
+  - name: auth
+  - name: teams
+  - name: knowledge-bases
+  - name: documents
+  - name: ingestion
+  - name: chunks
+  - name: conversations
+  - name: traces
+  - name: evaluations
+  - name: model-policies
+  - name: index-generations
+security:
+  - bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: Register a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Log in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Access token and current user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/LoginResult'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh an access token
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token:
+                        type: string
+                      expires_in:
+                        type: integer
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Log out
+      responses:
+        '204':
+          description: Logged out
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current user and memberships
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams:
+    get:
+      tags: [teams]
+      summary: List current user's teams
+      responses:
+        '200':
+          description: Team list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Team'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [teams]
+      summary: Create a team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '201':
+          $ref: '#/components/responses/TeamResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [teams]
+      summary: Get team
+      responses:
+        '200':
+          $ref: '#/components/responses/TeamResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [teams]
+      summary: Update team
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/TeamResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/members:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [teams]
+      summary: List team members
+      responses:
+        '200':
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamMember'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [knowledge-bases]
+      summary: List knowledge bases
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          $ref: '#/components/responses/KnowledgeBaseListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [knowledge-bases]
+      summary: Create a knowledge base
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                model_policy_mode:
+                  $ref: '#/components/schemas/ModelPolicyMode'
+      responses:
+        '201':
+          $ref: '#/components/responses/KnowledgeBaseResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    get:
+      tags: [knowledge-bases]
+      summary: Get a knowledge base
+      responses:
+        '200':
+          $ref: '#/components/responses/KnowledgeBaseResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [knowledge-bases]
+      summary: Update a knowledge base
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/KnowledgeBaseResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}/documents:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    get:
+      tags: [documents]
+      summary: List documents in a knowledge base
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/DocumentStatus'
+      responses:
+        '200':
+          $ref: '#/components/responses/DocumentListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}/documents/upload:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    post:
+      tags: [documents]
+      summary: Upload a document
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, metadata]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                metadata:
+                  type: string
+                  description: JSON object encoded as a string
+      responses:
+        '202':
+          description: Document and ingestion run accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      document:
+                        $ref: '#/components/schemas/Document'
+                      ingestion_run:
+                        $ref: '#/components/schemas/IngestionRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: Get a document
+      responses:
+        '200':
+          $ref: '#/components/responses/DocumentResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [documents]
+      summary: Update document metadata or access
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product:
+                  type: string
+                version_values:
+                  type: array
+                  items:
+                    type: string
+                visibility:
+                  $ref: '#/components/schemas/Visibility'
+                data_classification:
+                  $ref: '#/components/schemas/DataClassification'
+      responses:
+        '200':
+          $ref: '#/components/responses/DocumentResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [documents]
+      summary: Soft-delete a document
+      responses:
+        '202':
+          description: Deletion accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: List document versions
+      responses:
+        '200':
+          description: Version list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentVersion'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}/sources/github:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    post:
+      tags: [documents]
+      summary: Add a GitHub source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo_url, branch]
+              properties:
+                repo_url:
+                  type: string
+                branch:
+                  type: string
+                path_allowlist:
+                  type: array
+                  items:
+                    type: string
+                file_extensions:
+                  type: array
+                  items:
+                    type: string
+                credential_id:
+                  type: string
+                  nullable: true
+      responses:
+        '202':
+          description: Source connection and ingestion run accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      source_id:
+                        type: string
+                      ingestion_run:
+                        $ref: '#/components/schemas/IngestionRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/ingestion-runs:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [ingestion]
+      summary: List ingestion runs
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Ingestion run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IngestionRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/ingestion-runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [ingestion]
+      summary: Get an ingestion run
+      responses:
+        '200':
+          $ref: '#/components/responses/IngestionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/ingestion-runs/{run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [ingestion]
+      summary: Stream ingestion progress
+      responses:
+        '200':
+          description: Server-sent events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [chunks]
+      summary: List chunks
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: document_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ChunkStatus'
+      responses:
+        '200':
+          description: Chunk list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Chunk'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks/{chunk_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: chunk_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [chunks]
+      summary: Get a chunk
+      responses:
+        '200':
+          $ref: '#/components/responses/ChunkResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [chunks]
+      summary: Edit a chunk
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                status:
+                  $ref: '#/components/schemas/ChunkStatus'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChunkResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks/{chunk_id}/disable:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: chunk_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [chunks]
+      summary: Disable a chunk
+      responses:
+        '200':
+          $ref: '#/components/responses/ChunkResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks/{chunk_id}/enable:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: chunk_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [chunks]
+      summary: Enable a chunk
+      responses:
+        '200':
+          $ref: '#/components/responses/ChunkResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/conversations:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [conversations]
+      summary: List conversations
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Conversation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Conversation'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [conversations]
+      summary: Create a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                knowledge_base_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          $ref: '#/components/responses/ConversationResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/ConversationId'
+    get:
+      tags: [conversations]
+      summary: List messages
+      responses:
+        '200':
+          description: Message list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/conversations/{conversation_id}/ask:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/ConversationId'
+    post:
+      tags: [conversations]
+      summary: Ask a grounded question and stream the answer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+      responses:
+        '200':
+          description: Server-sent events. Events are defined in api-contract.md.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/messages/{message_id}/feedback:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [conversations]
+      summary: Submit feedback for a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  $ref: '#/components/schemas/FeedbackType'
+                comment:
+                  type: string
+      responses:
+        '201':
+          description: Feedback accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/traces:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [traces]
+      summary: List retrieval traces
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trace list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RetrievalTrace'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/traces/{trace_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: trace_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [traces]
+      summary: Get a retrieval trace
+      responses:
+        '200':
+          $ref: '#/components/responses/RetrievalTraceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-datasets:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [evaluations]
+      summary: List golden sets
+      responses:
+        '200':
+          description: Dataset list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EvaluationDataset'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [evaluations]
+      summary: Create a golden set
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Dataset created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EvaluationDataset'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-runs:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [evaluations]
+      summary: List evaluation runs
+      responses:
+        '200':
+          description: Evaluation run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EvaluationRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [evaluations]
+      summary: Start an evaluation run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset_id, engine_mode]
+              properties:
+                dataset_id:
+                  type: string
+                engine_mode:
+                  $ref: '#/components/schemas/EngineMode'
+                judge_mode:
+                  type: string
+                  enum: [rules, rules_and_manual, llm_as_judge]
+                baseline_run_id:
+                  type: string
+                  nullable: true
+      responses:
+        '202':
+          description: Evaluation run accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EvaluationRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/model-policy:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [model-policies]
+      summary: Get team model policy
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [model-policies]
+      summary: Tighten team model policy
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPolicy'
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/audit-logs:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [model-policies]
+      summary: List audit logs
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Audit log list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLog'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [index-generations]
+      summary: List index generations
+      responses:
+        '200':
+          description: Index generation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IndexGeneration'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations/{generation_id}/activate:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [index-generations]
+      summary: Activate an index generation
+      responses:
+        '202':
+          description: Activation accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /users/me:
+    patch:
+      tags: [auth]
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/password/change:
+    post:
+      tags: [auth]
+      summary: Change password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        '204':
+          description: Password changed
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /auth/password/forgot:
+    post:
+      tags: [auth]
+      security: []
+      summary: Request password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '202':
+          description: Reset request accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    post:
+      tags: [teams]
+      summary: Invite a team member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  $ref: '#/components/schemas/Role'
+      responses:
+        '201':
+          $ref: '#/components/responses/InvitationResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /invitations/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [teams]
+      summary: Read an invitation
+      responses:
+        '200':
+          $ref: '#/components/responses/InvitationResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /invitations/{token}/accept:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [teams]
+      summary: Accept an invitation
+      responses:
+        '200':
+          description: Membership accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/members/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [teams]
+      summary: Change a member role or status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  $ref: '#/components/schemas/Role'
+                status:
+                  type: string
+                  enum: [active, disabled]
+      responses:
+        '200':
+          description: Member updated
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [teams]
+      summary: Remove a team member
+      responses:
+        '204':
+          description: Member removed
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/members/{user_id}/transfer-private-documents:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [teams]
+      summary: Transfer a departing member's private documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id]
+              properties:
+                target_user_id:
+                  type: string
+      responses:
+        '202':
+          description: Transfer accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    delete:
+      tags: [knowledge-bases]
+      summary: Archive or delete a knowledge base
+      responses:
+        '202':
+          description: Archive accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}/policy:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    get:
+      tags: [model-policies]
+      summary: Get knowledge-base model policy
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [model-policies]
+      summary: Tighten knowledge-base model policy
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPolicy'
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/retrieval-facets:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [knowledge-bases]
+      summary: List product, version and source filter facets
+      responses:
+        '200':
+          description: Retrieval facets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RetrievalFacets'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/restore:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    post:
+      tags: [documents]
+      summary: Restore a soft-deleted document
+      responses:
+        '202':
+          description: Restore accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/versions/{version_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: version_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [documents]
+      summary: Get a document version
+      responses:
+        '200':
+          description: Document version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DocumentVersion'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/download-url:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: Create a short-lived download URL
+      responses:
+        '200':
+          description: Signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                        format: uri
+                      expires_at:
+                        type: string
+                        format: date-time
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/rebuild:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    post:
+      tags: [documents]
+      summary: Rebuild a document index
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/IngestionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/grants:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: List explicit document grants
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [documents]
+      summary: Grant a user access to a private document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/grants/{grant_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: grant_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [documents]
+      summary: Revoke an explicit document grant
+      responses:
+        '204':
+          description: Grant revoked
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-bases/{kb_id}/sources:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/KbId'
+    get:
+      tags: [documents]
+      summary: List sources in a knowledge base
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/sources/{source_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [documents]
+      summary: Get a source connection
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [documents]
+      summary: Update a source connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch:
+                  type: string
+                path_allowlist:
+                  type: array
+                  items:
+                    type: string
+                file_extensions:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [documents]
+      summary: Delete a source connection
+      responses:
+        '204':
+          description: Source deleted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/sources/{source_id}/sync:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [documents]
+      summary: Trigger an incremental source sync
+      responses:
+        '202':
+          $ref: '#/components/responses/IngestionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/sources/{source_id}/pause:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [documents]
+      summary: Pause a source connection
+      responses:
+        '204':
+          description: Source paused
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/sources/{source_id}/resume:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [documents]
+      summary: Resume a source connection
+      responses:
+        '204':
+          description: Source resumed
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/credentials:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [documents]
+      summary: List write-only source credentials
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [documents]
+      summary: Create a source credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, secret]
+              properties:
+                provider:
+                  type: string
+                  enum: [github]
+                name:
+                  type: string
+                secret:
+                  type: string
+                  writeOnly: true
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/credentials/{credential_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [documents]
+      summary: Delete a source credential
+      responses:
+        '204':
+          description: Credential deleted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/ingestion-runs/{run_id}/retry:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [ingestion]
+      summary: Retry an ingestion run
+      responses:
+        '202':
+          $ref: '#/components/responses/IngestionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/ingestion-runs/{run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [ingestion]
+      summary: Cancel an ingestion run
+      responses:
+        '202':
+          $ref: '#/components/responses/IngestionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [ingestion]
+      summary: List document ingestion tasks
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks/{chunk_id}/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: chunk_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [chunks]
+      summary: Regenerate a chunk
+      responses:
+        '202':
+          $ref: '#/components/responses/ChunkResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/chunks/{chunk_id}/history:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: chunk_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [chunks]
+      summary: List chunk edit and status history
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/documents/{document_id}/chunks:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [chunks]
+      summary: List chunks for a document
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/ConversationId'
+    get:
+      tags: [conversations]
+      summary: Get a conversation
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [conversations]
+      summary: Rename a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [conversations]
+      summary: Delete a conversation
+      responses:
+        '204':
+          description: Conversation deleted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/conversations/{conversation_id}/messages/{message_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/ConversationId'
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [conversations]
+      summary: Cancel an in-flight answer
+      responses:
+        '202':
+          description: Cancellation accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/messages/{message_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/MessageId'
+    get:
+      tags: [conversations]
+      summary: Get a message
+      responses:
+        '200':
+          description: Message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Message'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/messages/{message_id}/citations:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - $ref: '#/components/parameters/MessageId'
+    get:
+      tags: [conversations]
+      summary: List message citations
+      responses:
+        '200':
+          description: Citation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Citation'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-datasets/{dataset_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: dataset_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [evaluations]
+      summary: Get a golden set
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [evaluations]
+      summary: Update a golden set
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [evaluations]
+      summary: Archive a golden set
+      responses:
+        '204':
+          description: Dataset archived
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-datasets/{dataset_id}/cases:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: dataset_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [evaluations]
+      summary: List golden-set cases
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [evaluations]
+      summary: Add a golden-set case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                query_type:
+                  type: string
+                relevant_chunk_ids:
+                  type: array
+                  items:
+                    type: string
+                filters:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-datasets/{dataset_id}/cases/{case_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: dataset_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: case_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [evaluations]
+      summary: Update a golden-set case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [evaluations]
+      summary: Delete a golden-set case
+      responses:
+        '204':
+          description: Case deleted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-datasets/{dataset_id}/import:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: dataset_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [evaluations]
+      summary: Import cases from JSONL
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Import accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [evaluations]
+      summary: Get an evaluation run
+      responses:
+        '200':
+          description: Evaluation run
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EvaluationRun'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-runs/{run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [evaluations]
+      summary: Stream evaluation progress
+      responses:
+        '200':
+          description: Server-sent events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-runs/{run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [evaluations]
+      summary: Cancel an evaluation run
+      responses:
+        '202':
+          description: Cancellation accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/evaluation-runs/{run_id}/report:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [evaluations]
+      summary: Get an evaluation report
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-gaps:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [evaluations]
+      summary: List knowledge gaps
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-gaps/{gap_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: gap_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [evaluations]
+      summary: Update a knowledge gap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [open, investigating, resolved, dismissed]
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/knowledge-gaps/{gap_id}/promote:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: gap_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [evaluations]
+      summary: Promote a knowledge gap to a golden-set case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset_id]
+              properties:
+                dataset_id:
+                  type: string
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/model-providers:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [model-policies]
+      summary: List available model providers
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [model-policies]
+      summary: Create a team model provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_type, endpoint, secret]
+              properties:
+                provider_type:
+                  type: string
+                endpoint:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  writeOnly: true
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/model-providers/{provider_id}/test:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [model-policies]
+      summary: Test a model provider
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/llm-invocations:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [model-policies]
+      summary: List model invocation audit records
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/audit-logs/{audit_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: audit_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [model-policies]
+      summary: Get an audit record
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /admin/deployment-model-policy:
+    get:
+      tags: [model-policies]
+      summary: Get deployment model policy
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [model-policies]
+      summary: Update deployment model policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPolicy'
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelPolicyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /admin/model-providers:
+    get:
+      tags: [model-policies]
+      summary: List all model providers
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [model-policies]
+      summary: Create a global model provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_type, endpoint, secret]
+              properties:
+                provider_type:
+                  type: string
+                endpoint:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  writeOnly: true
+      responses:
+        '201':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /admin/model-providers/{provider_id}:
+    parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [model-policies]
+      summary: Update a global model provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /admin/models:
+    get:
+      tags: [model-policies]
+      summary: List registered models
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /admin/models/{model_id}:
+    parameters:
+      - name: model_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [model-policies]
+      summary: Enable or disable a model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations/{generation_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [index-generations]
+      summary: Get an index generation
+      responses:
+        '200':
+          description: Index generation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IndexGeneration'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations/{generation_id}/validation:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [index-generations]
+      summary: Get index generation validation
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericObjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations/{generation_id}/validate:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [index-generations]
+      summary: Validate an index generation
+      responses:
+        '202':
+          description: Validation accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /teams/{team_id}/index-generations/{generation_id}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [index-generations]
+      summary: Roll back to a previous index generation
+      responses:
+        '202':
+          description: Rollback accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /health:
+    get:
+      security: []
+      summary: Process health
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  version:
+                    type: string
+  /ready:
+    get:
+      security: []
+      summary: Dependency readiness
+      responses:
+        '200':
+          description: Ready
+        '503':
+          description: Dependency unavailable
+  /version:
+    get:
+      security: []
+      summary: Build and version information
+      responses:
+        '200':
+          description: Version information
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    TeamId:
+      name: team_id
+      in: path
+      required: true
+      schema:
+        type: string
+    KbId:
+      name: kb_id
+      in: path
+      required: true
+      schema:
+        type: string
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ConversationId:
+      name: conversation_id
+      in: path
+      required: true
+      schema:
+        type: string
+    MessageId:
+      name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+  responses:
+    ErrorResponse:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    GenericObjectResponse:
+      description: Generic object response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: object
+                additionalProperties: true
+              meta:
+                $ref: '#/components/schemas/Meta'
+    GenericListResponse:
+      description: Generic list response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              meta:
+                $ref: '#/components/schemas/PageMeta'
+    InvitationResponse:
+      description: Team invitation response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/Invitation'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    UserResponse:
+      description: User response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/User'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    TeamResponse:
+      description: Team response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/Team'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    KnowledgeBaseResponse:
+      description: Knowledge base response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/KnowledgeBase'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    KnowledgeBaseListResponse:
+      description: Knowledge base list
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeBase'
+              meta:
+                $ref: '#/components/schemas/PageMeta'
+    DocumentResponse:
+      description: Document response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/Document'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    DocumentListResponse:
+      description: Document list
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Document'
+              meta:
+                $ref: '#/components/schemas/PageMeta'
+    IngestionRunResponse:
+      description: Ingestion run response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/IngestionRun'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    ChunkResponse:
+      description: Chunk response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/Chunk'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    ConversationResponse:
+      description: Conversation response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/Conversation'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    RetrievalTraceResponse:
+      description: Retrieval trace response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/RetrievalTrace'
+              meta:
+                $ref: '#/components/schemas/Meta'
+    ModelPolicyResponse:
+      description: Model policy response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: '#/components/schemas/ModelPolicy'
+              meta:
+                $ref: '#/components/schemas/Meta'
+  schemas:
+    Meta:
+      type: object
+      required: [request_id]
+      properties:
+        request_id:
+          type: string
+    PageMeta:
+      allOf:
+        - $ref: '#/components/schemas/Meta'
+        - type: object
+          properties:
+            next_cursor:
+              type: string
+              nullable: true
+            has_more:
+              type: boolean
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ApiError'
+    ApiError:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        display_name:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    LoginResult:
+      type: object
+      required: [access_token, expires_in, user]
+      properties:
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        user:
+          $ref: '#/components/schemas/User'
+    User:
+      type: object
+      required: [id, email, display_name, created_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        created_at:
+          type: string
+          format: date-time
+    Team:
+      type: object
+      required: [id, name, role, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/Role'
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TeamMember:
+      type: object
+      required: [user_id, display_name, role, status]
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        status:
+          type: string
+          enum: [active, disabled, invited]
+    KnowledgeBase:
+      type: object
+      required: [id, team_id, name, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        default_model_policy_mode:
+          $ref: '#/components/schemas/ModelPolicyMode'
+        document_count:
+          type: integer
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Document:
+      type: object
+      required: [id, knowledge_base_id, owner_user_id, source_type, file_name, visibility, data_classification, doc_status, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        knowledge_base_id:
+          type: string
+        owner_user_id:
+          type: string
+        source_type:
+          type: string
+          enum: [upload, github]
+        source_uri:
+          type: string
+          nullable: true
+        file_name:
+          type: string
+        product:
+          type: string
+          nullable: true
+        version_family:
+          type: string
+          nullable: true
+        version_values:
+          type: array
+          items:
+            type: string
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        data_classification:
+          $ref: '#/components/schemas/DataClassification'
+        doc_status:
+          $ref: '#/components/schemas/DocumentStatus'
+        current_version_id:
+          type: string
+          nullable: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DocumentVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        document_id:
+          type: string
+        source_revision:
+          type: string
+          nullable: true
+        content_hash:
+          type: string
+        parse_status:
+          type: string
+        index_generation:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    IngestionRun:
+      type: object
+      required: [id, status, created_at]
+      properties:
+        id:
+          type: string
+        document_id:
+          type: string
+          nullable: true
+        source_id:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/IngestionStatus'
+        stage:
+          type: string
+        processed:
+          type: integer
+        total:
+          type: integer
+        percent:
+          type: number
+          format: float
+        retryable:
+          type: boolean
+        error_code:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Chunk:
+      type: object
+      required: [id, document_id, document_version_id, content, status, version]
+      properties:
+        id:
+          type: string
+        document_id:
+          type: string
+        document_version_id:
+          type: string
+        content:
+          type: string
+        heading_path:
+          type: array
+          items:
+            type: string
+        source_locator:
+          type: object
+          additionalProperties: true
+        status:
+          $ref: '#/components/schemas/ChunkStatus'
+        quality_flags:
+          type: array
+          items:
+            type: string
+        version:
+          type: integer
+        index_generation:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        knowledge_base_ids:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AskRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+        filters:
+          type: object
+          properties:
+            knowledge_base_ids:
+              type: array
+              items:
+                type: string
+            product:
+              type: string
+              nullable: true
+            version_values:
+              type: array
+              items:
+                type: string
+        model_policy:
+          type: string
+          enum: [inherit, local_only]
+        stream:
+          type: boolean
+          default: true
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        conversation_id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        trace_id:
+          type: string
+          nullable: true
+        citation_ids:
+          type: array
+          items:
+            type: string
+        refusal_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    Citation:
+      type: object
+      properties:
+        citation_id:
+          type: string
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        document_name:
+          type: string
+        page_no:
+          type: integer
+          nullable: true
+        heading_path:
+          type: array
+          items:
+            type: string
+        source_url:
+          type: string
+        excerpt:
+          type: string
+        support_score:
+          type: number
+          format: float
+    RetrievalTrace:
+      type: object
+      properties:
+        trace_id:
+          type: string
+        message_id:
+          type: string
+        engine_mode:
+          $ref: '#/components/schemas/EngineMode'
+        original_query:
+          type: string
+        rewritten_query:
+          type: string
+          nullable: true
+        filters:
+          type: object
+          additionalProperties: true
+        candidates:
+          type: object
+          additionalProperties: true
+        final_context:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chunk'
+        model:
+          type: object
+          additionalProperties: true
+        stage_latency_ms:
+          type: object
+          additionalProperties:
+            type: number
+        degraded:
+          type: boolean
+        error_code:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    EvaluationDataset:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        case_count:
+          type: integer
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+    EvaluationRun:
+      type: object
+      properties:
+        id:
+          type: string
+        dataset_id:
+          type: string
+        engine_mode:
+          $ref: '#/components/schemas/EngineMode'
+        status:
+          $ref: '#/components/schemas/EvaluationStatus'
+        baseline_run_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          nullable: true
+    ModelPolicy:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ModelPolicyMode'
+        allowed_provider_ids:
+          type: array
+          items:
+            type: string
+        max_data_classification:
+          $ref: '#/components/schemas/DataClassification'
+        allow_conversation_history:
+          type: boolean
+        allow_document_metadata:
+          type: boolean
+        require_redaction:
+          type: boolean
+        version:
+          type: integer
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+        actor_user_id:
+          type: string
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        request_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    IndexGeneration:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [staging, validating, active, failed, cleaning]
+        chunk_count:
+          type: integer
+        embedding_model:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          nullable: true
+    Invitation:
+      type: object
+      properties:
+        token:
+          type: string
+        team_id:
+          type: string
+        team_name:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        expires_at:
+          type: string
+          format: date-time
+    RetrievalFacets:
+      type: object
+      properties:
+        knowledge_bases:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+        products:
+          type: array
+          items:
+            type: string
+        versions:
+          type: array
+          items:
+            type: string
+        source_types:
+          type: array
+          items:
+            type: string
+    Role:
+      type: string
+      enum: [team_admin, member, viewer, platform_admin]
+    Visibility:
+      type: string
+      enum: [private, team_shared]
+    DataClassification:
+      type: string
+      enum: [public, internal, private, restricted]
+    DocumentStatus:
+      type: string
+      enum: [active, building, deleting, deleted, failed]
+    ChunkStatus:
+      type: string
+      enum: [enabled, disabled]
+    IngestionStatus:
+      type: string
+      enum: [queued, fetching, parsing, chunking, embedding, indexing, validating, active, failed, deleting, cancelled]
+    MessageStatus:
+      type: string
+      enum: [generating, completed, refused, cancelled, failed]
+    EngineMode:
+      type: string
+      enum: [dual_engine, elastic_single]
+    EvaluationStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+    ModelPolicyMode:
+      type: string
+      enum: [local_only, external_allowed, external_required]
+    FeedbackType:
+      type: string
+      enum: [useful, not_useful, citation_error, knowledge_gap]
+

@@ -21,6 +21,7 @@ tasks = [
   "redis>=5",
 ]
 test = [
+  "PyYAML>=6.0",
   "pytest>=8.0",
 ]
 

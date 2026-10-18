@@ -144,6 +144,9 @@ python -m pip install -e ".[test,api,tasks]"
 ## 进一步文档
 
 - [P0 垂直切片实施计划](./docs/superpowers/plans/2026-10-18-techvault-p0-vertical-slice.md)
+- [前端页面与路由清单](./docs/product/page-map.md)
+- [API 契约](./docs/api/api-contract.md)
+- [OpenAPI 骨架](./docs/api/openapi.yaml)
 - [ADR 目录](./docs/adr/README.md)
 - [API 文档目录](./docs/api/README.md)
 - [部署说明](./deploy/README.md)

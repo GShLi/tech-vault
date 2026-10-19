@@ -1013,6 +1013,8 @@ def _stream_answer_response(
                 code = "POLICY_DENIED"
             elif isinstance(error, ModelUnavailableError):
                 code = "MODEL_UNAVAILABLE"
+            elif isinstance(error, ApiError):
+                code = error.code
             persist_message("failed", sent_text)
             persist_trace(
                 result=result,

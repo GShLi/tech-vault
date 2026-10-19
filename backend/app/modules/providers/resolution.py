@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from backend.app.api.errors import ApiError
 from backend.app.core.config import Settings
 from backend.app.core.llm_policy import assert_external_call_allowed
-from backend.app.core.secrets import decrypt_secret
 from backend.app.db.models import ModelProvider
 from backend.app.rag.domain.models import DataClassification, ModelPolicyDecision
 
@@ -57,14 +56,6 @@ def resolve_provider(
             "MODEL_UNAVAILABLE",
             "Provider credentials are unavailable.",
         )
-    try:
-        decrypt_secret(provider.api_key_encrypted, settings)
-    except Exception as error:
-        raise ApiError(
-            503,
-            "MODEL_UNAVAILABLE",
-            "Provider credentials are unavailable.",
-        ) from error
 
     if (
         decision.allowed_provider_ids

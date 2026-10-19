@@ -117,6 +117,11 @@ def upload_document(
     session.add(ingestion_run)
     session.commit()
 
+    if ext in {".md", ".txt"}:
+        from backend.app.rag.ingestion.processor import process_markdown
+
+        process_markdown(document, ingestion_run, session)
+
     return envelope(
         {
             "document": _document_view(document),

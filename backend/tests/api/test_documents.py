@@ -42,7 +42,7 @@ def test_upload_returns_202_and_lists_document(api_client):
 
     assert upload.status_code == 202
     assert upload.json()["data"]["document"]["file_name"] == "README.md"
-    assert upload.json()["data"]["document"]["doc_status"] == "building"
+    assert upload.json()["data"]["document"]["doc_status"] == "active"
     assert upload.json()["data"]["document_version_id"]
     assert upload.json()["data"]["ingestion_run_id"]
 
@@ -76,4 +76,4 @@ def test_upload_returns_202_and_lists_document(api_client):
         headers=headers,
     )
     assert ingestion_detail.status_code == 200
-    assert ingestion_detail.json()["data"]["current_stage"] == "parsing"
+    assert ingestion_detail.json()["data"]["status"] == "completed"

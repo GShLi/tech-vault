@@ -91,6 +91,10 @@ tech-vault/
 
 第一个垂直切片已建立并可测试：
 
+- FastAPI 应用工厂，以及健康检查、就绪检查和版本接口
+- 注册、登录和当前用户认证 API
+- 团队与知识库 API
+- SQLAlchemy 核心持久化
 - 共享 RAG 领域对象和 `Retriever` / `IndexWriter` 端口
 - 默认拒绝的文档授权和检索过滤
 - LLM 数据出境策略的基本约束
@@ -103,7 +107,10 @@ tech-vault/
 第一个垂直切片尚未接入：
 
 - Elasticsearch 和 Qdrant 生产检索适配器；当前仅支持内存检索
-- FastAPI 业务路由和数据库表
+- 文档上传与来源同步 API
+- Chunk 管理 API
+- 对话、Trace 和评测 API
+- 生产数据库迁移
 - PDF、DOCX、GitHub 解析链路
 - MinIO、Redis 和 Celery Worker
 - BGE-M3、bge-reranker-v2-m3 和真实 LLM

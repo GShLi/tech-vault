@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview",
+    "dev": "vite --configLoader runner",
+    "build": "vue-tsc --noEmit && vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner",
     "test": "vitest run",
     "test:watch": "vitest",
     "integration": "node scripts/integration-smoke.mjs"

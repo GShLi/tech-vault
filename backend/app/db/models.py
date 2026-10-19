@@ -138,3 +138,50 @@ class KnowledgeBase(Base):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
+
+
+class Chat(Base):
+    __tablename__ = "chats"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200), default="新对话")
+    knowledge_base_ids: Mapped[str] = mapped_column(Text, default="[]")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    chat_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("chats.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="generating")
+    trace_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    citation_ids: Mapped[str] = mapped_column(Text, default="[]")
+    refusal_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class ChunkRecord(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    document_id: Mapped[str] = mapped_column(String(26), ForeignKey("documents.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    heading_path: Mapped[str] = mapped_column(Text, default="[]")
+    source_locator: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(16), default="enabled")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )

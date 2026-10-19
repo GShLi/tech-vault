@@ -158,3 +158,26 @@ class IngestionRunView(BaseModel):
     retryable: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ChatView(BaseModel):
+    id: str
+    team_id: str
+    user_id: str
+    title: str
+    knowledge_base_ids: List[str]
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageView(BaseModel):
+    id: str
+    chat_id: str
+    role: str
+    content: str
+    status: str
+    trace_id: Optional[str]
+    citation_ids: List[str]
+    refusal_reason: Optional[str]
+    created_at: datetime

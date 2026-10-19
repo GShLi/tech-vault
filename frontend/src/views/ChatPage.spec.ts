@@ -1,20 +1,28 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
-import type { ChatView, KnowledgeBase, MessageView } from '@/types/api'
+import type {
+  ChatView,
+  KnowledgeBase,
+  MessageView,
+  ModelPolicy,
+  ModelProvider,
+} from '@/types/api'
 import ChatPage from './ChatPage.vue'
 
 const apiMocks = vi.hoisted(() => ({
   cancelMessage: vi.fn(),
   createChat: vi.fn(),
   deleteChat: vi.fn(),
+  getPolicy: vi.fn(),
   listChats: vi.fn(),
   listFacets: vi.fn(),
   listKbs: vi.fn(),
   listMessages: vi.fn(),
+  listProviders: vi.fn(),
   submitFeedback: vi.fn(),
   updateChat: vi.fn(),
 }))
@@ -63,6 +71,60 @@ const knowledgeBase: KnowledgeBase = {
   created_at: '2026-10-19T12:00:00+00:00',
   updated_at: '2026-10-19T12:00:00+00:00',
 }
+
+const modelPolicy: ModelPolicy = {
+  mode: 'external_allowed',
+  allowed_provider_ids: ['provider-1', 'provider-2'],
+  max_data_classification: 'internal',
+  allow_chat_history: true,
+  allow_document_metadata: true,
+  require_redaction: false,
+  version: 1,
+}
+
+const providers: ModelProvider[] = [
+  {
+    id: 'provider-1',
+    name: 'Provider One',
+    provider_type: 'openai_responses',
+    base_url: 'https://provider-one.example/v1',
+    model_ids: ['gpt-a', 'gpt-b'],
+    status: 'active',
+    has_api_key: true,
+  },
+  {
+    id: 'provider-2',
+    name: 'Provider Two',
+    provider_type: 'anthropic_messages',
+    model_ids: ['claude-a'],
+    status: 'active',
+    has_api_key: true,
+  },
+  {
+    id: 'provider-no-key',
+    name: 'Provider Without Key',
+    provider_type: 'openai_chat_completions',
+    model_ids: ['no-key-model'],
+    status: 'active',
+    has_api_key: false,
+  },
+  {
+    id: 'provider-disabled',
+    name: 'Disabled Provider',
+    provider_type: 'openai_chat_completions',
+    model_ids: ['disabled-model'],
+    status: 'disabled',
+    has_api_key: true,
+  },
+  {
+    id: 'provider-not-allowed',
+    name: 'Policy Blocked Provider',
+    provider_type: 'openai_chat_completions',
+    model_ids: ['blocked-model'],
+    status: 'active',
+    has_api_key: true,
+  },
+]
 
 const userMessage: MessageView = {
   id: 'message-user',
@@ -189,6 +251,15 @@ function blockedSseResponse(
   } as unknown as Response
 }
 
+async function selectProviderAndModel(
+  wrapper: VueWrapper,
+  providerId = 'provider-1',
+  modelId = 'gpt-a',
+): Promise<void> {
+  await wrapper.get('[data-testid="chat-provider-select"]').setValue(providerId)
+  await wrapper.get('[data-testid="chat-model-select"]').setValue(modelId)
+}
+
 async function mountPage(path = '/chat/chat-1') {
   const pinia = makePinia()
   const router = createRouter({
@@ -225,6 +296,11 @@ describe('ChatPage', () => {
       sources: ['file'],
       knowledge_base_ids: ['kb-1'],
     })
+    apiMocks.getPolicy.mockResolvedValue(modelPolicy)
+    apiMocks.listProviders.mockResolvedValue({
+      data: providers,
+      meta: { next_cursor: null, has_more: false, request_id: 'req-providers' },
+    })
     apiMocks.listMessages.mockResolvedValue(messagePage([userMessage]))
     apiMocks.cancelMessage.mockResolvedValue({
       message_id: 'message-assistant',
@@ -246,6 +322,71 @@ describe('ChatPage', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('keeps send disabled until provider and model are selected', async () => {
+    const { wrapper } = await mountPage('/chat')
+    const providerSelect = wrapper.get('[data-testid="chat-provider-select"]')
+    const modelSelect = wrapper.get('[data-testid="chat-model-select"]')
+
+    expect((providerSelect.element as HTMLSelectElement).value).toBe('')
+    expect((modelSelect.element as HTMLSelectElement).value).toBe('')
+    expect(modelSelect.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="send-message"]').attributes('disabled')).toBeDefined()
+    await providerSelect.setValue('provider-1')
+    expect(wrapper.get('[data-testid="send-message"]').attributes('disabled')).toBeDefined()
+    await modelSelect.setValue('gpt-a')
+    expect(wrapper.get('[data-testid="send-message"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="question-input"]').setValue('Question')
+    expect(wrapper.get('[data-testid="send-message"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('only exposes active, keyed, policy-allowed providers and their models', async () => {
+    const { wrapper } = await mountPage('/chat')
+    const providerSelect = wrapper.get('[data-testid="chat-provider-select"]')
+
+    expect(providerSelect.findAll('option').map((option) => option.text())).toEqual([
+      '选择供应商',
+      'Provider One',
+      'Provider Two',
+    ])
+
+    await providerSelect.setValue('provider-1')
+    expect(
+      wrapper
+        .get('[data-testid="chat-model-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择模型', 'gpt-a', 'gpt-b'])
+
+    await wrapper.get('[data-testid="chat-provider-select"]').setValue('provider-2')
+    expect(
+      (wrapper.get('[data-testid="chat-model-select"]').element as HTMLSelectElement)
+        .value,
+    ).toBe('')
+    expect(
+      wrapper
+        .get('[data-testid="chat-model-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择模型', 'claude-a'])
+  })
+
+  it('includes provider and model in the ask request', async () => {
+    vi.mocked(fetch).mockResolvedValue(sseResponse([]))
+    const { wrapper } = await mountPage('/chat')
+
+    await wrapper.get('[data-testid="chat-provider-select"]').setValue('provider-1')
+    await wrapper.get('[data-testid="chat-model-select"]').setValue('gpt-a')
+    await wrapper.get('[data-testid="question-input"]').setValue('Question')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
+    await flushPromises()
+
+    const request = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      provider_id: 'provider-1',
+      model_id: 'gpt-a',
+    })
   })
 
   it('uses contract filters and consumes rewrite, citation and delta events', async () => {
@@ -296,10 +437,11 @@ describe('ChatPage', () => {
     expect(wrapper.text()).toContain('Java 资料')
     expect(wrapper.text()).toContain('虚拟线程如何配置？')
 
+    await selectProviderAndModel(wrapper)
     await wrapper.get('[data-testid="chat-product-filter"]').setValue('spring-boot')
     await wrapper.get('[data-testid="chat-version-filter"]').setValue('3.2')
-    await wrapper.get('[data-testid="chat-question"]').setValue('虚拟线程如何配置？')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await wrapper.get('[data-testid="question-input"]').setValue('虚拟线程如何配置？')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
@@ -309,6 +451,8 @@ describe('ChatPage', () => {
         body: JSON.stringify({
           team_id: 'team-1',
           chat_id: 'chat-1',
+          provider_id: 'provider-1',
+          model_id: 'gpt-a',
           question: '虚拟线程如何配置？',
           filters: {
             knowledge_base_ids: ['kb-1'],
@@ -411,8 +555,9 @@ describe('ChatPage', () => {
     )
 
     const { wrapper } = await mountPage()
-    await wrapper.get('[data-testid="chat-question"]').setValue('旧接口兼容')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await selectProviderAndModel(wrapper)
+    await wrapper.get('[data-testid="question-input"]').setValue('旧接口兼容')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('旧版回答内容')
@@ -450,8 +595,9 @@ describe('ChatPage', () => {
 
     const { wrapper } = await mountPage()
     await wrapper.get('[data-testid="chat-stream-toggle"]').setValue(false)
-    await wrapper.get('[data-testid="chat-question"]').setValue('不存在的主题')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await selectProviderAndModel(wrapper)
+    await wrapper.get('[data-testid="question-input"]').setValue('不存在的主题')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('知识库中没有足够依据')
@@ -528,8 +674,9 @@ describe('ChatPage', () => {
     })
 
     const { wrapper } = await mountPage()
-    await wrapper.get('[data-testid="chat-question"]').setValue('停止服务端生成')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await selectProviderAndModel(wrapper)
+    await wrapper.get('[data-testid="question-input"]').setValue('停止服务端生成')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     await wrapper.get('[data-testid="chat-stop"]').trigger('click')
@@ -555,8 +702,9 @@ describe('ChatPage', () => {
     })
 
     const { wrapper } = await mountPage()
-    await wrapper.get('[data-testid="chat-question"]').setValue('停止本地生成')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await selectProviderAndModel(wrapper)
+    await wrapper.get('[data-testid="question-input"]').setValue('停止本地生成')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     await wrapper.get('[data-testid="chat-stop"]').trigger('click')
@@ -605,10 +753,11 @@ describe('ChatPage', () => {
       )
 
     const { wrapper } = await mountPage()
+    await selectProviderAndModel(wrapper)
     await wrapper.get('[data-testid="chat-product-filter"]').setValue('spring-boot')
     await wrapper.get('[data-testid="chat-version-filter"]').setValue('3.2')
-    await wrapper.get('[data-testid="chat-question"]').setValue('如何开启虚拟线程？')
-    await wrapper.get('[data-testid="chat-send"]').trigger('click')
+    await wrapper.get('[data-testid="question-input"]').setValue('如何开启虚拟线程？')
+    await wrapper.get('[data-testid="send-message"]').trigger('click')
     await flushPromises()
 
     await wrapper.get('[data-testid="chat-product-filter"]').setValue('')
@@ -621,6 +770,8 @@ describe('ChatPage', () => {
     expect(JSON.parse(String(secondRequest.body))).toMatchObject({
       team_id: 'team-1',
       chat_id: 'chat-1',
+      provider_id: 'provider-1',
+      model_id: 'gpt-a',
       question: '如何开启虚拟线程？',
       filters: {
         knowledge_base_ids: ['kb-1'],

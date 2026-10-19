@@ -350,6 +350,13 @@ tbody tr:last-child td {
   background: var(--accent-strong);
 }
 
+.chat-send-button:disabled {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  opacity: 1;
+}
+
 .secondary-button {
   border: 1px solid #b9c6cf;
   background: #fff;

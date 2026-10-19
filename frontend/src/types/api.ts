@@ -204,6 +204,8 @@ export interface ChatFilters {
 export interface AskChatInput {
   team_id: string
   chat_id: string
+  provider_id: string
+  model_id: string
   question: string
   filters: ChatFilters
   model_policy: ChatModelPolicy
@@ -285,6 +287,7 @@ export interface ModelProvider {
   base_url?: string
   model_ids?: string[]
   status: string
+  has_api_key: boolean
   api_key_masked?: string
   api_key_updated_at?: string | null
 }

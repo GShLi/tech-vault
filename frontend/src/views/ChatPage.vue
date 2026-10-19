@@ -28,6 +28,7 @@ import type {
   FeedbackType,
   KnowledgeBase,
   MessageView,
+  ModelProvider,
 } from '@/types/api'
 import { formatDate, shortId } from '@/utils/format'
 
@@ -52,6 +53,8 @@ interface AskContext {
   knowledgeBaseIds: string[]
   product: string
   version: string
+  providerId: string
+  modelId: string
 }
 
 interface FeedbackState {
@@ -84,10 +87,14 @@ const facets = ref<FacetView>({
 })
 const currentChat = ref<ChatView | null>(null)
 const messages = ref<MessageView[]>([])
+const providers = ref<ModelProvider[]>([])
+const allowedProviderIds = ref<string[]>([])
 const citationsByMessage = ref<Record<string, CitationView[]>>({})
 const selectedKbIds = ref<string[]>([])
 const selectedProduct = ref('')
 const selectedVersion = ref('')
+const selectedProviderId = ref('')
+const selectedModelId = ref('')
 const rewrittenQuestion = ref('')
 const newChatTitle = ref('')
 const question = ref('')
@@ -119,11 +126,42 @@ const selectedKnowledgeBases = computed(() =>
   knowledgeBases.value.filter((kb) => selectedKbIds.value.includes(kb.id)),
 )
 
+const eligibleProviders = computed(() => {
+  const allowedIds = new Set(allowedProviderIds.value)
+  return providers.value.filter(
+    (provider) =>
+      provider.status === 'active' &&
+      provider.has_api_key === true &&
+      allowedIds.has(provider.id),
+  )
+})
+
+const selectedProvider = computed(
+  () =>
+    eligibleProviders.value.find(
+      (provider) => provider.id === selectedProviderId.value,
+    ) ?? null,
+)
+
+const modelOptions = computed(() =>
+  Array.isArray(selectedProvider.value?.model_ids)
+    ? selectedProvider.value?.model_ids ?? []
+    : [],
+)
+
+const hasProviderAndModel = computed(
+  () =>
+    Boolean(selectedProvider.value) &&
+    Boolean(selectedModelId.value) &&
+    modelOptions.value.includes(selectedModelId.value),
+)
+
 const canSubmit = computed(
   () =>
     Boolean(question.value.trim()) &&
     Boolean(team.selectedTeamId) &&
     selectedKbIds.value.length > 0 &&
+    hasProviderAndModel.value &&
     !sending.value &&
     !creatingChat.value,
 )
@@ -154,6 +192,7 @@ const canRegenerate = computed(
   () =>
     Boolean(latestQuestionPair.value) &&
     selectedKbIds.value.length > 0 &&
+    hasProviderAndModel.value &&
     !sending.value &&
     !creatingChat.value &&
     !stopping.value,
@@ -238,6 +277,31 @@ async function loadFacets(): Promise<void> {
   }
 }
 
+async function loadProviderOptions(): Promise<void> {
+  const teamId = team.selectedTeamId
+  selectedProviderId.value = ''
+  selectedModelId.value = ''
+  if (!teamId) {
+    providers.value = []
+    allowedProviderIds.value = []
+    return
+  }
+  try {
+    const [policy, rows] = await Promise.all([
+      api.getPolicy(teamId),
+      loadAllPages((cursor) => api.listProviders(teamId, cursor, 100)),
+    ])
+    providers.value = rows
+    allowedProviderIds.value = Array.isArray(policy.allowed_provider_ids)
+      ? policy.allowed_provider_ids
+      : []
+  } catch (caught) {
+    providers.value = []
+    allowedProviderIds.value = []
+    error.value = toApiError(caught, '无法加载供应商和模型')
+  }
+}
+
 async function loadChats(showLoading = true): Promise<void> {
   const teamId = team.selectedTeamId
   if (!teamId) {
@@ -276,7 +340,12 @@ async function initialize(): Promise<void> {
   try {
     selectedProduct.value = ''
     selectedVersion.value = ''
-    await Promise.all([loadChats(false), loadKnowledgeBases(), loadFacets()])
+    await Promise.all([
+      loadChats(false),
+      loadKnowledgeBases(),
+      loadFacets(),
+      loadProviderOptions(),
+    ])
   } finally {
     loadingChats.value = false
   }
@@ -412,6 +481,8 @@ function currentAskContext(): AskContext {
     knowledgeBaseIds: [...selectedKbIds.value],
     product: selectedProduct.value,
     version: selectedVersion.value,
+    providerId: selectedProviderId.value,
+    modelId: selectedModelId.value,
   }
 }
 
@@ -438,6 +509,13 @@ async function askQuestion(text: string, context: AskContext): Promise<void> {
     error.value = new ApiRequestError('至少选择一个知识库。', 'INVALID_ARGUMENT')
     return
   }
+  if (!context.providerId || !context.modelId) {
+    error.value = new ApiRequestError(
+      '请选择供应商和模型。',
+      'INVALID_ARGUMENT',
+    )
+    return
+  }
 
   sending.value = true
   error.value = null
@@ -461,6 +539,8 @@ async function askQuestion(text: string, context: AskContext): Promise<void> {
       knowledgeBaseIds: [...context.knowledgeBaseIds],
       product: context.product,
       version: context.version,
+      providerId: context.providerId,
+      modelId: context.modelId,
     }
     citationsByMessage.value[assistant.id] = []
     await scrollToLatest()
@@ -470,6 +550,8 @@ async function askQuestion(text: string, context: AskContext): Promise<void> {
     const body: AskChatInput = {
       team_id: team.selectedTeamId,
       chat_id: chat.id,
+      provider_id: context.providerId,
+      model_id: context.modelId,
       question: text,
       filters: {
         knowledge_base_ids: [...context.knowledgeBaseIds],
@@ -526,8 +608,8 @@ async function askQuestion(text: string, context: AskContext): Promise<void> {
 }
 
 async function sendQuestion(): Promise<void> {
+  if (!canSubmit.value) return
   const text = question.value.trim()
-  if (!text) return
   question.value = ''
   await askQuestion(text, currentAskContext())
 }
@@ -542,6 +624,8 @@ async function regenerateLatest(): Promise<void> {
       : storedContext?.knowledgeBaseIds ?? [],
     product: storedContext?.product ?? selectedProduct.value,
     version: storedContext?.version ?? selectedVersion.value,
+    providerId: storedContext?.providerId ?? selectedProviderId.value,
+    modelId: storedContext?.modelId ?? selectedModelId.value,
   })
 }
 
@@ -914,6 +998,10 @@ function isGenerating(message: MessageView): boolean {
 
 onMounted(initialize)
 
+watch(selectedProviderId, () => {
+  selectedModelId.value = ''
+})
+
 watch(
   () => team.selectedTeamId,
   () => {
@@ -1049,7 +1137,37 @@ watch(
               {{ kb.name }}
             </button>
           </div>
-          <div class="chat-filter-row" aria-label="产品和版本筛选">
+          <div class="chat-filter-row" aria-label="供应商、模型、产品和版本筛选">
+            <label class="chat-filter-field chat-provider-field">
+              <span>供应商</span>
+              <select
+                v-model="selectedProviderId"
+                data-testid="chat-provider-select"
+                :disabled="sending || !eligibleProviders.length"
+              >
+                <option value="">选择供应商</option>
+                <option
+                  v-for="provider in eligibleProviders"
+                  :key="provider.id"
+                  :value="provider.id"
+                >
+                  {{ provider.name }}
+                </option>
+              </select>
+            </label>
+            <label class="chat-filter-field chat-provider-field">
+              <span>模型</span>
+              <select
+                v-model="selectedModelId"
+                data-testid="chat-model-select"
+                :disabled="sending || !selectedProvider"
+              >
+                <option value="">选择模型</option>
+                <option v-for="model in modelOptions" :key="model" :value="model">
+                  {{ model }}
+                </option>
+              </select>
+            </label>
             <label class="chat-filter-field">
               <span>产品</span>
               <select
@@ -1255,7 +1373,7 @@ watch(
       <form class="composer" @submit.prevent="sendQuestion">
         <textarea
           v-model="question"
-          data-testid="chat-question"
+          data-testid="question-input"
           rows="3"
           maxlength="4000"
           placeholder="输入问题"
@@ -1281,8 +1399,8 @@ watch(
           </button>
           <button
             v-else
-            class="primary-button"
-            data-testid="chat-send"
+            class="primary-button chat-send-button"
+            data-testid="send-message"
             type="button"
             :disabled="!canSubmit"
             @click="sendQuestion"

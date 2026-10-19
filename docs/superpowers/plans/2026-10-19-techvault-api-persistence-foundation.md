@@ -1275,6 +1275,8 @@ git commit -m "feat: add authentication API"
 
 ### Task 5: Teams and Knowledge Bases API
 
+> **Implementation ruling:** The shipped implementation uses an atomic conditional `UPDATE ... WHERE version = expected` for team update, KB update, and KB archive. Zero-row updates return 409 `VERSION_CONFLICT` or 409 `RESOURCE_STATE_CONFLICT`. Archived KBs are immutable in this slice. Team and KB names are stripped and rejected when blank. The code blocks below show the original design; these rulings take precedence.
+
 **Files:**
 - Create: `backend/app/api/v1/teams.py`
 - Create: `backend/app/api/v1/kbs.py`

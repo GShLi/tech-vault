@@ -125,7 +125,7 @@ pytest -q
 当前基线测试：
 
 ```text
-101 passed
+164 passed
 ```
 
 只验证第一个 RAG 垂直切片：

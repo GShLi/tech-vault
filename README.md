@@ -89,7 +89,7 @@ tech-vault/
 
 ## 当前实现状态
 
-已建立并可测试：
+第一个垂直切片已建立并可测试：
 
 - 共享 RAG 领域对象和 `Retriever` / `IndexWriter` 端口
 - 默认拒绝的文档授权和检索过滤
@@ -100,11 +100,12 @@ tech-vault/
 - 黄金集加载和种子样本
 - 内存索引 generation 和内存检索适配器
 
-尚未接入：
+第一个垂直切片尚未接入：
 
+- Elasticsearch 和 Qdrant 生产检索适配器；当前仅支持内存检索
 - FastAPI 业务路由和数据库表
 - PDF、DOCX、GitHub 解析链路
-- Elasticsearch、Qdrant、MinIO、Redis 和 Celery
+- MinIO、Redis 和 Celery Worker
 - BGE-M3、bge-reranker-v2-m3 和真实 LLM
 - Vue3 管理界面和问答界面
 - 生产级鉴权、审计、监控和备份
@@ -118,14 +119,22 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[test]"
-pytest
+pytest -q
 ```
 
 当前基线测试：
 
 ```text
-76 passed
+77 passed
 ```
+
+只验证第一个 RAG 垂直切片：
+
+```bash
+pytest backend/tests/smoke/test_vertical_slice.py -q
+```
+
+该烟雾测试覆盖 Markdown 分块、权限过滤、内存混合检索、RRF 排序和评测指标，并校验请求结果中的非空 `trace_id`。
 
 后续安装 API 依赖时使用：
 

@@ -286,16 +286,20 @@ async function loadProviderOptions(): Promise<void> {
     allowedProviderIds.value = []
     return
   }
+  providers.value = []
+  allowedProviderIds.value = []
   try {
     const [policy, rows] = await Promise.all([
       api.getPolicy(teamId),
       loadAllPages((cursor) => api.listProviders(teamId, cursor, 100)),
     ])
+    if (team.selectedTeamId !== teamId) return
     providers.value = rows
     allowedProviderIds.value = Array.isArray(policy.allowed_provider_ids)
       ? policy.allowed_provider_ids
       : []
   } catch (caught) {
+    if (team.selectedTeamId !== teamId) return
     providers.value = []
     allowedProviderIds.value = []
     error.value = toApiError(caught, '无法加载供应商和模型')
@@ -624,8 +628,8 @@ async function regenerateLatest(): Promise<void> {
       : storedContext?.knowledgeBaseIds ?? [],
     product: storedContext?.product ?? selectedProduct.value,
     version: storedContext?.version ?? selectedVersion.value,
-    providerId: storedContext?.providerId ?? selectedProviderId.value,
-    modelId: storedContext?.modelId ?? selectedModelId.value,
+    providerId: selectedProviderId.value,
+    modelId: selectedModelId.value,
   })
 }
 

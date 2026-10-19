@@ -164,6 +164,16 @@ function messagePage(
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function makePinia() {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -370,6 +380,91 @@ describe('ChatPage', () => {
         .findAll('option')
         .map((option) => option.text()),
     ).toEqual(['选择模型', 'claude-a'])
+  })
+
+  it('clears provider options before the next team provider request resolves', async () => {
+    const { wrapper } = await mountPage('/chat')
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Provider One', 'Provider Two'])
+
+    const nextProviders = deferred<{
+      data: ModelProvider[]
+      meta: {
+        next_cursor: null
+        has_more: boolean
+        request_id: string
+      }
+    }>()
+    const nextPolicy = deferred<ModelPolicy>()
+    apiMocks.listProviders.mockReturnValueOnce(nextProviders.promise)
+    apiMocks.getPolicy.mockReturnValueOnce(nextPolicy.promise)
+
+    useTeamStore().selectTeam('team-2')
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商'])
+  })
+
+  it('ignores a late provider response from the previous team', async () => {
+    const oldProviders = deferred<{
+      data: ModelProvider[]
+      meta: {
+        next_cursor: null
+        has_more: boolean
+        request_id: string
+      }
+    }>()
+    const oldPolicy = deferred<ModelPolicy>()
+    apiMocks.listProviders.mockImplementationOnce(() => oldProviders.promise)
+    apiMocks.getPolicy.mockImplementationOnce(() => oldPolicy.promise)
+
+    const { wrapper } = await mountPage('/chat')
+    const teamTwoProvider: ModelProvider = {
+      ...providers[1],
+      id: 'provider-team-2',
+      name: 'Team Two Provider',
+      model_ids: ['team-2-model'],
+    }
+    apiMocks.listProviders.mockResolvedValueOnce({
+      data: [teamTwoProvider],
+      meta: { next_cursor: null, has_more: false, request_id: 'req-team-2' },
+    })
+    apiMocks.getPolicy.mockResolvedValueOnce({
+      ...modelPolicy,
+      allowed_provider_ids: ['provider-team-2'],
+    })
+
+    useTeamStore().selectTeam('team-2')
+    await flushPromises()
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Team Two Provider'])
+
+    oldProviders.resolve({
+      data: providers,
+      meta: { next_cursor: null, has_more: false, request_id: 'req-team-1' },
+    })
+    oldPolicy.resolve(modelPolicy)
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Team Two Provider'])
   })
 
   it('includes provider and model in the ask request', async () => {
@@ -714,7 +809,7 @@ describe('ChatPage', () => {
     expect(requestSignal?.aborted).toBe(true)
   })
 
-  it('regenerates the latest question with its original filters without removing old messages', async () => {
+  it('regenerates with the visible provider and model while preserving original filters', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(
         sseResponse([
@@ -762,6 +857,7 @@ describe('ChatPage', () => {
 
     await wrapper.get('[data-testid="chat-product-filter"]').setValue('')
     await wrapper.get('[data-testid="chat-version-filter"]').setValue('3.1')
+    await selectProviderAndModel(wrapper, 'provider-2', 'claude-a')
     await wrapper.get('[data-testid="chat-regenerate"]').trigger('click')
     await flushPromises()
 
@@ -770,8 +866,8 @@ describe('ChatPage', () => {
     expect(JSON.parse(String(secondRequest.body))).toMatchObject({
       team_id: 'team-1',
       chat_id: 'chat-1',
-      provider_id: 'provider-1',
-      model_id: 'gpt-a',
+      provider_id: 'provider-2',
+      model_id: 'claude-a',
       question: '如何开启虚拟线程？',
       filters: {
         knowledge_base_ids: ['kb-1'],

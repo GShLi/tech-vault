@@ -185,3 +185,41 @@ class ChunkRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+
+class DocumentGrant(Base):
+    __tablename__ = "document_grants"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    document_id: Mapped[str] = mapped_column(String(26), ForeignKey("documents.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"), index=True)
+    granted_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class EvaluationDataset(Base):
+    __tablename__ = "evaluation_datasets"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    case_count: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
+class EvaluationRun(Base):
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    dataset_id: Mapped[str] = mapped_column(String(26), ForeignKey("evaluation_datasets.id"), index=True)
+    engine_mode: Mapped[str] = mapped_column(String(20), default="dual_engine")
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    baseline_run_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)

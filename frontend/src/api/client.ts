@@ -153,6 +153,10 @@ export const api = {
   // Chat
   listChats(teamId: string, cursor?: string | null, limit = 20): Promise<PageEnvelope<ChatView>> { return getPage<ChatView>('/chats', { team_id: teamId, limit, ...(cursor ? { cursor } : {}) }) },
   createChat(teamId: string, title?: string, knowledgeBaseIds?: string[]): Promise<ChatView> { return postData<ChatView>('/chats/create', { team_id: teamId, title, knowledge_base_ids: knowledgeBaseIds }) },
+  getPolicy(teamId: string): Promise<Record<string, unknown>> { return getData<Record<string, unknown>>("/model-policy", { team_id: teamId }) },
+
+  updatePolicy(teamId: string, mode: string) { return postData<Record<string, unknown>>("/model-policy/update", { team_id: teamId, mode }) },
+
   deleteChat(teamId: string, chatId: string) { return postData<{ deleted: string }>('/chats/delete', { team_id: teamId, chat_id: chatId }) },
   listMessages(teamId: string, chatId: string): Promise<MessageView[]> { return getData<MessageView[]>('/chats/messages', { team_id: teamId, chat_id: chatId }) },
 }

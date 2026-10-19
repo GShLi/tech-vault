@@ -11,7 +11,7 @@ from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.storage import store_file
 from backend.app.api.v1.schemas import DocumentDetailView, DocumentView, IngestionRunView
-from backend.app.api.v1.teams import _membership_or_error
+from backend.app.api.v1.teams import _if_match_version, _leader_or_error, _membership_or_error
 from backend.app.core.ids import new_ulid
 from backend.app.db.models import (
     Document,
@@ -288,3 +288,141 @@ def get_ingestion_run(
         ).model_dump(),
         request.state.request_id,
     )
+
+
+@router.post("/docs/update")
+def update_document(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    document_id = body.get("document_id", "")
+    _leader_or_error(session, team_id, user.id)
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    expected_version = _if_match_version(request)
+    if doc.version != expected_version:
+        raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
+
+    for field in ("file_name", "product", "visibility", "data_classification"):
+        value = body.get(field)
+        if value is not None:
+            setattr(doc, field, value)
+    version_values = body.get("version_values")
+    if version_values is not None:
+        doc.version_values = json.dumps(version_values)
+    doc.version += 1
+    session.commit()
+    return envelope(_document_view(doc), request.state.request_id)
+
+
+@router.post("/docs/delete", status_code=202)
+def delete_document(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    document_id = body.get("document_id", "")
+    _leader_or_error(session, team_id, user.id)
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    if doc.doc_status == "deleting":
+        raise ApiError(409, "RESOURCE_STATE_CONFLICT", "Document is already being deleted.")
+    doc.doc_status = "deleting"
+    doc.version += 1
+    session.commit()
+    return envelope(_document_view(doc), request.state.request_id)
+
+
+@router.post("/docs/restore", status_code=202)
+def restore_document(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    document_id = body.get("document_id", "")
+    _leader_or_error(session, team_id, user.id)
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    doc.doc_status = "building"
+    doc.version += 1
+    session.commit()
+    return envelope(_document_view(doc), request.state.request_id)
+
+
+@router.get("/docs/versions")
+def list_document_versions(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    versions = session.scalars(
+        select(DocumentVersion).where(DocumentVersion.document_id == document_id).order_by(DocumentVersion.created_at.desc()).limit(50)
+    ).all()
+    return envelope(
+        [{"id": v.id, "content_fingerprint": v.content_fingerprint, "file_size_bytes": v.file_size_bytes, "status": v.status, "index_generation": v.index_generation, "chunk_count": v.chunk_count, "created_at": v.created_at.isoformat()} for v in versions],
+        request.state.request_id,
+    )
+
+
+@router.get("/docs/grants")
+def list_document_grants(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    grants = session.scalars(select(DocumentGrant).where(DocumentGrant.document_id == document_id)).all()
+    return envelope([{"id": g.id, "user_id": g.user_id, "granted_by": g.granted_by, "created_at": g.created_at.isoformat()} for g in grants], request.state.request_id)
+
+
+@router.post("/docs/grants/create", status_code=201)
+def create_document_grant(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    document_id = body.get("document_id", "")
+    grant_user_id = body.get("user_id", "")
+    _leader_or_error(session, team_id, user.id)
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    grant = DocumentGrant(document_id=document_id, user_id=grant_user_id, granted_by=user.id)
+    session.add(grant)
+    session.commit()
+    return envelope({"id": grant.id, "user_id": grant.user_id}, request.state.request_id)
+
+
+@router.post("/docs/grants/revoke")
+def revoke_document_grant(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    grant_id = body.get("grant_id", "")
+    _leader_or_error(session, team_id, user.id)
+    grant = session.get(DocumentGrant, grant_id)
+    if grant is None:
+        raise ApiError(404, "NOT_FOUND", "Grant was not found.")
+    session.delete(grant)
+    session.commit()
+    return envelope({"revoked": grant_id}, request.state.request_id)

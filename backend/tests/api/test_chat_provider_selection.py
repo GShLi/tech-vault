@@ -1,5 +1,7 @@
 import json
+import time
 
+import pytest
 from sqlalchemy import select
 
 import backend.app.api.v1.chats as chats_module
@@ -14,6 +16,7 @@ from backend.app.rag.answer.service import (
     answer_stream_from_pieces,
 )
 from backend.app.rag.domain.models import RetrievedChunk, SearchResult
+from backend.app.rag.llm_gateway.providers import ProviderAdapterError
 
 
 def _setup_chat(api_client, admin_headers):
@@ -222,6 +225,27 @@ def test_chat_ask_requires_provider_and_model(api_client, admin_headers):
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
+def test_chat_ask_rejects_missing_provider(api_client, admin_headers):
+    team, chat = _setup_chat(api_client, admin_headers)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Q?",
+            "provider_id": "01JPROVIDER000000000000001",
+            "model_id": "model-a",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.json()["error"]["message"] == "Provider was not found."
+
+
 def test_chat_ask_rejects_model_not_configured_on_provider(
     api_client, admin_headers
 ):
@@ -285,8 +309,8 @@ def test_chat_ask_rejects_disabled_provider(api_client, api_app, admin_headers):
         headers=admin_headers,
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RESOURCE_STATE_CONFLICT"
     assert response.json()["error"]["message"] == "Provider is not active."
 
 
@@ -321,12 +345,9 @@ def test_chat_ask_rejects_provider_from_another_team(
         headers=admin_headers,
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
-    assert (
-        response.json()["error"]["message"]
-        == "Provider is not available to this team."
-    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.json()["error"]["message"] == "Provider was not found."
 
 
 def test_chat_ask_accepts_global_provider(
@@ -410,6 +431,75 @@ def test_chat_ask_maps_classification_denial_to_policy_denied(
         response.json()["error"]["message"]
         == "External answer generation is forbidden by policy."
     )
+    assert captured == {}
+
+
+def test_chat_ask_denies_external_answer_with_empty_provider_allow_list(
+    api_client,
+    admin_headers,
+    monkeypatch,
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _create_provider(api_client, admin_headers, team["id"])
+    for path, body in (
+        (
+            "/api/v1/admin/model-policy/update",
+            {
+                "mode": "external_allowed",
+                "allowed_provider_ids": [],
+                "max_data_classification": "internal",
+            },
+        ),
+        (
+            "/api/v1/model-policy/update",
+            {
+                "team_id": team["id"],
+                "mode": "external_allowed",
+                "allowed_provider_ids": [],
+                "max_data_classification": "internal",
+            },
+        ),
+    ):
+        updated = api_client.post(path, json=body, headers=admin_headers)
+        assert updated.status_code == 200, updated.text
+    kb_policy = api_client.get(
+        "/api/v1/kbs/policy",
+        params={
+            "team_id": team["id"],
+            "kb_id": chat["knowledge_base_ids"][0],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    updated = api_client.post(
+        "/api/v1/kbs/policy/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": chat["knowledge_base_ids"][0],
+            "mode": "external_allowed",
+        },
+        headers={
+            **admin_headers,
+            "If-Match": str(kb_policy["version"]),
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    captured = _install_fake_chat_stack(monkeypatch)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Do not bypass an empty provider allow-list.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "POLICY_DENIED"
     assert captured == {}
 
 
@@ -541,6 +631,54 @@ def test_chat_ask_uses_selected_provider_for_stream_answer(
         assert model["model_id"] == "model-a"
 
 
+def test_stream_policy_latency_excludes_gateway_construction(
+    api_client,
+    api_app,
+    admin_headers,
+    monkeypatch,
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _select_provider(
+        api_client,
+        admin_headers,
+        team["id"],
+        chat["knowledge_base_ids"][0],
+    )
+    _add_generation(api_app, team["id"])
+    _install_fake_chat_stack(monkeypatch)
+    build_gateway = chats_module._build_gateway
+
+    def slow_build_gateway(*args, **kwargs):
+        time.sleep(1.0)
+        return build_gateway(*args, **kwargs)
+
+    monkeypatch.setattr(chats_module, "_build_gateway", slow_build_gateway)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Measure policy resolution only.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    with api_app.state.session_factory() as session:
+        trace = session.scalar(
+            select(TraceRecord).where(
+                TraceRecord.trace_id == "trace-provider-selection"
+            )
+        )
+        assert trace is not None
+        latency = json.loads(trace.stage_latency_ms)
+        assert latency["policy_ms"] < 500.0
+
+
 def test_stream_rejects_malformed_provider_url_with_invalid_argument(
     api_client, api_app, admin_headers
 ):
@@ -586,6 +724,8 @@ def test_stream_rejects_malformed_provider_url_with_invalid_argument(
         model = json.loads(trace.model)
         assert model["provider_id"] == provider["id"]
         assert model["model_id"] == "model-a"
+        assert model["route"] == provider["provider_type"]
+        assert model["external"] is True
 
 
 def test_stream_maps_corrupt_encrypted_key_to_model_unavailable(
@@ -701,9 +841,89 @@ def test_chat_ask_maps_missing_encrypted_key_to_model_unavailable(
         headers=admin_headers,
     )
 
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "MODEL_UNAVAILABLE"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RESOURCE_STATE_CONFLICT"
     assert captured == {}
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non-stream", "stream"])
+@pytest.mark.parametrize(
+    ("status_code", "code"),
+    [
+        (502, "MODEL_AUTH_FAILED"),
+        (502, "MODEL_RESPONSE_INVALID"),
+        (503, "MODEL_UNAVAILABLE"),
+    ],
+)
+def test_chat_ask_preserves_provider_adapter_error_status_and_code(
+    api_client,
+    api_app,
+    admin_headers,
+    monkeypatch,
+    stream,
+    status_code,
+    code,
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _select_provider(
+        api_client,
+        admin_headers,
+        team["id"],
+        chat["knowledge_base_ids"][0],
+    )
+    _add_generation(api_app, team["id"])
+    _install_fake_chat_stack(monkeypatch)
+
+    class FailingAdapter:
+        route = "openai_chat_completions"
+
+        def __init__(self, **kwargs):
+            self.provider_id = kwargs["provider_id"]
+            self.model_id = kwargs["model_id"]
+
+        def generate(self, *, question, chunks, max_chunks):
+            raise ProviderAdapterError(status_code, code, "normalized failure")
+
+        def generate_stream(self, *, question, chunks, max_chunks):
+            raise ProviderAdapterError(status_code, code, "normalized failure")
+
+    monkeypatch.setattr(
+        chats_module,
+        "build_provider_adapter",
+        lambda **kwargs: FailingAdapter(**kwargs),
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Preserve the provider failure.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": stream,
+        },
+        headers=admin_headers,
+    )
+
+    if stream:
+        assert response.status_code == 200, response.text
+        error = _stream_error_event(response)
+        assert error["code"] == code
+        assert error["message"] == "normalized failure"
+    else:
+        assert response.status_code == status_code
+        assert response.json()["error"]["code"] == code
+        assert response.json()["error"]["message"] == "normalized failure"
+
+    with api_app.state.session_factory() as session:
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.error_code == code)
+        )
+        assert trace is not None
+        model = json.loads(trace.model)
+        assert model["route"] == provider["provider_type"]
+        assert model["external"] is True
 
 
 def test_chat_ask_maps_provider_execution_failure_to_model_unavailable(
@@ -758,3 +978,5 @@ def test_chat_ask_maps_provider_execution_failure_to_model_unavailable(
         model = json.loads(trace.model)
         assert model["provider_id"] == provider["id"]
         assert model["model_id"] == "model-a"
+        assert model["route"] == provider["provider_type"]
+        assert model["external"] is True

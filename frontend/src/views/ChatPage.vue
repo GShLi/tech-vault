@@ -117,6 +117,7 @@ const messageNextCursor = ref<string | null>(null)
 const messageHasMore = ref(false)
 const feedbackByMessage = ref<Record<string, FeedbackState>>({})
 const askContextByMessageId = ref<Record<string, AskContext>>({})
+let providerOptionsRequestGeneration = 0
 
 const apiBaseUrl = computed(() =>
   (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, ''),
@@ -132,7 +133,9 @@ const eligibleProviders = computed(() => {
     (provider) =>
       provider.status === 'active' &&
       provider.has_api_key === true &&
-      allowedIds.has(provider.id),
+      allowedIds.has(provider.id) &&
+      Array.isArray(provider.model_ids) &&
+      provider.model_ids.length > 0,
   )
 })
 
@@ -278,6 +281,7 @@ async function loadFacets(): Promise<void> {
 }
 
 async function loadProviderOptions(): Promise<void> {
+  const requestGeneration = ++providerOptionsRequestGeneration
   const teamId = team.selectedTeamId
   selectedProviderId.value = ''
   selectedModelId.value = ''
@@ -293,13 +297,23 @@ async function loadProviderOptions(): Promise<void> {
       api.getPolicy(teamId),
       loadAllPages((cursor) => api.listProviders(teamId, cursor, 100)),
     ])
-    if (team.selectedTeamId !== teamId) return
+    if (
+      requestGeneration !== providerOptionsRequestGeneration ||
+      team.selectedTeamId !== teamId
+    ) {
+      return
+    }
     providers.value = rows
     allowedProviderIds.value = Array.isArray(policy.allowed_provider_ids)
       ? policy.allowed_provider_ids
       : []
   } catch (caught) {
-    if (team.selectedTeamId !== teamId) return
+    if (
+      requestGeneration !== providerOptionsRequestGeneration ||
+      team.selectedTeamId !== teamId
+    ) {
+      return
+    }
     providers.value = []
     allowedProviderIds.value = []
     error.value = toApiError(caught, '无法加载供应商和模型')

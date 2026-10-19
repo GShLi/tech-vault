@@ -345,6 +345,37 @@ def test_stream_parsers_raise_on_protocol_error_events(adapter_type, chunk_text)
     assert caught.value.code == "MODEL_UNAVAILABLE"
 
 
+@pytest.mark.parametrize(
+    ("chunk_text", "status_code", "code"),
+    [
+        (
+            'event: response.failed\n'
+            'data: {"type":"response.failed","response":{"error":'
+            '{"code":"server_error","message":"upstream failed"}}}\n\n',
+            503,
+            "MODEL_UNAVAILABLE",
+        ),
+        (
+            'event: response.incomplete\n'
+            'data: {"type":"response.incomplete","response":'
+            '{"incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+            502,
+            "MODEL_RESPONSE_INVALID",
+        ),
+    ],
+)
+def test_responses_stream_parsers_treat_failed_and_incomplete_as_terminal(
+    chunk_text,
+    status_code,
+    code,
+):
+    with pytest.raises(ProviderAdapterError) as caught:
+        parse_provider_stream_chunk("responses", chunk_text)
+
+    assert caught.value.status_code == status_code
+    assert caught.value.code == code
+
+
 def test_chat_stream_adapter_yields_text_and_sets_terminal_result():
     def handler(request):
         body = json.loads(request.content)

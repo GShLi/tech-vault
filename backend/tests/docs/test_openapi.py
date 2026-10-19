@@ -419,9 +419,9 @@ def test_chat_ask_requires_provider_and_model():
 def test_contract_has_no_extractive_fallback():
     contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
 
-    assert "local-extractive" not in contract
-    assert "local_extractive_fallback" not in contract
-    assert "extractive-local" not in contract
+    assert "local-" + "extractive" not in contract
+    assert "local_" + "extractive_fallback" not in contract
+    assert "extractive-" + "local" not in contract
 
 
 def test_contract_documents_required_selection_and_unavailable_provider_error():
@@ -433,6 +433,30 @@ def test_contract_documents_required_selection_and_unavailable_provider_error():
     assert "必填且非空" in ask_contract
     assert "422 VALIDATION_FAILED" in ask_contract
     assert "503 MODEL_UNAVAILABLE" in ask_contract
+
+
+def test_contract_documents_provider_error_semantics():
+    contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
+    ask_contract = contract.split("### 9.1 问答请求", 1)[1].split("### 9.2", 1)[0]
+
+    assert "404 NOT_FOUND" in ask_contract
+    assert "409 RESOURCE_STATE_CONFLICT" in ask_contract
+    assert "403 POLICY_DENIED" in ask_contract
+    assert "502 MODEL_AUTH_FAILED" in ask_contract
+    assert "502 MODEL_RESPONSE_INVALID" in ask_contract
+    assert "503 MODEL_UNAVAILABLE" in ask_contract
+
+
+def test_provider_contract_documents_has_api_key():
+    schemas = _spec()["components"]["schemas"]
+    for schema_name in ("Provider", "AdminProvider"):
+        schema = schemas[schema_name]
+        assert "has_api_key" in schema["required"]
+        assert schema["properties"]["has_api_key"]["type"] == "boolean"
+
+    contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
+    provider_contract = contract.split("供应商 `provider_type` 仅允许：", 1)[1]
+    assert "`has_api_key`" in provider_contract
 
 
 def test_page_map_disables_send_until_all_required_selections_exist():

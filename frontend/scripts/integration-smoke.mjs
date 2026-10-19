@@ -14,9 +14,28 @@ const memberEmail = `member-${Date.now()}@example.com`
 const memberPassword = 'password-123'
 const teamName = `联调团队-${Date.now()}`
 const kbName = `联调知识库-${Date.now()}`
-const providerName = 'E2E Provider'
 const providerModel = 'fake-model'
 const fakeAnswer = 'Answer from fake provider [c1].'
+const providerSpecs = [
+  {
+    name: 'E2E Responses Provider',
+    providerType: 'openai_responses',
+    path: '/v1/responses',
+    auth: 'bearer',
+  },
+  {
+    name: 'E2E Chat Provider',
+    providerType: 'openai_chat_completions',
+    path: '/v1/chat/completions',
+    auth: 'bearer',
+  },
+  {
+    name: 'E2E Anthropic Provider',
+    providerType: 'anthropic_messages',
+    path: '/v1/messages',
+    auth: 'anthropic',
+  },
+]
 
 const artifactsDir = resolve('artifacts')
 await mkdir(artifactsDir, { recursive: true })
@@ -31,6 +50,61 @@ const providerServer = createServer(async (request, response) => {
     headers: request.headers,
     payload,
   })
+
+  if (request.url === '/v1/responses') {
+    if (payload.stream) {
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      })
+      response.end(
+        'event: response.output_text.delta\n' +
+          'data: {"type":"response.output_text.delta","delta":"Answer from "}\n\n' +
+          'event: response.output_text.delta\n' +
+          'data: {"type":"response.output_text.delta","delta":"fake provider [c1]."}\n\n' +
+          'event: response.completed\n' +
+          'data: {"type":"response.completed"}\n\n',
+      )
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(
+      JSON.stringify({
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: fakeAnswer }],
+          },
+        ],
+      }),
+    )
+    return
+  }
+
+  if (request.url === '/v1/messages') {
+    if (payload.stream) {
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      })
+      response.end(
+        'event: content_block_delta\n' +
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Answer from "}}\n\n' +
+          'event: content_block_delta\n' +
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"fake provider [c1]."}}\n\n' +
+          'event: message_stop\n' +
+          'data: {"type":"message_stop"}\n\n',
+      )
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(
+      JSON.stringify({
+        content: [{ type: 'text', text: fakeAnswer }],
+      }),
+    )
+    return
+  }
 
   if (payload.stream) {
     response.writeHead(200, {
@@ -168,7 +242,7 @@ async function waitForDocumentActive(teamId, documentId) {
   throw new Error(`document ingestion timed out: ${documentId}`)
 }
 
-async function setupFakeProvider() {
+async function setupFakeProviders() {
   const teamId = await page.evaluate(() =>
     window.localStorage.getItem('techvault.team_id'),
   )
@@ -179,24 +253,29 @@ async function setupFakeProvider() {
   const knowledgeBase = knowledgeBases.data.find((item) => item.name === kbName)
   if (!knowledgeBase) throw new Error(`knowledge base not found: ${kbName}`)
 
-  const provider = (
-    await apiRequest('/providers/create', {
-      method: 'POST',
-      body: {
-        team_id: teamId,
-        name: providerName,
-        provider_type: 'openai_chat_completions',
-        base_url: providerBaseUrl,
-        api_key: 'sk-e2e',
-        model_ids: [providerModel],
-      },
-    })
-  ).data
+  const providers = []
+  for (const spec of providerSpecs) {
+    const provider = (
+      await apiRequest('/providers/create', {
+        method: 'POST',
+        body: {
+          team_id: teamId,
+          name: spec.name,
+          provider_type: spec.providerType,
+          base_url: providerBaseUrl,
+          api_key: 'sk-e2e',
+          model_ids: [providerModel],
+        },
+      })
+    ).data
+    providers.push({ ...spec, ...provider })
+  }
+  const providerIds = providers.map((provider) => provider.id)
   await apiRequest('/admin/model-policy/update', {
     method: 'POST',
     body: {
       mode: 'external_allowed',
-      allowed_provider_ids: [provider.id],
+      allowed_provider_ids: providerIds,
       max_data_classification: 'internal',
     },
   })
@@ -205,7 +284,7 @@ async function setupFakeProvider() {
     body: {
       team_id: teamId,
       mode: 'external_allowed',
-      allowed_provider_ids: [provider.id],
+      allowed_provider_ids: providerIds,
       max_data_classification: 'internal',
     },
   })
@@ -227,7 +306,7 @@ async function setupFakeProvider() {
 
   const upload = await uploadDocument(teamId, knowledgeBase.id)
   await waitForDocumentActive(teamId, upload.document.id)
-  return { provider, teamId, knowledgeBaseId: knowledgeBase.id }
+  return { providers, teamId, knowledgeBaseId: knowledgeBase.id }
 }
 
 async function assertNoHorizontalOverflow(label) {
@@ -243,13 +322,18 @@ async function assertNoHorizontalOverflow(label) {
   }
 }
 
-async function verifyChatProviderFlow(provider) {
+async function verifyChatProviderFlow(provider, streamEnabled) {
   await page.goto(`${frontendUrl}/chat`)
   await page.waitForSelector('[data-testid="chat-provider-select"]')
   await page
     .locator('[data-testid^="chat-kb-"][aria-pressed="true"]')
     .waitFor()
   await page.fill('[data-testid="question-input"]', 'What are virtual threads?')
+  if (streamEnabled) {
+    await page.check('[data-testid="chat-stream-toggle"]')
+  } else {
+    await page.uncheck('[data-testid="chat-stream-toggle"]')
+  }
 
   const sendButton = page.getByTestId('send-message')
   if (!(await sendButton.isDisabled())) {
@@ -259,13 +343,18 @@ async function verifyChatProviderFlow(provider) {
     const style = window.getComputedStyle(element)
     return { background: style.backgroundColor, color: style.color }
   })
+  if (disabledStyle.background !== 'rgb(226, 232, 240)') {
+    throw new Error(
+      `send button disabled background was ${disabledStyle.background}`,
+    )
+  }
   await page.screenshot({
     path: resolve(artifactsDir, 'frontend-chat-provider-disabled.png'),
     fullPage: true,
   })
 
   await page.selectOption('[data-testid="chat-provider-select"]', {
-    label: providerName,
+    label: provider.name,
   })
   await page.selectOption('[data-testid="chat-model-select"]', providerModel)
   if (await sendButton.isDisabled()) {
@@ -282,13 +371,39 @@ async function verifyChatProviderFlow(provider) {
     throw new Error('send button does not have a visibly gray disabled state')
   }
   await page.screenshot({
-    path: resolve(artifactsDir, 'frontend-chat-provider-selected.png'),
+    path: resolve(
+      artifactsDir,
+      `frontend-chat-provider-selected-${provider.providerType}-${
+        streamEnabled ? 'stream' : 'nonstream'
+      }.png`,
+    ),
     fullPage: true,
   })
 
+  const requestCount = providerRequests.length
+  const askResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/v1/chats/ask') &&
+      response.request().method() === 'POST' &&
+      response.ok(),
+    { timeout: 30_000 },
+  )
   await sendButton.click()
-  await page.getByText(fakeAnswer, { exact: true }).waitFor({ timeout: 30_000 })
+  await askResponse
+  await page.getByText(fakeAnswer, { exact: true }).last().waitFor({
+    timeout: 30_000,
+  })
   await page.getByTestId('send-message').waitFor({ state: 'visible' })
+  const deadline = Date.now() + 5_000
+  while (providerRequests.length <= requestCount && Date.now() < deadline) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25))
+  }
+  if (providerRequests.length !== requestCount + 1) {
+    throw new Error(
+      `expected one provider request for ${provider.providerType}, ` +
+        `received ${providerRequests.length - requestCount}`,
+    )
+  }
   if (
     (await page.inputValue('[data-testid="chat-provider-select"]')) !==
     provider.id
@@ -302,7 +417,12 @@ async function verifyChatProviderFlow(provider) {
   }
   await assertNoHorizontalOverflow('desktop chat')
   await page.screenshot({
-    path: resolve(artifactsDir, 'frontend-chat-provider-result.png'),
+    path: resolve(
+      artifactsDir,
+      `frontend-chat-provider-result-${provider.providerType}-${
+        streamEnabled ? 'stream' : 'nonstream'
+      }.png`,
+    ),
     fullPage: true,
   })
 
@@ -310,7 +430,12 @@ async function verifyChatProviderFlow(provider) {
   await page.getByText(fakeAnswer, { exact: true }).waitFor()
   await assertNoHorizontalOverflow('mobile chat')
   await page.screenshot({
-    path: resolve(artifactsDir, 'frontend-chat-provider-result-mobile.png'),
+    path: resolve(
+      artifactsDir,
+      `frontend-chat-provider-result-${provider.providerType}-${
+        streamEnabled ? 'stream' : 'nonstream'
+      }-mobile.png`,
+    ),
     fullPage: true,
   })
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -332,23 +457,32 @@ async function verifyChatProviderFlow(provider) {
         `console=${relevantConsoleErrors.join(' | ')}`,
     )
   }
-  if (providerRequests.length !== 1) {
-    throw new Error(
-      `expected one fake provider call, received ${providerRequests.length}`,
-    )
-  }
-  const providerRequest = providerRequests[0]
-  if (providerRequest.path !== '/v1/chat/completions') {
+  const providerRequest = providerRequests[providerRequests.length - 1]
+  if (providerRequest.path !== provider.path) {
     throw new Error(`unexpected provider path: ${providerRequest.path}`)
   }
-  if (providerRequest.headers.authorization !== 'Bearer sk-e2e') {
-    throw new Error('provider API key was not sent to the fake provider')
+  if (provider.auth === 'anthropic') {
+    if (providerRequest.headers['x-api-key'] !== 'sk-e2e') {
+      throw new Error('Anthropic provider API key was not sent')
+    }
+    if (providerRequest.headers['anthropic-version'] !== '2023-06-01') {
+      throw new Error('Anthropic version header was not sent')
+    }
+  } else if (providerRequest.headers.authorization !== 'Bearer sk-e2e') {
+    throw new Error('Bearer provider API key was not sent')
   }
   if (providerRequest.payload.model !== providerModel) {
     throw new Error('selected model was not sent to the fake provider')
   }
-  if (providerRequest.payload.stream !== true) {
-    throw new Error('browser ask did not use stream mode')
+  if (providerRequest.payload.stream !== streamEnabled) {
+    throw new Error('browser ask did not use the selected stream mode')
+  }
+  const prompt =
+    provider.providerType === 'openai_responses'
+      ? providerRequest.payload.input
+      : providerRequest.payload.messages[0].content
+  if (!prompt.includes('Virtual threads are lightweight Java threads.')) {
+    throw new Error('provider prompt did not contain retrieved context')
   }
 }
 
@@ -368,8 +502,11 @@ try {
   await page.click('[data-testid="kb-save"]')
   await page.getByText(kbName, { exact: true }).waitFor()
 
-  const { provider } = await setupFakeProvider()
-  await verifyChatProviderFlow(provider)
+  const { providers } = await setupFakeProviders()
+  for (const provider of providers) {
+    await verifyChatProviderFlow(provider, true)
+    await verifyChatProviderFlow(provider, false)
+  }
 
   await page.goto(`${frontendUrl}/admin/users`)
   await page.waitForSelector('[data-testid="admin-user-team"]')

@@ -74,7 +74,11 @@ const knowledgeBase: KnowledgeBase = {
 
 const modelPolicy: ModelPolicy = {
   mode: 'external_allowed',
-  allowed_provider_ids: ['provider-1', 'provider-2'],
+  allowed_provider_ids: [
+    'provider-1',
+    'provider-2',
+    'provider-empty-models',
+  ],
   max_data_classification: 'internal',
   allow_chat_history: true,
   allow_document_metadata: true,
@@ -121,6 +125,14 @@ const providers: ModelProvider[] = [
     name: 'Policy Blocked Provider',
     provider_type: 'openai_chat_completions',
     model_ids: ['blocked-model'],
+    status: 'active',
+    has_api_key: true,
+  },
+  {
+    id: 'provider-empty-models',
+    name: 'Provider Without Models',
+    provider_type: 'openai_chat_completions',
+    model_ids: [],
     status: 'active',
     has_api_key: true,
   },
@@ -465,6 +477,77 @@ describe('ChatPage', () => {
         .findAll('option')
         .map((option) => option.text()),
     ).toEqual(['选择供应商', 'Team Two Provider'])
+  })
+
+  it('ignores a late same-team provider response after a newer request', async () => {
+    const firstProviders = deferred<{
+      data: ModelProvider[]
+      meta: {
+        next_cursor: null
+        has_more: boolean
+        request_id: string
+      }
+    }>()
+    const firstPolicy = deferred<ModelPolicy>()
+    apiMocks.listProviders.mockImplementationOnce(() => firstProviders.promise)
+    apiMocks.getPolicy.mockImplementationOnce(() => firstPolicy.promise)
+
+    const { wrapper } = await mountPage('/chat')
+    const teamTwoProvider: ModelProvider = {
+      ...providers[1],
+      id: 'provider-team-2',
+      name: 'Team Two Provider',
+      model_ids: ['team-2-model'],
+    }
+    const latestProvider: ModelProvider = {
+      ...providers[1],
+      id: 'provider-team-1-latest',
+      name: 'Latest Team One Provider',
+      model_ids: ['latest-model'],
+    }
+    apiMocks.listProviders
+      .mockResolvedValueOnce({
+        data: [teamTwoProvider],
+        meta: { next_cursor: null, has_more: false, request_id: 'req-team-2' },
+      })
+      .mockResolvedValueOnce({
+        data: [latestProvider],
+        meta: { next_cursor: null, has_more: false, request_id: 'req-team-1-latest' },
+      })
+    apiMocks.getPolicy
+      .mockResolvedValueOnce({
+        ...modelPolicy,
+        allowed_provider_ids: ['provider-team-2'],
+      })
+      .mockResolvedValueOnce({
+        ...modelPolicy,
+        allowed_provider_ids: ['provider-team-1-latest'],
+      })
+
+    useTeamStore().selectTeam('team-2')
+    await flushPromises()
+    useTeamStore().selectTeam('team-1')
+    await flushPromises()
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Latest Team One Provider'])
+
+    firstProviders.resolve({
+      data: [providers[0]],
+      meta: { next_cursor: null, has_more: false, request_id: 'req-team-1-first' },
+    })
+    firstPolicy.resolve(modelPolicy)
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Latest Team One Provider'])
   })
 
   it('includes provider and model in the ask request', async () => {

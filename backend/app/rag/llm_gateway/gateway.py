@@ -14,6 +14,7 @@ from backend.app.rag.domain.models import (
     ModelPolicyDecision,
     RetrievedChunk,
 )
+from backend.app.rag.llm_gateway.providers import ProviderAdapterError
 
 
 class PolicyDeniedError(PermissionError):
@@ -287,10 +288,7 @@ class LlmGateway:
         ):
             return False
         provider_id = str(getattr(provider, "provider_id", "") or "")
-        if (
-            self._decision.allowed_provider_ids
-            and provider_id not in self._decision.allowed_provider_ids
-        ):
+        if provider_id not in self._decision.allowed_provider_ids:
             return False
         model_id = str(getattr(provider, "model_id", "") or "")
         if (
@@ -317,10 +315,7 @@ class LlmGateway:
             )
 
         provider_id = str(getattr(provider, "provider_id", "") or "")
-        if (
-            self._decision.allowed_provider_ids
-            and provider_id not in self._decision.allowed_provider_ids
-        ):
+        if provider_id not in self._decision.allowed_provider_ids:
             raise PolicyDeniedError(
                 "Answer provider is not approved by policy."
             )
@@ -638,6 +633,8 @@ class LlmGateway:
                 chunks=effective_chunks,
                 max_chunks=max_chunks,
             )
+        except ProviderAdapterError:
+            raise
         except Exception as error:
             raise ModelUnavailableError("Answer provider failed.") from error
 
@@ -743,6 +740,8 @@ class LlmGateway:
                         for piece in _completed_text_slices(result.text):
                             yield piece
                     completed = True
+            except ProviderAdapterError:
+                raise
             except Exception as error:
                 raise ModelUnavailableError("Answer provider failed.") from error
             finally:

@@ -98,3 +98,24 @@ def test_model_discovery_reports_authentication_failure():
 
     assert caught.value.status_code == 400
     assert caught.value.code == "MODEL_LIST_AUTH_FAILED"
+
+
+def test_model_discovery_detaches_transport_exception_chain():
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            500,
+            request=request,
+            json={"error": {"message": "upstream failed"}},
+        )
+    )
+
+    with pytest.raises(ModelDiscoveryError) as caught:
+        discover_models(
+            provider_type="openai_responses",
+            base_url="https://gateway.example",
+            api_key="sk-secret",
+            transport=transport,
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None

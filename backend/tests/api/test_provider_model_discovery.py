@@ -1,6 +1,11 @@
+import pytest
+from pydantic import SecretStr
+
 import backend.app.api.v1.model_policy as model_policy_module
+from backend.app.api.errors import ApiError
 from backend.app.core.secrets import decrypt_secret
 from backend.app.db.models import ModelProvider
+from backend.app.modules.providers.discovery import ModelDiscoveryError
 
 
 def _create_team(api_client, admin_headers):
@@ -124,3 +129,24 @@ def test_provider_type_only_accepts_supported_upstream_formats(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_model_discovery_api_error_detaches_exception_chain(monkeypatch):
+    def fail_discovery(**_kwargs):
+        raise ModelDiscoveryError(
+            502,
+            "MODEL_LIST_UNAVAILABLE",
+            "Upstream model list service is unavailable.",
+        )
+
+    monkeypatch.setattr(model_policy_module, "discover_models", fail_discovery)
+
+    with pytest.raises(ApiError) as caught:
+        model_policy_module._discover_provider_models(
+            provider_type="openai_responses",
+            base_url="https://gateway.example",
+            api_key=SecretStr("sk-secret"),
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None

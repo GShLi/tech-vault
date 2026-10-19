@@ -5540,6 +5540,7 @@ components:
       - base_url
       - model_ids
       - status
+      - has_api_key
       properties:
         id:
           type: string
@@ -5551,6 +5552,8 @@ components:
           type: string
         api_key_masked:
           type: string
+        has_api_key:
+          type: boolean
         api_key_updated_at:
           type: string
           format: date-time
@@ -5570,6 +5573,7 @@ components:
       - base_url
       - model_ids
       - status
+      - has_api_key
       properties:
         id:
           type: string
@@ -5585,6 +5589,8 @@ components:
             type: string
         api_key_masked:
           type: string
+        has_api_key:
+          type: boolean
         api_key_updated_at:
           type: string
           format: date-time

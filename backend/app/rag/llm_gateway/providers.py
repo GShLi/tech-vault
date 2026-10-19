@@ -250,6 +250,18 @@ def _parse_provider_stream_event(
 
         if normalized_type == "responses":
             event_type = payload.get("type")
+            if event_type == "response.failed":
+                raise ProviderAdapterError(
+                    503,
+                    "MODEL_UNAVAILABLE",
+                    "Responses API reported a failed response.",
+                )
+            if event_type == "response.incomplete":
+                raise ProviderAdapterError(
+                    502,
+                    "MODEL_RESPONSE_INVALID",
+                    "Responses API reported an incomplete response.",
+                )
             if event_type == "response.completed":
                 terminal = True
             elif event_type in {None, "response.output_text.delta"}:
@@ -547,6 +559,19 @@ class OpenAIResponsesAdapter(_HttpProviderAdapter):
         }
 
     def _response_text(self, payload: Dict[str, Any]) -> str:
+        status = payload.get("status")
+        if status == "failed":
+            raise ProviderAdapterError(
+                503,
+                "MODEL_UNAVAILABLE",
+                "Responses API reported a failed response.",
+            )
+        if status == "incomplete":
+            raise ProviderAdapterError(
+                502,
+                "MODEL_RESPONSE_INVALID",
+                "Responses API reported an incomplete response.",
+            )
         output_text = payload.get("output_text")
         if isinstance(output_text, str):
             return output_text

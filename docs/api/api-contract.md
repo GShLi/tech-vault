@@ -450,9 +450,13 @@ Content-Type: application/json
 `provider_id` 和 `model_id` 必填且非空。客户端从
 `GET /providers?team_id=` 返回的可用供应商及其 `model_ids` 中选择，并且只能选择
 当前有效模型策略允许的供应商和模型。缺少、空白或格式非法的选择返回
-`422 VALIDATION_FAILED`；所选供应商不存在、未启用或模型未配置时返回
-`400 INVALID_ARGUMENT`；已配置供应商凭据缺失、不可解密或上游不可用时返回
-`503 MODEL_UNAVAILABLE`。问答接口不得回退到本地抽取式生成。
+`422 VALIDATION_FAILED`；所选供应商不存在或不属于当前团队时返回
+`404 NOT_FOUND`；供应商未启用时返回 `409 RESOURCE_STATE_CONFLICT`；模型未配置在
+所选供应商上时返回 `400 INVALID_ARGUMENT`；已配置供应商凭据缺失或不可解密时返回
+`409 RESOURCE_STATE_CONFLICT`；供应商不在有效策略的 `allowed_provider_ids` 中时返回
+`403 POLICY_DENIED`；上游认证失败返回 `502 MODEL_AUTH_FAILED`；上游超时或不可用返回
+`503 MODEL_UNAVAILABLE`；上游响应格式无效返回 `502 MODEL_RESPONSE_INVALID`。
+问答接口不得回退到本地抽取式生成。
 
 ### 9.2 SSE 事件
 
@@ -636,7 +640,9 @@ OpenAI 两种格式均通过 `GET {base_url}/v1/models` 获取模型列表，使
 `anthropic-version: 2023-06-01`。Base URL 允许填写根地址、`/v1` 地址或完整推理
 地址，后端会规范化为模型列表地址。
 
-API Key 只写不读。任何响应都不得返回完整密钥，只能返回掩码和最后更新时间。
+API Key 只写不读。任何响应都不得返回完整密钥，只能返回 `api_key_masked`、
+`api_key_updated_at` 和布尔值 `has_api_key`；`has_api_key` 表示服务端是否保存了可用
+密钥，供客户端过滤不可用供应商。
 上游不提供模型列表接口时，模型发现返回结构化错误，客户端仍可手动填写模型 ID。
 
 ## 14. 索引管理

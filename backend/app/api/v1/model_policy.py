@@ -176,14 +176,18 @@ def _discover_provider_models(
     base_url: str,
     api_key: SecretStr,
 ) -> list[str]:
+    pending_error = None
     try:
-        return discover_models(
+        models = discover_models(
             provider_type=provider_type,
             base_url=base_url,
             api_key=api_key.get_secret_value(),
         )
     except ModelDiscoveryError as error:
-        raise ApiError(error.status_code, error.code, str(error)) from error
+        pending_error = ApiError(error.status_code, error.code, str(error))
+    if pending_error is not None:
+        raise pending_error
+    return models
 
 
 def _policy_view(policy: ModelPolicyRecord) -> dict:

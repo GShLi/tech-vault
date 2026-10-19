@@ -113,6 +113,7 @@ def discover_models(
     url = normalize_model_list_url(base_url)
     headers = _headers(provider_type, api_key.strip())
     discovered: List[str] = []
+    pending_error: Optional[ModelDiscoveryError] = None
     try:
         with httpx.Client(
             timeout=timeout,
@@ -128,27 +129,30 @@ def discover_models(
                         params["after_id"] = after_id
                 response = client.get(url, headers=headers, params=params)
                 if response.status_code in {401, 403}:
-                    raise ModelDiscoveryError(
+                    pending_error = ModelDiscoveryError(
                         400,
                         "MODEL_LIST_AUTH_FAILED",
                         "Upstream rejected the API Key.",
                     )
+                    break
                 if response.status_code == 404:
-                    raise ModelDiscoveryError(
+                    pending_error = ModelDiscoveryError(
                         502,
                         "MODEL_LIST_UNSUPPORTED",
                         "Upstream does not provide a model list endpoint.",
                     )
+                    break
                 response.raise_for_status()
                 try:
                     payload = response.json()
                     models, has_more, last_id = _model_ids(payload)
-                except ValueError as error:
-                    raise ModelDiscoveryError(
+                except ValueError:
+                    pending_error = ModelDiscoveryError(
                         502,
                         "MODEL_LIST_INVALID_RESPONSE",
                         "Upstream returned an invalid model list response.",
-                    ) from error
+                    )
+                    break
                 for model_id in models:
                     if model_id not in discovered:
                         discovered.append(model_id)
@@ -159,20 +163,20 @@ def discover_models(
                 ):
                     break
                 after_id = last_id
-    except ModelDiscoveryError:
-        raise
     except httpx.HTTPStatusError as error:
-        raise ModelDiscoveryError(
+        pending_error = ModelDiscoveryError(
             502,
             "MODEL_LIST_UNAVAILABLE",
             "Upstream model list request failed with HTTP {0}.".format(
                 error.response.status_code
             ),
-        ) from error
-    except Exception as error:
-        raise ModelDiscoveryError(
+        )
+    except Exception:
+        pending_error = ModelDiscoveryError(
             502,
             "MODEL_LIST_UNAVAILABLE",
             "Upstream model list service is unavailable.",
-        ) from error
+        )
+    if pending_error is not None:
+        raise pending_error
     return discovered

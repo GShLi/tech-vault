@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from backend.app.api.errors import ApiError
-from backend.app.core.config import Settings
 from backend.app.core.llm_policy import assert_external_call_allowed
 from backend.app.db.models import ModelProvider
 from backend.app.rag.domain.models import DataClassification, ModelPolicyDecision
@@ -23,13 +22,20 @@ def _invalid(message: str) -> ApiError:
     return ApiError(400, "INVALID_ARGUMENT", message)
 
 
+def _not_found(message: str) -> ApiError:
+    return ApiError(404, "NOT_FOUND", message)
+
+
+def _state_conflict(message: str) -> ApiError:
+    return ApiError(409, "RESOURCE_STATE_CONFLICT", message)
+
+
 def resolve_provider(
     session: Session,
     team_id: str,
     provider_id: str,
     model_id: str,
     decision: ModelPolicyDecision,
-    settings: Settings,
 ) -> ResolvedProvider:
     normalized_provider_id = provider_id.strip()
     normalized_model_id = model_id.strip()
@@ -38,11 +44,11 @@ def resolve_provider(
 
     provider = session.get(ModelProvider, normalized_provider_id)
     if provider is None:
-        raise _invalid("Provider was not found.")
+        raise _not_found("Provider was not found.")
     if provider.team_id not in {None, team_id}:
-        raise _invalid("Provider is not available to this team.")
+        raise _not_found("Provider was not found.")
     if provider.status != "active":
-        raise _invalid("Provider is not active.")
+        raise _state_conflict("Provider is not active.")
 
     try:
         model_ids = json.loads(provider.model_ids or "[]")
@@ -51,16 +57,17 @@ def resolve_provider(
     if not isinstance(model_ids, list) or normalized_model_id not in model_ids:
         raise _invalid("Model is not configured on the selected provider.")
     if not provider.api_key_encrypted.strip():
-        raise ApiError(
-            503,
-            "MODEL_UNAVAILABLE",
-            "Provider credentials are unavailable.",
-        )
+        raise _state_conflict("Provider credentials are unavailable.")
 
-    if (
-        decision.allowed_provider_ids
-        and provider.id not in decision.allowed_provider_ids
-    ):
+    try:
+        assert_external_call_allowed(decision, DataClassification.INTERNAL)
+    except PermissionError as error:
+        raise ApiError(
+            403,
+            "POLICY_DENIED",
+            "External answer generation is forbidden by policy.",
+        ) from error
+    if provider.id not in decision.allowed_provider_ids:
         raise ApiError(
             403,
             "POLICY_DENIED",
@@ -75,14 +82,6 @@ def resolve_provider(
             "POLICY_DENIED",
             "Model is not approved by policy.",
         )
-    try:
-        assert_external_call_allowed(decision, DataClassification.INTERNAL)
-    except PermissionError as error:
-        raise ApiError(
-            403,
-            "POLICY_DENIED",
-            "External answer generation is forbidden by policy.",
-        ) from error
 
     return ResolvedProvider(
         provider_id=provider.id,

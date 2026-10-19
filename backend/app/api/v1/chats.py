@@ -442,13 +442,7 @@ def _build_gateway(
             model_id=resolved_provider.model_id,
         )
     except ProviderAdapterError as error:
-        if error.code == "INVALID_ARGUMENT":
-            raise ApiError(400, "INVALID_ARGUMENT", str(error)) from error
-        raise ApiError(
-            503,
-            "MODEL_UNAVAILABLE",
-            "Provider is unavailable.",
-        ) from error
+        raise ApiError(error.status_code, error.code, str(error)) from error
     audits: List[GatewayAudit] = []
     return LlmGateway(
         decision=decision,
@@ -543,6 +537,7 @@ def _stream_answer_response(
     engine_mode: EngineMode,
     explicit_document_grants: Sequence[str],
     message_id: str,
+    policy_latency_ms: float,
 ) -> StreamingResponse:
     session_factory = request.app.state.session_factory
 
@@ -685,15 +680,12 @@ def _stream_answer_response(
                         if answer is not None
                         else resolved_provider.model_id
                     ),
-                    "route": answer.route if answer is not None else None,
-                    "external": bool(
-                        answer is not None
-                        and gateway_instance is not None
-                        and any(
-                            audit.external and audit.purpose == "answer"
-                            for audit in gateway_instance.audits
-                        )
+                    "route": (
+                        answer.route
+                        if answer is not None
+                        else resolved_provider.provider_type
                     ),
+                    "external": True,
                     "policy": policy.reason_code if policy is not None else None,
                     "policy_version": (
                         policy.policy_version if policy is not None else None
@@ -748,7 +740,7 @@ def _stream_answer_response(
         policy = decision
         gateway = None
         classification = DataClassification.INTERNAL
-        stage_latency: dict[str, float] = {}
+        stage_latency: dict[str, float] = {"policy_ms": policy_latency_ms}
         fallback_trace_id = str(uuid.uuid4())
 
         async def ensure_active() -> None:
@@ -770,9 +762,7 @@ def _stream_answer_response(
             await asyncio.sleep(0)
 
             await ensure_active()
-            started = time.perf_counter()
             gateway = _build_gateway(request, decision, resolved_provider)
-            stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
 
             await ensure_active()
             started = time.perf_counter()
@@ -941,6 +931,7 @@ def _stream_answer_response(
                 gateway_instance=gateway,
                 classification=classification,
                 terminal_status=answer.status,
+                stage_latency=stage_latency,
             )
             persist_audits(gateway)
 
@@ -1013,6 +1004,8 @@ def _stream_answer_response(
                 code = "POLICY_DENIED"
             elif isinstance(error, ModelUnavailableError):
                 code = "MODEL_UNAVAILABLE"
+            elif isinstance(error, ProviderAdapterError):
+                code = error.code
             elif isinstance(error, ApiError):
                 code = error.code
             persist_message("failed", sent_text)
@@ -1100,7 +1093,6 @@ async def ask(
         body.provider_id,
         body.model_id,
         policy,
-        request.app.state.settings,
     )
     stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
 
@@ -1239,8 +1231,8 @@ async def ask(
                         "status": "failed",
                         "provider_id": resolved_provider.provider_id,
                         "model_id": resolved_provider.model_id,
-                        "route": None,
-                        "external": False,
+                        "route": resolved_provider.provider_type,
+                        "external": True,
                         "policy": policy.reason_code if policy is not None else None,
                         "policy_version": (
                             policy.policy_version if policy is not None else None
@@ -1290,6 +1282,7 @@ async def ask(
             engine_mode=engine_mode,
             explicit_document_grants=explicit_document_grants,
             message_id=assistant_message.id,
+            policy_latency_ms=stage_latency["policy_ms"],
         )
 
     gateway = None
@@ -1425,6 +1418,17 @@ async def ask(
             classification=classification,
         )
         raise ApiError(503, "MODEL_UNAVAILABLE", str(error)) from error
+    except ProviderAdapterError as error:
+        session.rollback()
+        persist_failure_trace(
+            error.code,
+            result=result,
+            rewrite=rewrite,
+            policy=policy,
+            gateway_instance=gateway,
+            classification=classification,
+        )
+        raise ApiError(error.status_code, error.code, str(error)) from error
     except ApiError as error:
         session.rollback()
         persist_failure_trace(

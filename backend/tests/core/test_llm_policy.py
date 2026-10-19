@@ -349,6 +349,10 @@ def test_external_gateway_sends_redacted_payload_and_marks_route():
     from backend.app.rag.llm_gateway import LlmGateway
 
     class ExternalProvider:
+        provider_id = "provider-a"
+        model_id = "external-model"
+        route = "external"
+
         def __init__(self):
             self.questions = []
 
@@ -368,6 +372,7 @@ def test_external_gateway_sends_redacted_payload_and_marks_route():
         decision=resolve_model_policy(
             deployment_mode="external_allowed",
             requested_classification=DataClassification.PUBLIC,
+            allowed_provider_ids=("provider-a",),
         ),
         external_answer_provider=provider,
         external_api_key="secret-key",
@@ -425,6 +430,7 @@ def test_policy_denial_after_external_identification_never_calls_provider(
         decision=resolve_model_policy(
             deployment_mode="external_allowed",
             requested_classification=policy_classification,
+            allowed_provider_ids=("provider-a",),
         ),
         external_answer_provider=provider,
         external_api_key="secret-key",
@@ -483,6 +489,7 @@ def test_stream_policy_denial_after_external_identification_never_calls_provider
         decision=resolve_model_policy(
             deployment_mode="external_allowed",
             requested_classification=policy_classification,
+            allowed_provider_ids=("provider-a",),
         ),
         external_answer_provider=provider,
         external_api_key="secret-key",
@@ -555,6 +562,7 @@ def test_redaction_failure_never_calls_external_answer_provider(
         decision=resolve_model_policy(
             deployment_mode="external_allowed",
             requested_classification=DataClassification.PUBLIC,
+            allowed_provider_ids=("provider-a",),
         ),
         external_answer_provider=provider,
         external_api_key="secret-key",
@@ -585,20 +593,11 @@ def test_redaction_failure_never_calls_external_answer_provider(
     assert gateway.audits == []
 
 
-@pytest.mark.parametrize(
-    "error",
-    [
-        RuntimeError("provider transport failed"),
-        ProviderAdapterError(
-            503,
-            "MODEL_UNAVAILABLE",
-            "Upstream model service is unavailable.",
-        ),
-    ],
-)
-def test_answer_provider_failure_normalizes_to_model_unavailable(error):
+def test_answer_provider_runtime_failure_normalizes_to_model_unavailable():
     from backend.app.core.llm_policy import resolve_model_policy
     from backend.app.rag.llm_gateway import LlmGateway, ModelUnavailableError
+
+    error = RuntimeError("provider transport failed")
 
     class Provider:
         provider_id = "provider-a"
@@ -612,6 +611,7 @@ def test_answer_provider_failure_normalizes_to_model_unavailable(error):
         decision=resolve_model_policy(
             deployment_mode="external_allowed",
             requested_classification=DataClassification.PUBLIC,
+            allowed_provider_ids=("provider-a",),
         ),
         external_answer_provider=Provider(),
         external_api_key="secret-key",
@@ -624,6 +624,85 @@ def test_answer_provider_failure_normalizes_to_model_unavailable(error):
             classification=DataClassification.PUBLIC,
         )
 
+    assert gateway.audits == []
+
+
+def test_answer_provider_adapter_error_preserves_status_and_code():
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway
+
+    error = ProviderAdapterError(
+        502,
+        "MODEL_AUTH_FAILED",
+        "Upstream rejected the provider API Key.",
+    )
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def generate(self, **_kwargs):
+            raise error
+
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.PUBLIC,
+            allowed_provider_ids=("provider-a",),
+        ),
+        external_answer_provider=Provider(),
+        external_api_key="secret-key",
+    )
+
+    with pytest.raises(ProviderAdapterError) as caught:
+        gateway.generate(
+            question="public question",
+            chunks=(),
+            classification=DataClassification.PUBLIC,
+        )
+
+    assert caught.value is error
+    assert caught.value.status_code == 502
+    assert caught.value.code == "MODEL_AUTH_FAILED"
+    assert gateway.audits == []
+
+
+def test_external_answer_provider_requires_non_empty_allow_list():
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, PolicyDeniedError
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("provider must not be called")
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.PUBLIC,
+            allowed_provider_ids=(),
+        ),
+        external_answer_provider=provider,
+        external_api_key="secret-key",
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        gateway.generate(
+            question="public question",
+            chunks=(),
+            classification=DataClassification.PUBLIC,
+        )
+
+    assert provider.calls == 0
     assert gateway.audits == []
 
 

@@ -54,31 +54,84 @@ class _FakeProviderServer:
                         }
                     )
 
+                if self.path.endswith("/responses"):
+                    body = self._responses_body(payload)
+                elif self.path.endswith("/messages"):
+                    body = self._anthropic_body(payload)
+                else:
+                    body = self._chat_body(payload)
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    (
+                        "text/event-stream"
+                        if payload.get("stream")
+                        else "application/json"
+                    ),
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _chat_body(self, payload) -> bytes:
                 if payload.get("stream"):
-                    body = (
+                    return (
                         'data: {"choices":[{"delta":{"content":"Answer from "}}]}\n\n'
                         'data: {"choices":[{"delta":{"content":"fake provider [c1]."}}]}\n\n'
                         "data: [DONE]\n\n"
                     ).encode()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-
-                body = json.dumps(
+                return json.dumps(
                     {
                         "choices": [
                             {"message": {"content": FAKE_ANSWER}},
                         ]
                     }
                 ).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+
+            def _responses_body(self, payload) -> bytes:
+                if payload.get("stream"):
+                    return (
+                        "event: response.output_text.delta\n"
+                        'data: {"type":"response.output_text.delta",'
+                        '"delta":"Answer from "}\n\n'
+                        "event: response.output_text.delta\n"
+                        'data: {"type":"response.output_text.delta",'
+                        '"delta":"fake provider [c1]."}\n\n'
+                        "event: response.completed\n"
+                        'data: {"type":"response.completed"}\n\n'
+                    ).encode()
+                return json.dumps(
+                    {
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [
+                                    {"type": "output_text", "text": FAKE_ANSWER}
+                                ],
+                            }
+                        ]
+                    }
+                ).encode()
+
+            def _anthropic_body(self, payload) -> bytes:
+                if payload.get("stream"):
+                    return (
+                        "event: content_block_delta\n"
+                        'data: {"type":"content_block_delta","delta":'
+                        '{"type":"text_delta","text":"Answer from "}}\n\n'
+                        "event: content_block_delta\n"
+                        'data: {"type":"content_block_delta","delta":'
+                        '{"type":"text_delta","text":"fake provider [c1]."}}\n\n'
+                        "event: message_stop\n"
+                        'data: {"type":"message_stop"}\n\n'
+                    ).encode()
+                return json.dumps(
+                    {
+                        "content": [
+                            {"type": "text", "text": FAKE_ANSWER},
+                        ]
+                    }
+                ).encode()
 
             def log_message(self, _format, *_args) -> None:
                 return
@@ -185,13 +238,19 @@ def _setup_chat(api_client, admin_headers):
     return team, knowledge_base, chat
 
 
-def _create_provider(api_client, admin_headers, team_id, base_url):
+def _create_provider(
+    api_client,
+    admin_headers,
+    team_id,
+    base_url,
+    provider_type,
+):
     response = api_client.post(
         "/api/v1/providers/create",
         json={
             "team_id": team_id,
             "name": "E2E Provider",
-            "provider_type": "openai_chat_completions",
+            "provider_type": provider_type,
             "base_url": base_url,
             "api_key": "sk-e2e",
             "model_ids": ["fake-model"],
@@ -367,6 +426,26 @@ def _sse_events(response_text):
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["non-stream", "stream"])
+@pytest.mark.parametrize(
+    ("provider_type", "expected_path", "prompt_location"),
+    [
+        (
+            "openai_responses",
+            "/v1/responses",
+            "input",
+        ),
+        (
+            "openai_chat_completions",
+            "/v1/chat/completions",
+            "messages",
+        ),
+        (
+            "anthropic_messages",
+            "/v1/messages",
+            "messages",
+        ),
+    ],
+)
 def test_chat_uses_selected_fake_provider(
     api_client,
     api_app,
@@ -374,6 +453,9 @@ def test_chat_uses_selected_fake_provider(
     fake_provider,
     monkeypatch,
     stream,
+    provider_type,
+    expected_path,
+    prompt_location,
 ):
     team, knowledge_base, chat = _setup_chat(api_client, admin_headers)
     provider = _create_provider(
@@ -381,6 +463,7 @@ def test_chat_uses_selected_fake_provider(
         admin_headers,
         team["id"],
         fake_provider.base_url,
+        provider_type,
     )
     _configure_external_policy(
         api_client,
@@ -445,15 +528,25 @@ def test_chat_uses_selected_fake_provider(
     model = trace.json()["data"]["model"]
     assert model["provider_id"] == provider["id"]
     assert model["model_id"] == "fake-model"
-    assert model["route"] == "openai_chat_completions"
+    assert model["route"] == provider_type
     assert model["external"] is True
     assert "sk-e2e" not in response.text
 
     assert len(fake_provider.requests) == 1
     provider_request = fake_provider.requests[0]
-    assert provider_request["path"] == "/v1/chat/completions"
-    assert provider_request["headers"]["Authorization"] == "Bearer sk-e2e"
+    assert provider_request["path"] == expected_path
+    if provider_type == "anthropic_messages":
+        assert provider_request["headers"]["x-api-key"] == "sk-e2e"
+        assert (
+            provider_request["headers"]["anthropic-version"]
+            == "2023-06-01"
+        )
+    else:
+        assert provider_request["headers"]["Authorization"] == "Bearer sk-e2e"
     assert provider_request["payload"]["model"] == "fake-model"
     assert provider_request["payload"]["stream"] is stream
-    prompt = provider_request["payload"]["messages"][0]["content"]
+    if prompt_location == "input":
+        prompt = provider_request["payload"]["input"]
+    else:
+        prompt = provider_request["payload"]["messages"][0]["content"]
     assert "Virtual threads are lightweight Java threads." in prompt

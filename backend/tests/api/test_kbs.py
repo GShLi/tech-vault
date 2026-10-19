@@ -1,6 +1,8 @@
-from sqlalchemy import select
+from datetime import datetime, timezone
 
-from backend.app.db.models import TeamMember, User
+from sqlalchemy import select, update
+
+from backend.app.db.models import KnowledgeBase, TeamMember, User
 from backend.tests.api.test_teams import _register_and_login
 
 
@@ -136,6 +138,57 @@ def test_kb_list_rejects_invalid_cursor(api_client):
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_kb_list_paginates_by_created_at_and_id(api_client, api_app):
+    headers = _register_and_login(api_client, email="kb-tiebreak@example.com")
+    team = _create_team(api_client, headers)
+    kb_ids = [
+        _create_kb(api_client, headers, team["id"], name=name)["id"]
+        for name in ("Java", "Python", "Rust")
+    ]
+
+    same_created_at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    with api_app.state.session_factory() as session:
+        session.execute(
+            update(KnowledgeBase)
+            .where(KnowledgeBase.id.in_(kb_ids))
+            .values(created_at=same_created_at)
+        )
+        session.commit()
+
+    first = api_client.get(
+        "/api/v1/kbs",
+        params={"team_id": team["id"], "limit": 1},
+        headers=headers,
+    ).json()
+    second = api_client.get(
+        "/api/v1/kbs",
+        params={
+            "team_id": team["id"],
+            "limit": 1,
+            "cursor": first["meta"]["next_cursor"],
+        },
+        headers=headers,
+    ).json()
+    third = api_client.get(
+        "/api/v1/kbs",
+        params={
+            "team_id": team["id"],
+            "limit": 1,
+            "cursor": second["meta"]["next_cursor"],
+        },
+        headers=headers,
+    ).json()
+
+    listed_ids = [
+        first["data"][0]["id"],
+        second["data"][0]["id"],
+        third["data"][0]["id"],
+    ]
+    assert listed_ids == sorted(kb_ids, reverse=True)
+    assert third["meta"]["has_more"] is False
+    assert third["meta"]["next_cursor"] is None
 
 
 def test_team_member_cannot_create_kb(api_client, api_app):

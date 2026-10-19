@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -54,5 +54,19 @@ def build_session_factory(engine: Engine) -> sessionmaker:
     )
 
 
+def _bridge_teams_description(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("teams"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("teams")}
+    if "description" in columns:
+        return
+
+    # PoC schema bridge; replace with Alembic migrations before production use.
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE teams ADD COLUMN description TEXT"))
+
+
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    _bridge_teams_description(engine)

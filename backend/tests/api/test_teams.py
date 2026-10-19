@@ -115,6 +115,27 @@ def test_team_list_rejects_invalid_cursor(api_client):
     assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_team_list_exact_limit_has_no_next_page(api_client):
+    headers = _register_and_login(api_client, email="team-exact-limit@example.com")
+    for name in ("One", "Two"):
+        response = api_client.post(
+            "/api/v1/teams/create",
+            json={"name": name},
+            headers=headers,
+        )
+        assert response.status_code == 201
+
+    page = api_client.get(
+        "/api/v1/teams",
+        params={"limit": 2},
+        headers=headers,
+    ).json()
+
+    assert len(page["data"]) == 2
+    assert page["meta"]["has_more"] is False
+    assert page["meta"]["next_cursor"] is None
+
+
 def test_team_update_requires_leader_and_if_match(api_client):
     headers = _register_and_login(api_client)
     team = api_client.post(

@@ -22,6 +22,35 @@ def test_decode_cursor_rejects_valid_base64_with_malformed_json():
     _assert_invalid(_encoded("{not-json"))
 
 
+@pytest.mark.parametrize("cursor", ["!!!!", "AA==="])
+def test_decode_cursor_rejects_invalid_base64_characters_and_padding(cursor):
+    _assert_invalid(cursor)
+
+
+def test_decode_cursor_rejects_json_list_payload():
+    _assert_invalid(
+        _encoded(
+            '[{"created_at":"2026-10-19T12:00:00+00:00",'
+            '"id":"00000000000000000000000000"}]'
+        )
+    )
+
+
+def test_decode_cursor_rejects_object_missing_id():
+    _assert_invalid(
+        _encoded('{"created_at":"2026-10-19T12:00:00+00:00"}')
+    )
+
+
+def test_decode_cursor_rejects_non_string_created_at():
+    _assert_invalid(
+        _encoded(
+            '{"created_at":20261019,'
+            '"id":"00000000000000000000000000"}'
+        )
+    )
+
+
 def test_decode_cursor_rejects_date_only_timestamp():
     _assert_invalid(
         _encoded(

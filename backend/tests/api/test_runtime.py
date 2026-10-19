@@ -90,6 +90,18 @@ def test_validation_error_uses_error_envelope(api_app):
     assert error["request_id"] == response.headers["X-Request-Id"]
 
 
+def test_http_exception_422_uses_validation_failed_code(api_app):
+    @api_app.get("/api/v1/test-http-validation")
+    def http_validation_route():
+        raise HTTPException(status_code=422, detail="Validation failed.")
+
+    with TestClient(api_app) as client:
+        response = client.get("/api/v1/test-http-validation")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
 def test_api_error_encodes_details(api_app):
     @api_app.get("/api/v1/test-api-error")
     def api_error_route():

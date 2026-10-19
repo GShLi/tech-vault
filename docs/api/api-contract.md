@@ -14,7 +14,7 @@ https://<host>/api/v1
 - 查询接口使用 `GET`，允许少量 query 参数：`team_id`、资源 ID、`limit`、`cursor`、`status`、`q`。
 - 新增、修改、删除、归档、重试、取消、激活等操作统一使用 `POST`，参数放在 JSON 请求体中。
 - 文件上传使用 `POST multipart/form-data`，业务参数放在表单字段。
-- 前端页面路由仍保留 `/teams/:teamId/...` 作为深链接；后端 API 不重复使用团队路径前缀。
+- 前端页面路由不包含 `team_id`；当前团队由前端状态维护，查询接口通过 query 传 `team_id`，写操作通过 body 传 `team_id`。
 
 ### 1.2 认证与权限
 

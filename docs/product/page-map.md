@@ -4,19 +4,24 @@
 
 ## 1. 全局约定
 
-### 1.1 路由前缀
+### 1.1 路由与团队上下文
 
-除公开页面外，所有业务页面统一使用：
+页面路由不包含团队 ID：
 
 ```text
-/teams/:teamId/...
+/chat
+/knowledge-bases
+/documents/:documentId
 ```
 
-`teamId` 是当前团队上下文，不得从 URL 参数之外隐式切换团队。前端切换团队时必须重新加载团队成员权限和知识库范围。
+当前团队由顶部团队选择器和前端状态维护：
 
-前端路由参数使用 `:teamId`、`:documentId` 形式；后端 API 不使用路径参数，团队 ID 和资源 ID 通过请求体或少量 GET query 参数传递。
-
-前端页面保留 `/teams/:teamId/...` 以便深链接；后端接口不把团队 ID 和资源 ID 放进 URL，统一通过请求体或少量 query 参数传递。
+- 登录后调用 `GET /auth/me` 获取团队列表。
+- 只有一个团队时自动选中；多个团队时恢复最近使用的团队，否则展示团队选择器。
+- 切换团队时清理旧团队查询缓存，并重新加载知识库和权限。
+- 查询 API 使用 `team_id` query 参数；写操作在 JSON body 中传 `team_id`。
+- 资源 ID 可以保留在前端路由中，但不会出现在后端 API 路径中。
+- 直接打开深链接而当前没有团队上下文时，先展示团队选择器，再加载资源。
 
 ### 1.2 角色
 
@@ -63,7 +68,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/chat`、`/teams/:teamId/chat/:conversationId` |
+| 路由 | `/chat`、`/chat/:chatId` |
 | 主要用户 | 所有已认证成员 |
 | 页面目标 | 选择知识库范围，提问，流式查看答案、引用、拒答和模型状态 |
 | 主要组件 | 知识库筛选器、产品/版本筛选器、会话列表、消息流、引用面板、模型状态、反馈按钮 |
@@ -80,7 +85,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/conversations` |
+| 路由 | `/chats` |
 | 页面目标 | 查看、重命名、删除和继续历史会话 |
 | 主要组件 | 会话列表、时间范围筛选、知识库筛选、删除确认 |
 | 依赖 API | `GET /chats?team_id=`、`POST /chats/update`、`POST /chats/delete` |
@@ -91,7 +96,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-bases` |
+| 路由 | `/knowledge-bases` |
 | 页面目标 | 查看知识库、成员范围、文档数量和默认策略 |
 | 主要组件 | 知识库卡片/表格、搜索、创建入口、状态标签 |
 | 依赖 API | `GET /kbs?team_id=`、`POST /kbs/create` |
@@ -100,7 +105,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-bases/:kbId` |
+| 路由 | `/knowledge-bases/:kbId` |
 | 页面目标 | 管理文档、来源、模型策略和索引状态 |
 | 主要组件 | 文档列表、上传入口、GitHub 来源、任务状态、知识库策略摘要 |
 | 依赖 API | `GET /kbs/detail?team_id=&kb_id=`、`GET /docs?team_id=&kb_id=`、`GET /sources?team_id=&kb_id=`、`GET /ingestions?team_id=` |
@@ -109,7 +114,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-bases/:kbId/upload` |
+| 路由 | `/knowledge-bases/:kbId/upload` |
 | 页面目标 | 上传 PDF、Markdown、TXT、DOCX 并设置元数据和可见性 |
 | 主要组件 | 拖拽上传、文件列表、产品/版本、可见性、数据分类、提交按钮 |
 | 依赖 API | `POST /docs/upload` |
@@ -118,7 +123,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-bases/:kbId/sources/github` |
+| 路由 | `/knowledge-bases/:kbId/sources/github` |
 | 页面目标 | 添加仓库、分支、路径白名单和同步策略 |
 | 主要组件 | 仓库 URL、分支、路径规则、扩展名、凭据选择、同步频率 |
 | 依赖 API | `POST /sources/github/create`、`GET /credentials?team_id=` |
@@ -127,7 +132,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/documents/:documentId` |
+| 路由 | `/documents/:documentId` |
 | 页面目标 | 查看文档元数据、版本、解析状态、权限和下载入口 |
 | 主要组件 | 元数据面板、版本时间线、来源链接、权限设置、重建按钮 |
 | 依赖 API | `GET /docs/detail?team_id=&document_id=`、`GET /docs/versions?team_id=&document_id=`、`POST /docs/update`、`GET /docs/download-url?team_id=&document_id=` |
@@ -136,7 +141,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/documents/:documentId/versions/:versionId` |
+| 路由 | `/documents/:documentId/versions/:versionId` |
 | 页面目标 | 查看版本内容、解析质量、索引 generation 和 chunk 列表 |
 | 主要组件 | 原文预览、版本切换、质量标记、chunk 入口 |
 | 依赖 API | `GET /docs/version?team_id=&document_id=&version_id=`、`GET /docs/chunks?team_id=&document_id=` |
@@ -145,7 +150,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-bases/:kbId/settings` |
+| 路由 | `/knowledge-bases/:kbId/settings` |
 | 页面目标 | 在团队策略上限内收紧知识库模型策略和默认数据分类 |
 | 主要组件 | 数据分类默认值、模型策略、供应商范围、策略继承说明 |
 | 依赖 API | `GET /kbs/policy?team_id=&kb_id=`、`POST /kbs/policy/update` |
@@ -156,7 +161,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/tasks`、`/teams/:teamId/tasks/:runId` |
+| 路由 | `/tasks`、`/tasks/:runId` |
 | 页面目标 | 查看入库、同步、重建和评测任务 |
 | 主要组件 | 任务表格、阶段进度、失败原因、重试、取消、事件流 |
 | 依赖 API | `GET /ingestions?team_id=`、`GET /ingestions/detail?team_id=&run_id=`、`GET /ingestions/events?team_id=&run_id=`、`POST /ingestions/retry`、`POST /ingestions/cancel` |
@@ -165,7 +170,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/chunks`、`/teams/:teamId/chunks/:chunkId` |
+| 路由 | `/chunks`、`/chunks/:chunkId` |
 | 页面目标 | 检查分块质量，编辑、禁用、启用和重新生成 |
 | 主要组件 | chunk 表格、原文定位、质量标记、编辑器、历史版本 |
 | 依赖 API | `GET /chunks?team_id=`、`GET /chunks/detail?team_id=&chunk_id=`、`POST /chunks/update`、`POST /chunks/disable`、`POST /chunks/enable`、`POST /chunks/regenerate`、`GET /chunks/history?team_id=&chunk_id=` |
@@ -174,7 +179,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/traces`、`/teams/:teamId/traces/:traceId` |
+| 路由 | `/traces`、`/traces/:traceId` |
 | 主要用户 | `leader`、研发 |
 | 页面目标 | 查看 Query Rewrite、过滤条件、候选、RRF、Rerank、最终上下文和模型信息 |
 | 主要组件 | Trace 列表、阶段时间线、候选表格、引用映射、降级标记 |
@@ -184,7 +189,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/knowledge-gaps` |
+| 路由 | `/knowledge-gaps` |
 | 页面目标 | 聚合无答案、引用错误和高频失败问题 |
 | 主要组件 | 问题聚类、来源、状态、转评测样本 |
 | 依赖 API | `GET /gaps?team_id=`、`POST /gaps/update`、`POST /gaps/promote` |
@@ -195,7 +200,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/evaluations` |
+| 路由 | `/evaluations` |
 | 页面目标 | 管理开发集、测试集和版本 |
 | 主要组件 | 数据集列表、版本、样本数量、最近一次运行 |
 | 依赖 API | `GET /evals/datasets?team_id=`、`POST /evals/datasets/create` |
@@ -204,7 +209,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/evaluations/:datasetId` |
+| 路由 | `/evaluations/:datasetId` |
 | 页面目标 | 管理查询、相关性标注和样本分层 |
 | 主要组件 | 样本表格、导入导出、类型筛选、标注编辑器 |
 | 依赖 API | `GET /evals/datasets/cases?team_id=&dataset_id=`、`POST /evals/datasets/cases/create`、`POST /evals/datasets/cases/update`、`POST /evals/datasets/import` |
@@ -213,7 +218,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 路由 | `/teams/:teamId/evaluations/runs/:runId` |
+| 路由 | `/evaluations/runs/:runId` |
 | 页面目标 | 查看运行进度、分类指标、失败样本和 A/B 对比 |
 | 主要组件 | 进度条、指标卡、查询类型分布、失败归因、导出报告 |
 | 依赖 API | `GET /evals/runs/detail?team_id=&run_id=`、`GET /evals/runs/report?team_id=&run_id=`、`GET /evals/runs/events?team_id=&run_id=` |
@@ -224,12 +229,13 @@
 
 | 页面 | 路由 | 依赖 API |
 | --- | --- | --- |
-| 团队资料 | `/teams/:teamId/settings/team` | `GET /teams/detail?team_id=`、`POST /teams/update` |
-| 成员管理 | `/teams/:teamId/settings/members` | `POST /invitations/create`、`POST /members/update`、`POST /members/remove` |
-| 模型策略 | `/teams/:teamId/settings/model-policy` | `GET /model-policy?team_id=`、`POST /model-policy/update` |
-| 供应商 | `/teams/:teamId/settings/providers` | `GET /providers?team_id=`、`POST /providers/create`、`POST /providers/test` |
-| 审计日志 | `/teams/:teamId/settings/audit` | `GET /audit?team_id=` |
-| 索引管理 | `/teams/:teamId/settings/index-generations` | `GET /generations?team_id=`、`POST /generations/activate`、`POST /generations/rollback` |
+| 团队选择 | `/teams` | `GET /auth/me` |
+| 团队资料 | `/settings/team` | `GET /teams/detail?team_id=`、`POST /teams/update` |
+| 成员管理 | `/settings/members` | `POST /invitations/create`、`POST /members/update`、`POST /members/remove` |
+| 模型策略 | `/settings/model-policy` | `GET /model-policy?team_id=`、`POST /model-policy/update` |
+| 供应商 | `/settings/providers` | `GET /providers?team_id=`、`POST /providers/create`、`POST /providers/test` |
+| 审计日志 | `/settings/audit` | `GET /audit?team_id=` |
+| 索引管理 | `/settings/index-generations` | `GET /generations?team_id=`、`POST /generations/activate`、`POST /generations/rollback` |
 
 ### 7.2 平台设置
 

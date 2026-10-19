@@ -59,6 +59,12 @@ def test_openapi_paths_have_no_path_parameters():
         assert "{" not in path
 
 
+def test_page_map_has_no_team_route_prefix():
+    page_map = (ROOT / "docs" / "product" / "page-map.md").read_text(encoding="utf-8")
+
+    assert "/teams/:teamId/" not in page_map
+
+
 def test_openapi_mutations_are_post_only():
     for path, item in _spec()["paths"].items():
         for method in item:

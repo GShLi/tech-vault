@@ -39,7 +39,7 @@ def _if_match_version(request: Request) -> int:
     if raw is None:
         raise ApiError(400, "INVALID_ARGUMENT", "If-Match is required.")
     try:
-        return int(raw.strip())
+        return int(raw.strip().strip('"'))
     except ValueError as error:
         raise ApiError(400, "INVALID_ARGUMENT", "If-Match must be an integer.") from error
 

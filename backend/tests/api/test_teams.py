@@ -69,6 +69,25 @@ def test_team_update_requires_leader_and_if_match(api_client):
     assert conflict.json()["error"]["code"] == "VERSION_CONFLICT"
 
 
+def test_team_update_accepts_quoted_if_match(api_client):
+    headers = _register_and_login(api_client, email="quoted-if-match@example.com")
+    team = api_client.post(
+        "/api/v1/teams/create",
+        json={"name": "Platform"},
+        headers=headers,
+    ).json()["data"]
+
+    response = api_client.post(
+        "/api/v1/teams/update",
+        json={"team_id": team["id"], "name": "Quoted Match"},
+        headers={**headers, "If-Match": '"1"'},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == "Quoted Match"
+    assert response.json()["data"]["version"] == 2
+
+
 def test_team_create_rejects_whitespace_only_name(api_client):
     headers = _register_and_login(api_client, email="whitespace-create@example.com")
 

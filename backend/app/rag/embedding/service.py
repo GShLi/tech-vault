@@ -38,7 +38,11 @@ class EmbeddingClient:
         if not texts:
             return []
         try:
-            with httpx.Client(base_url=self._base, timeout=self._timeout) as client:
+            with httpx.Client(
+                base_url=self._base,
+                timeout=self._timeout,
+                trust_env=False,
+            ) as client:
                 response = client.post("/embed", json={"texts": texts})
                 response.raise_for_status()
                 vectors = response.json()["vectors"]

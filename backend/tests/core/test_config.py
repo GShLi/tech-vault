@@ -14,6 +14,13 @@ def test_explicit_development_allows_local_secret():
     assert settings.jwt_secret
 
 
+def test_default_model_service_urls_use_local_embedding_service_port():
+    settings = Settings(environment="development")
+
+    assert settings.embedding_url == "http://localhost:58001"
+    assert settings.rerank_url == "http://localhost:58001"
+
+
 def test_non_positive_token_ttl_is_rejected():
     with pytest.raises(ValueError, match="TTL"):
         Settings(environment="development", access_token_ttl_seconds=0)

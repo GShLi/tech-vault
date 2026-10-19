@@ -743,7 +743,8 @@ def _stream_answer_response(
 
             await ensure_active()
             started = time.perf_counter()
-            rewrite = gateway.rewrite(
+            rewrite = await asyncio.to_thread(
+                gateway.rewrite,
                 question=question,
                 history=history,
                 product=product,
@@ -762,7 +763,8 @@ def _stream_answer_response(
 
             await ensure_active()
             started = time.perf_counter()
-            vectors = gateway.embed(
+            vectors = await asyncio.to_thread(
+                gateway.embed,
                 [rewrite.rewritten_query],
                 classification=DataClassification.INTERNAL,
             )
@@ -806,7 +808,8 @@ def _stream_answer_response(
                 classification = _classification_for_chunks(
                     stream_session, rerank_input
                 )
-            reranked = gateway.rerank(
+            reranked = await asyncio.to_thread(
+                gateway.rerank,
                 rewrite.rewritten_query,
                 rerank_input,
                 top_n=10,
@@ -845,7 +848,8 @@ def _stream_answer_response(
             )
 
             await ensure_active()
-            answer_stream = gateway.generate_stream(
+            answer_stream = await asyncio.to_thread(
+                gateway.generate_stream,
                 question=rewrite.rewritten_query,
                 chunks=context_chunks,
                 classification=classification,
@@ -1254,7 +1258,8 @@ async def ask(
         stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
 
         started = time.perf_counter()
-        rewrite = gateway.rewrite(
+        rewrite = await asyncio.to_thread(
+            gateway.rewrite,
             question=question,
             history=history,
             product=body.filters.product,
@@ -1264,7 +1269,8 @@ async def ask(
         stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
 
         started = time.perf_counter()
-        vectors = gateway.embed(
+        vectors = await asyncio.to_thread(
+            gateway.embed,
             [rewrite.rewritten_query],
             classification=DataClassification.INTERNAL,
         )
@@ -1301,7 +1307,8 @@ async def ask(
         started = time.perf_counter()
         rerank_input = list(result.rrf_candidates or result.chunks)
         classification = _classification_for_chunks(session, rerank_input)
-        reranked = gateway.rerank(
+        reranked = await asyncio.to_thread(
+            gateway.rerank,
             rewrite.rewritten_query,
             rerank_input,
             top_n=10,
@@ -1311,7 +1318,8 @@ async def ask(
         context_chunks = reranked[:8]
         context_chunks = _hydrate_source_locators(session, context_chunks)
         started = time.perf_counter()
-        answer = gateway.generate(
+        answer = await asyncio.to_thread(
+            gateway.generate,
             question=rewrite.rewritten_query,
             chunks=context_chunks,
             classification=classification,

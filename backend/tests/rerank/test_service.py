@@ -1,6 +1,7 @@
 import httpx
 
 from backend.app.rag.domain.models import RetrievedChunk
+from backend.app.rag.rerank import service as rerank_service
 from backend.app.rag.rerank.service import RerankerClient
 
 
@@ -46,3 +47,35 @@ def test_reranker_falls_back_to_local_lexical_scores_when_service_is_down():
 
     assert reranked[0].chunk_id == "relevant"
     assert reranked[0].rerank_score > reranked[1].rerank_score
+
+
+def test_reranker_bypasses_system_proxy_for_local_model_service(monkeypatch):
+    captured = {}
+
+    class Client:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, *args, **kwargs):
+            return httpx.Response(
+                200,
+                json={"scores": [0.7]},
+                request=httpx.Request("POST", "http://127.0.0.1:58001/rerank"),
+            )
+
+    monkeypatch.setattr(rerank_service.httpx, "Client", Client)
+
+    rows = RerankerClient("http://127.0.0.1:58001").rerank(
+        "virtual threads",
+        [_chunk("a", "Virtual threads", 1)],
+        top_n=1,
+    )
+
+    assert rows[0].rerank_score == 0.7
+    assert captured["trust_env"] is False

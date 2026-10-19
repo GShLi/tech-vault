@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 
 import backend.app.api.v1.chats as chats_module
 from sqlalchemy import select
@@ -631,6 +633,45 @@ def test_streaming_answer_defers_rewrite_embedding_retrieval_and_rerank(
     body = asyncio.run(_consume_stream(response))
     assert calls == ["rewrite", "embedding", "build_retriever", "retrieval", "rerank"]
     assert "event: refused" in body
+
+
+def test_streaming_gateway_calls_run_off_event_loop_thread(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    main_thread_id = threading.get_ident()
+    call_threads = {}
+    original_rewrite = chats_module.LlmGateway.rewrite
+
+    def rewrite(self, **kwargs):
+        call_threads["rewrite"] = threading.get_ident()
+        return original_rewrite(self, **kwargs)
+
+    def embed(self, texts, **kwargs):
+        call_threads["embedding"] = threading.get_ident()
+        time.sleep(0.05)
+        return [[0.1]]
+
+    def rerank(self, query, chunks, top_n):
+        call_threads["rerank"] = threading.get_ident()
+        return list(chunks)
+
+    class Retriever:
+        async def search(self, request):
+            return SearchResult([], {}, False, "trace-threaded")
+
+    monkeypatch.setattr(chats_module.LlmGateway, "rewrite", rewrite)
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", embed)
+    monkeypatch.setattr(chats_module.RerankerClient, "rerank", rerank)
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+    body = asyncio.run(_consume_stream(response))
+
+    assert "event: refused" in body
+    assert set(call_threads) == {"rewrite", "embedding", "rerank"}
+    assert all(thread_id != main_thread_id for thread_id in call_threads.values())
 
 
 def test_client_disconnect_stops_before_rewrite_and_persists_cancelled(

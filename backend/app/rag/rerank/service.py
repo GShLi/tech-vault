@@ -45,6 +45,7 @@ class RerankerClient:
                 base_url=self._base,
                 timeout=self._timeout,
                 transport=self._transport,
+                trust_env=False,
             ) as client:
                 response = client.post(
                     "/rerank",

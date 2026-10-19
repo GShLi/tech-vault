@@ -11,7 +11,7 @@ from backend.app.api.envelope import envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import paginate_items, paginate_scalars
 from backend.app.api.v1.teams import _leader_or_error, _membership_or_error
-from backend.app.core.secrets import encrypt_secret
+from backend.app.core.secrets import decrypt_secret, encrypt_secret
 from backend.app.db.models import (
     DeploymentModelPolicyRecord,
     ModelCall,
@@ -146,14 +146,26 @@ def _set_provider_api_key(provider: ModelProvider, value: SecretStr, settings) -
     provider.api_key_updated_at = utc_now()
 
 
-def _provider_view(provider: ModelProvider, *, include_endpoint: bool = True) -> dict:
+def _has_decryptable_api_key(provider: ModelProvider, settings) -> bool:
+    encrypted = provider.api_key_encrypted.strip()
+    if not encrypted:
+        return False
+    try:
+        return bool(decrypt_secret(encrypted, settings).strip())
+    except Exception:
+        return False
+
+
+def _provider_view(
+    provider: ModelProvider, settings, *, include_endpoint: bool = True
+) -> dict:
     data = {
         "id": provider.id,
         "name": provider.name,
         "provider_type": provider.provider_type,
         "status": provider.status,
         "api_key_masked": provider.api_key_masked,
-        "has_api_key": bool(provider.api_key_encrypted.strip()),
+        "has_api_key": _has_decryptable_api_key(provider, settings),
         "api_key_updated_at": (
             provider.api_key_updated_at.isoformat()
             if provider.api_key_updated_at is not None
@@ -492,7 +504,9 @@ def list_providers(
         cursor=cursor,
         limit=limit,
         request_id=request.state.request_id,
-        view=_provider_view,
+        view=lambda provider: _provider_view(
+            provider, request.app.state.settings
+        ),
     )
 
 
@@ -530,7 +544,10 @@ def create_provider(
         },
     )
     session.commit()
-    return envelope(_provider_view(provider), request.state.request_id)
+    return envelope(
+        _provider_view(provider, request.app.state.settings),
+        request.state.request_id,
+    )
 
 
 @router.post("/providers/models")
@@ -688,7 +705,9 @@ def admin_list_providers(
         cursor=cursor,
         limit=limit,
         request_id=request.state.request_id,
-        view=_provider_view,
+        view=lambda provider: _provider_view(
+            provider, request.app.state.settings
+        ),
     )
 
 
@@ -725,7 +744,10 @@ def admin_create_provider(
         },
     )
     session.commit()
-    return envelope(_provider_view(provider), request.state.request_id)
+    return envelope(
+        _provider_view(provider, request.app.state.settings),
+        request.state.request_id,
+    )
 
 
 @router.post("/admin/providers/models")
@@ -782,7 +804,10 @@ def admin_update_provider(
         },
     )
     session.commit()
-    return envelope(_provider_view(provider), request.state.request_id)
+    return envelope(
+        _provider_view(provider, request.app.state.settings),
+        request.state.request_id,
+    )
 
 
 @router.get("/admin/models")

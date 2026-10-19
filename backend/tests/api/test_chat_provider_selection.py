@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import select
 
 import backend.app.api.v1.chats as chats_module
+from backend.app.core.secrets import encrypt_secret
 from backend.app.db.models import (
     IndexGenerationRecord,
     ModelCall,
@@ -529,6 +530,31 @@ def test_provider_view_reports_key_presence_without_exposing_secret(
     assert "sk-plain-secret" not in response.text
 
 
+def test_provider_view_reports_corrupt_key_as_unavailable(
+    api_client, api_app, admin_headers
+):
+    team, _ = _setup_chat(api_client, admin_headers)
+    provider = _create_provider(api_client, admin_headers, team["id"])
+    with api_app.state.session_factory() as session:
+        stored = session.get(ModelProvider, provider["id"])
+        assert stored is not None
+        stored.api_key_encrypted = "not-a-valid-fernet-token"
+        session.commit()
+
+    response = api_client.get(
+        "/api/v1/providers",
+        params={"team_id": team["id"]},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    listed = next(
+        item for item in response.json()["data"] if item["id"] == provider["id"]
+    )
+    assert listed["has_api_key"] is False
+    assert "not-a-valid-fernet-token" not in response.text
+
+
 def test_chat_ask_uses_selected_provider_for_non_stream_answer(
     api_client, api_app, admin_headers, monkeypatch
 ):
@@ -728,7 +754,7 @@ def test_stream_rejects_malformed_provider_url_with_invalid_argument(
         assert model["external"] is True
 
 
-def test_stream_maps_corrupt_encrypted_key_to_model_unavailable(
+def test_stream_maps_corrupt_encrypted_key_to_resource_state_conflict(
     api_client, api_app, admin_headers
 ):
     team, chat = _setup_chat(api_client, admin_headers)
@@ -762,12 +788,14 @@ def test_stream_maps_corrupt_encrypted_key_to_model_unavailable(
 
     assert response.status_code == 200, response.text
     error = _stream_error_event(response)
-    assert error["code"] == "MODEL_UNAVAILABLE"
+    assert error["code"] == "RESOURCE_STATE_CONFLICT"
     assert error["retryable"] is False
     assert "not-a-valid-fernet-token" not in response.text
     with api_app.state.session_factory() as session:
         trace = session.scalar(
-            select(TraceRecord).where(TraceRecord.error_code == "MODEL_UNAVAILABLE")
+            select(TraceRecord).where(
+                TraceRecord.error_code == "RESOURCE_STATE_CONFLICT"
+            )
         )
         assert trace is not None
         model = json.loads(trace.model)
@@ -811,7 +839,7 @@ def test_chat_ask_maps_provider_policy_denial_to_policy_denied(
     assert captured == {}
 
 
-def test_chat_ask_maps_missing_encrypted_key_to_model_unavailable(
+def test_chat_ask_maps_missing_encrypted_key_to_resource_state_conflict(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, chat = _setup_chat(api_client, admin_headers)
@@ -834,6 +862,42 @@ def test_chat_ask_maps_missing_encrypted_key_to_model_unavailable(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "Credentials are missing.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RESOURCE_STATE_CONFLICT"
+    assert captured == {}
+
+
+def test_chat_ask_maps_empty_decrypted_key_to_resource_state_conflict(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _select_provider(
+        api_client,
+        admin_headers,
+        team["id"],
+        chat["knowledge_base_ids"][0],
+    )
+    with api_app.state.session_factory() as session:
+        stored = session.get(ModelProvider, provider["id"])
+        assert stored is not None
+        stored.api_key_encrypted = encrypt_secret("", api_app.state.settings)
+        session.commit()
+    _add_generation(api_app, team["id"])
+    captured = _install_fake_chat_stack(monkeypatch)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Credentials are empty.",
             "provider_id": provider["id"],
             "model_id": "model-a",
             "stream": False,

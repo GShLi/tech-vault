@@ -148,7 +148,7 @@ offset cursor 也是不透明字符串；其他接口使用基于排序时间与
 | 403 | `INVITATION_EMAIL_MISMATCH` | 接受邀请的账号邮箱不匹配 |
 | 404 | `NOT_FOUND` | 资源不存在 |
 | 409 | `VERSION_CONFLICT` | `If-Match` 版本不一致 |
-| 409 | `RESOURCE_STATE_CONFLICT` | 当前状态不允许该操作 |
+| 409 | `RESOURCE_STATE_CONFLICT` | 当前状态不允许该操作；所选供应商凭据缺失、为空或不可解密 |
 | 409 | `DUPLICATE_RESOURCE` | 内容指纹或唯一键重复 |
 | 409 | `EMPTY_DATASET` | 评测数据集没有可运行样本 |
 | 409 | `NO_ACTIVE_GENERATION` | 当前团队没有 active generation |
@@ -171,7 +171,7 @@ offset cursor 也是不透明字符串；其他接口使用基于排序时间与
 | 503 | `SERVICE_UNAVAILABLE` | 索引、模型或依赖服务不可用 |
 | 503 | `INDEX_NOT_READY` | 当前索引 generation 未激活 |
 | 503 | `INDEX_MAINTENANCE_UNAVAILABLE` | chunk 或文档索引维护失败 |
-| 503 | `MODEL_UNAVAILABLE` | 所选供应商不可用、凭据缺失或上游调用失败；不回退到抽取式生成 |
+| 503 | `MODEL_UNAVAILABLE` | 所选供应商不可用或上游调用失败；不回退到抽取式生成 |
 | 503 | `RETRIEVAL_UNAVAILABLE` | 检索链路不可用 |
 | 503 | `OBJECT_STORAGE_UNAVAILABLE` | 原始文件无法写入或读取对象存储 |
 | 503 | `STORAGE_PRESIGN_UNAVAILABLE` | 对象存储下载签名不可用 |
@@ -185,8 +185,8 @@ GitHub 来源校验还会返回 `400` + `SOURCE_INVALID_REPOSITORY`、
 超过限制；`404` + `SOURCE_REPOSITORY_NOT_FOUND` 表示仓库、分支或 Git 对象不存在。
 
 `INSUFFICIENT_EVIDENCE` 是成功完成受控拒答时的 `reason_code`，不是 HTTP 错误码。
-流式问答中的 `STREAM_ERROR`、`POLICY_DENIED`、`MODEL_UNAVAILABLE` 通过 SSE
-`error` 事件返回；其中只有 `STREAM_ERROR` 标记为可重试。
+流式问答中的 `STREAM_ERROR`、`POLICY_DENIED`、`RESOURCE_STATE_CONFLICT`、
+`MODEL_UNAVAILABLE` 通过 SSE `error` 事件返回；其中只有 `STREAM_ERROR` 标记为可重试。
 
 入库任务和 Trace 记录中的 `error_code` 不是 HTTP 错误码，可能包含
 `SOURCE_MISSING`、`SOURCE_STORAGE_UNAVAILABLE`、`KNOWLEDGE_BASE_MISSING`、
@@ -480,7 +480,7 @@ event: refused
 data: {"message_id":"01JMSG000000000000000001","status":"refused","reason_code":"INSUFFICIENT_EVIDENCE","message":"知识库中没有足够依据。"}
 
 event: error
-data: {"code":"MODEL_UNAVAILABLE","message":"No approved model is available.","retryable":false,"request_id":"req_01J..."}
+data: {"code":"RESOURCE_STATE_CONFLICT","message":"Provider credentials are unavailable.","retryable":false,"request_id":"req_01J..."}
 ```
 
 `meta.trace_id` 在流开始时为空，检索完成后由消息详情和 Trace 接口提供最终值。
@@ -490,7 +490,8 @@ data: {"code":"MODEL_UNAVAILABLE","message":"No approved model is available.","r
 
 `refused` 是成功完成安全拒答，不是系统错误：消息持久化为 `status=refused`，
 清空引用，并通过 `INSUFFICIENT_EVIDENCE` 说明证据不足。`error` 只用于
-`STREAM_ERROR`、`POLICY_DENIED`、`MODEL_UNAVAILABLE` 等失败路径。
+`STREAM_ERROR`、`POLICY_DENIED`、`RESOURCE_STATE_CONFLICT`、`MODEL_UNAVAILABLE`
+等失败路径。
 
 客户端使用 `AbortController` 取消请求。服务端收到断开后停止生成，保存已生成
 内容和 `cancelled` 状态，不额外发送终止事件。
@@ -641,8 +642,8 @@ OpenAI 两种格式均通过 `GET {base_url}/v1/models` 获取模型列表，使
 地址，后端会规范化为模型列表地址。
 
 API Key 只写不读。任何响应都不得返回完整密钥，只能返回 `api_key_masked`、
-`api_key_updated_at` 和布尔值 `has_api_key`；`has_api_key` 表示服务端是否保存了可用
-密钥，供客户端过滤不可用供应商。
+`api_key_updated_at` 和布尔值 `has_api_key`；`has_api_key` 表示服务端是否保存了非空
+且可解密的密钥，供客户端过滤不可用供应商。
 上游不提供模型列表接口时，模型发现返回结构化错误，客户端仍可手动填写模型 ID。
 
 ## 14. 索引管理

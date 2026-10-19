@@ -427,12 +427,18 @@ def _build_gateway(
             resolved_provider.encrypted_api_key,
             request.app.state.settings,
         )
-    except Exception as error:
+    except Exception:
         raise ApiError(
-            503,
-            "MODEL_UNAVAILABLE",
+            409,
+            "RESOURCE_STATE_CONFLICT",
             "Provider credentials are unavailable.",
-        ) from error
+        ) from None
+    if not api_key.strip():
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Provider credentials are unavailable.",
+        )
     try:
         answer_provider = build_provider_adapter(
             provider_type=resolved_provider.provider_type,

@@ -445,6 +445,15 @@ def test_contract_documents_provider_error_semantics():
     assert "502 MODEL_AUTH_FAILED" in ask_contract
     assert "502 MODEL_RESPONSE_INVALID" in ask_contract
     assert "503 MODEL_UNAVAILABLE" in ask_contract
+    assert "凭据缺失或不可解密时返回\n`409 RESOURCE_STATE_CONFLICT`" in ask_contract
+    model_unavailable_row = contract.split(
+        "| 503 | `MODEL_UNAVAILABLE`", 1
+    )[1].split("\n", 1)[0]
+    assert "凭据缺失或不可解密" not in model_unavailable_row
+
+    ask_operation = _spec()["paths"]["/chats/ask"]["post"]
+    assert "409 RESOURCE_STATE_CONFLICT" in ask_operation["description"]
+    assert "503 MODEL_UNAVAILABLE" in ask_operation["description"]
 
 
 def test_provider_contract_documents_has_api_key():
@@ -453,10 +462,12 @@ def test_provider_contract_documents_has_api_key():
         schema = schemas[schema_name]
         assert "has_api_key" in schema["required"]
         assert schema["properties"]["has_api_key"]["type"] == "boolean"
+        assert "decryptable" in schema["properties"]["has_api_key"]["description"]
 
     contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
     provider_contract = contract.split("供应商 `provider_type` 仅允许：", 1)[1]
     assert "`has_api_key`" in provider_contract
+    assert "可解密" in provider_contract
 
 
 def test_page_map_disables_send_until_all_required_selections_exist():

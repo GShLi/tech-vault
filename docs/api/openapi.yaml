@@ -1848,7 +1848,7 @@ paths:
       tags:
       - chats
       summary: Ask a grounded question using JSON or SSE
-      description: Requires non-empty provider_id and model_id. An unavailable configured provider returns 503 MODEL_UNAVAILABLE; no extractive fallback is used.
+      description: Requires non-empty provider_id and model_id. Missing, empty, or undecryptable credentials for the selected configured provider return 409 RESOURCE_STATE_CONFLICT. Upstream timeout or unavailability returns 503 MODEL_UNAVAILABLE; no extractive fallback is used.
       requestBody:
         required: true
         content:
@@ -5554,6 +5554,7 @@ components:
           type: string
         has_api_key:
           type: boolean
+          description: True only when a non-empty encrypted API key is stored and decryptable.
         api_key_updated_at:
           type: string
           format: date-time
@@ -5591,6 +5592,7 @@ components:
           type: string
         has_api_key:
           type: boolean
+          description: True only when a non-empty encrypted API key is stored and decryptable.
         api_key_updated_at:
           type: string
           format: date-time

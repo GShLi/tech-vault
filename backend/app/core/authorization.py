@@ -6,6 +6,7 @@ from backend.app.rag.domain.models import (
     ChunkStatus,
     DocumentStatus,
     RetrievalFilters,
+    Role,
     Visibility,
 )
 
@@ -25,6 +26,10 @@ def _require_scope(
     knowledge_base_id: Optional[str],
 ) -> None:
     _require_identifier(context.user_id)
+    try:
+        Role(context.role)
+    except (TypeError, ValueError):
+        raise PermissionError(_DENIED)
     if _require_identifier(team_id) not in context.team_ids:
         raise PermissionError(_DENIED)
 

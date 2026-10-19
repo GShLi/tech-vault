@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Mapping
 
 from backend.app.rag.domain.models import SearchRequest, SearchResult
@@ -28,5 +29,13 @@ class RetrievalRouter:
                     self._config.engine_mode.value
                 )
             ) from error
-        return await retriever.search(request)
+        effective_request = replace(
+            request,
+            bm25_top_k=self._config.bm25_top_k,
+            dense_top_k=self._config.dense_top_k,
+            rrf_k=self._config.rrf_k,
+            rerank_input_size=self._config.rerank_input_size,
+            final_top_n=self._config.final_top_n,
+        )
+        return await retriever.search(effective_request)
 

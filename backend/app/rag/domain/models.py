@@ -12,6 +12,13 @@ class DataClassification(str, Enum):
     RESTRICTED = "restricted"
 
 
+class Role(str, Enum):
+    ADMIN = "admin"
+    LEADER = "leader"
+    MEMBER = "member"
+    VIEWER = "viewer"
+
+
 class Visibility(str, Enum):
     PRIVATE = "private"
     TEAM_SHARED = "team_shared"
@@ -35,7 +42,7 @@ class AuthorizationContext:
     user_id: str
     team_ids: Tuple[str, ...]
     knowledge_base_ids: Tuple[str, ...]
-    is_admin: bool = False
+    role: Role
     explicit_document_grants: Tuple[str, ...] = ()
 
 
@@ -128,7 +135,7 @@ class ModelPolicyDecision:
     allowed_provider_ids: Tuple[str, ...]
     max_data_classification: DataClassification
     allowed_model_ids: Tuple[str, ...]
-    allow_conversation_history: bool
+    allow_chat_history: bool
     allow_document_metadata: bool
     require_redaction: bool
     fallback_mode: str

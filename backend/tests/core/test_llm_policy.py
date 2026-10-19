@@ -158,3 +158,16 @@ def test_external_call_rechecks_data_classification():
 
     with pytest.raises(PermissionError):
         assert_external_call_allowed(decision, DataClassification.RESTRICTED)
+
+
+def test_policy_uses_chat_naming_only():
+    from backend.app.core.llm_policy import resolve_model_policy
+
+    decision = resolve_model_policy(
+        deployment_mode="external_allowed",
+        requested_classification=DataClassification.PUBLIC,
+        allow_chat_history=True,
+    )
+
+    assert decision.allow_chat_history is True
+    assert not hasattr(decision, "allow_conversation_history")

@@ -327,6 +327,8 @@ class IndexWriter:
         ...
 ```
 
+`SearchRequest` 是后端内部已经解析完成的检索请求。普通业务 API 不暴露 TopK、RRF 和 Rerank 参数；这些值由 `RetrievalConfig` 注入，评测任务通过构造不同的配置做 A/B 实验。
+
 ### 4.5 推荐模块边界
 
 ```text
@@ -340,6 +342,9 @@ backend/app/rag/
     elastic_single.py     # ES BM25 + Dense
   retrieval/
     base.py               # Retriever 接口
+    config.py             # 引擎模式和检索参数
+    router.py             # 按后端配置选择 Retriever
+    in_memory.py          # 本地验证适配器
     dual_engine.py        # 双路召回 + 应用层 RRF
     elastic_single.py     # ES 混合检索 + ES RRF
   fusion/                 # RRF 与查询感知权重
@@ -350,6 +355,8 @@ backend/app/rag/
   observability/          # 检索 Trace、耗时、成本和错误
   evaluation/             # 黄金集、离线评测与回归脚本
 ```
+
+`modules/ingestion` 负责任务编排、状态和重试；`rag/ingestion` 负责解析、清洗等 RAG 数据处理；`rag/parsing` 存放具体解析器适配器。
 
 ### 4.6 实验降级与生产降级
 
@@ -498,7 +505,7 @@ backend/app/rag/
 - 一个用户可加入多个团队。
 - 一个团队可创建多个知识库空间。
 - 一个知识库包含多个文档版本和 chunk。
-- 文档归属于知识库，并可配置 `private`、`team_shared` 或受限共享。
+- 文档归属于知识库，可见性为 `private` 或 `team_shared`；敏感程度由 `data_classification` 单独控制。
 
 ### 7.2 RBAC 与默认拒绝
 
@@ -548,7 +555,7 @@ AND (
 
 ES 和 Qdrant 至少共享以下字段：
 
-`chunk_id`、`document_id`、`document_version_id`、`tenant_id`、`team_id`、`knowledge_base_id`、`owner_user_id`、`visibility`、`data_classification`、`source_type`、`source_uri`、`source_revision`、`product`、`version_family`、`version_values`、`valid_from`、`deprecated_at`、`doc_status`、`chunk_status`、`index_generation`、`content_hash`。
+`chunk_id`、`document_id`、`document_version_id`、`team_id`、`knowledge_base_id`、`owner_user_id`、`visibility`、`data_classification`、`source_type`、`source_uri`、`source_revision`、`product`、`version_family`、`version_values`、`valid_from`、`deprecated_at`、`doc_status`、`chunk_status`、`index_generation`、`content_hash`。
 
 需要精确过滤的字段在 ES 中使用 `keyword`，在 Qdrant 中建立 payload index。
 
@@ -596,7 +603,7 @@ ES 和 Qdrant 至少共享以下字段：
 | 分类 | 典型内容 | 默认策略 |
 | --- | --- | --- |
 | `public` | 已公开的 JDK、Spring、开源项目文档 | 可按团队策略使用外部模型 |
-| `internal` | 团队共享但不公开的设计、部署和研发资料 | 默认仅本地，管理员可显式允许 |
+| `internal` | 团队共享但不公开的设计、部署和研发资料 | 默认仅本地，`leader` 可在团队策略内显式允许 |
 | `private` | 成员私有文档、个人笔记 | 默认仅本地，不能被团队级开关自动放开 |
 | `restricted` | 密钥、Token、客户数据、生产配置和明确禁止出境的资料 | 禁止进入外部模型 |
 
@@ -636,7 +643,7 @@ class ModelPolicyDecision:
     allowed_provider_ids: list[str]
     max_data_classification: str
     allowed_model_ids: list[str]
-    allow_conversation_history: bool
+    allow_chat_history: bool
     allow_document_metadata: bool
     require_redaction: bool
     fallback_mode: str
@@ -658,7 +665,7 @@ class ModelPolicyDecision:
 默认不允许发送：
 
 - 原始文件、完整文档和未进入上下文的候选。
-- 用户名、邮箱、成员列表、`tenant_id`、`team_id`、ACL。
+- 用户名、邮箱、成员列表、`team_id`、ACL。
 - 文件服务器路径、MinIO 路径、GitHub Token、数据库连接串和模型 Key。
 - 完整历史对话、系统日志、审计日志和其他知识库内容。
 - 可还原内部数据结构的真实 `chunk_id` 和文档主键。
@@ -923,7 +930,7 @@ techvault-b-es-hybrid-<generation>
 | `ingestion_run` | 批次、阶段、耗时、错误、重试和 checkpoint |
 | `document_task` | 单文档异步任务状态和重试次数 |
 | `index_generation` | ES/Qdrant generation、模型版本、校验状态和激活时间 |
-| `conversation` / `message` | 多轮对话、原始问题、Rewrite 结果和模型信息 |
+| `chat` / `message` | 多轮对话、原始问题、Rewrite 结果和模型信息 |
 | `retrieval_trace` | 候选、排名、上下文、耗时、降级和 `trace_id` |
 | `feedback` | 有用、无用、引用错误和知识缺失 |
 | `knowledge_gap` | 聚合同类失败问题、状态和补充文档 |
@@ -953,7 +960,7 @@ techvault-b-es-hybrid-<generation>
 
 以下 payload 字段建立索引：
 
-- `tenant_id`、`team_id`、`knowledge_base_id`。
+- `team_id`、`knowledge_base_id`。
 - `owner_user_id`、`visibility`、`data_classification`。
 - `doc_status`、`chunk_status`、`index_generation`。
 - `product`、`version_values`、`source_revision`。

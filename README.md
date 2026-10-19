@@ -57,7 +57,7 @@ tech-vault/
 │   │   │   ├── sources/
 │   │   │   ├── ingestion/
 │   │   │   ├── chunks/
-│   │   │   ├── conversations/
+│   │   │   ├── chats/
 │   │   │   ├── feedback/
 │   │   │   ├── evaluations/
 │   │   │   ├── model_policies/
@@ -124,7 +124,7 @@ pytest
 当前基线测试：
 
 ```text
-74 passed
+76 passed
 ```
 
 后续安装 API 依赖时使用：

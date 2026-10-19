@@ -6,6 +6,7 @@ from backend.app.rag.domain.models import (
     DataClassification,
     DocumentStatus,
     RetrievalFilters,
+    Role,
     Visibility,
     AuthorizationContext,
 )
@@ -16,14 +17,14 @@ def _context(
     user_id: str = "user-b",
     team_ids=("team-a",),
     knowledge_base_ids=("kb-a",),
-    is_admin: bool = False,
+    role: Role = Role.MEMBER,
     explicit_document_grants=(),
 ) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=user_id,
         team_ids=tuple(team_ids),
         knowledge_base_ids=tuple(knowledge_base_ids),
-        is_admin=is_admin,
+        role=role,
         explicit_document_grants=tuple(explicit_document_grants),
     )
 
@@ -77,7 +78,7 @@ def test_administrator_does_not_automatically_see_private_documents():
 
     with pytest.raises(PermissionError):
         assert_may_view_document(
-            _context(is_admin=True),
+            _context(role=Role.ADMIN),
             owner_user_id="user-a",
             team_id="team-a",
             knowledge_base_id="kb-a",
@@ -271,4 +272,4 @@ def test_administrator_cannot_widen_retrieval_scope():
     )
 
     with pytest.raises(PermissionError):
-        build_retrieval_filters(_context(is_admin=True), requested)
+        build_retrieval_filters(_context(role=Role.ADMIN), requested)

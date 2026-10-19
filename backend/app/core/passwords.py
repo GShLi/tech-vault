@@ -38,16 +38,21 @@ def verify_password(password: str, encoded: str) -> bool:
         )
         if algorithm != "scrypt":
             return False
+        n = int(n_value)
+        r = int(r_value)
+        p = int(p_value)
+        if (n, r, p) != (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P):
+            return False
         salt = base64.urlsafe_b64decode(salt_value.encode("ascii"))
         expected = base64.urlsafe_b64decode(digest_value.encode("ascii"))
         actual = hashlib.scrypt(
             password.encode("utf-8"),
             salt=salt,
-            n=int(n_value),
-            r=int(r_value),
-            p=int(p_value),
+            n=n,
+            r=r,
+            p=p,
             dklen=len(expected),
         )
         return hmac.compare_digest(actual, expected)
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, MemoryError, OverflowError, TypeError, ValueError):
         return False

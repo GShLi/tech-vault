@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+import jwt
 import pytest
 
 from backend.app.core.config import Settings
@@ -32,3 +33,29 @@ def test_wrong_secret_is_rejected():
 
     with pytest.raises(TokenError):
         decode_access_token(token, verifier)
+
+
+def test_tampered_access_token_is_rejected():
+    settings = Settings(jwt_secret=_JWT_SECRET)
+    header, payload, signature = create_access_token("user-1", settings).split(".")
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered = ".".join((header, payload, replacement + signature[1:]))
+
+    with pytest.raises(TokenError):
+        decode_access_token(tampered, settings)
+
+
+def test_access_token_with_missing_subject_is_rejected():
+    settings = Settings(jwt_secret=_JWT_SECRET)
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "iat": int(now.timestamp()),
+            "exp": int(now.timestamp()) + 60,
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    with pytest.raises(TokenError):
+        decode_access_token(token, settings)

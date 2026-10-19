@@ -27,4 +27,5 @@ def is_valid_ulid(value: str) -> bool:
         isinstance(value, str)
         and len(value) == 26
         and all(character in _ALPHABET for character in value)
+        and value[0] <= "7"
     )

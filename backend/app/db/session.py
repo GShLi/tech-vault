@@ -264,6 +264,41 @@ def _bridge_credential_encryption(engine: Engine) -> None:
         )
 
 
+def _bridge_model_provider_api_key(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("model_providers"):
+        return
+    columns = {
+        column["name"] for column in inspector.get_columns("model_providers")
+    }
+    timestamp_type = (
+        "TIMESTAMP WITH TIME ZONE"
+        if engine.dialect.name == "postgresql"
+        else "DATETIME"
+    )
+    statements = []
+    if "api_key_masked" not in columns:
+        statements.append(
+            "ALTER TABLE model_providers ADD COLUMN "
+            "api_key_masked VARCHAR(40) NOT NULL DEFAULT ''"
+        )
+    if "api_key_encrypted" not in columns:
+        statements.append(
+            "ALTER TABLE model_providers ADD COLUMN "
+            "api_key_encrypted TEXT NOT NULL DEFAULT ''"
+        )
+    if "api_key_updated_at" not in columns:
+        statements.append(
+            "ALTER TABLE model_providers ADD COLUMN "
+            "api_key_updated_at " + timestamp_type
+        )
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def _bridge_audit_log_nullability(engine: Engine) -> None:
     inspector = inspect(engine)
     if not inspector.has_table("audit_logs"):
@@ -471,5 +506,6 @@ def create_schema(engine: Engine) -> None:
     _bridge_index_generation_validation(engine)
     _bridge_invitation_expiry(engine)
     _bridge_credential_encryption(engine)
+    _bridge_model_provider_api_key(engine)
     _bridge_audit_log_nullability(engine)
     _bridge_identifier_lengths(engine)

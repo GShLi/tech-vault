@@ -8,6 +8,11 @@ import StatusPill from '@/components/StatusPill.vue'
 import { useTeamStore } from '@/stores/team'
 import type { JsonRecord, TraceView } from '@/types/api'
 import { formatDate, shortId } from '@/utils/format'
+import {
+  formatTraceDuration,
+  traceStageMeta,
+  traceTotalDuration,
+} from '@/utils/trace'
 
 const route = useRoute()
 const team = useTeamStore()
@@ -15,7 +20,27 @@ const trace = ref<TraceView | null>(null)
 const loading = ref(false)
 const error = ref<ApiRequestError | null>(null)
 
-const stages = computed(() => Object.entries(trace.value?.stage_latency_ms ?? {}))
+const stages = computed(() => {
+  const entries = Object.entries(trace.value?.stage_latency_ms ?? {}).filter(
+    (entry): entry is [string, number] =>
+      typeof entry[1] === 'number' && Number.isFinite(entry[1]),
+  )
+  const total = entries.reduce((sum, [, value]) => sum + Math.max(0, value), 0)
+  return entries.map(([key, value]) => {
+    const meta = traceStageMeta(key)
+    return {
+      key,
+      value,
+      ...meta,
+      formatted: formatTraceDuration(value),
+      width: total > 0 ? Math.max(value > 0 ? 1.5 : 0, (value / total) * 100) : 0,
+      tooltip: `${key}：${meta.description}；原始耗时 ${value} ms`,
+    }
+  })
+})
+const totalStageLatency = computed(() =>
+  traceTotalDuration(trace.value?.stage_latency_ms ?? {}),
+)
 const feedbackLabels: Record<string, string> = {
   useful: '有帮助',
   not_useful: '无帮助',
@@ -85,10 +110,34 @@ watch(() => route.params.traceId, load)
           <div><dt>消息</dt><dd>{{ shortId(trace.message_id) }}</dd></div>
           <div><dt>错误码</dt><dd>{{ trace.error_code || '—' }}</dd></div>
         </dl>
-        <div class="stage-list">
-          <div v-for="[stage, value] in stages" :key="stage" class="stage-item">
-            <span>{{ stage }}</span><strong>{{ value }} ms</strong>
+        <div class="stage-chart" data-testid="trace-stage-chart">
+          <div class="stage-chart-heading">
+            <div>
+              <strong>阶段耗时</strong>
+              <span>按总耗时占比展示</span>
+            </div>
+            <span
+              class="stage-chart-total"
+              :title="`所有阶段耗时合计，原始值 ${totalStageLatency} ms`"
+            >总耗时 {{ formatTraceDuration(totalStageLatency) }}</span>
           </div>
+          <div v-if="stages.length" class="stage-chart-list">
+            <div
+              v-for="stage in stages"
+              :key="stage.key"
+              class="stage-chart-row"
+              :data-testid="`trace-stage-${stage.key}`"
+              :title="stage.tooltip"
+              :aria-label="stage.tooltip"
+            >
+              <span class="stage-chart-label" :title="stage.tooltip">{{ stage.label }}</span>
+              <span class="stage-chart-track" aria-hidden="true">
+                <span :style="{ width: `${stage.width}%` }"></span>
+              </span>
+              <strong class="stage-chart-value" :title="stage.tooltip">{{ stage.formatted }}</strong>
+            </div>
+          </div>
+          <div v-else class="empty-state compact"><span>暂无阶段耗时数据</span></div>
         </div>
       </section>
 

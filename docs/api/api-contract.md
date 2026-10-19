@@ -599,6 +599,7 @@ P0 的 `judge_mode` 允许 `rules`、`rules_and_manual`。LLM-as-Judge 在评分
 | `POST` | `/model-policy/update` | 收紧团队模型策略 | P0 |
 | `GET` | `/providers?team_id=` | 可用供应商 | P0 |
 | `POST` | `/providers/create` | 创建团队供应商配置 | P0 |
+| `POST` | `/providers/models` | 根据 Base URL、上游格式和 API Key 获取模型列表 | P0 |
 | `POST` | `/providers/test` | 健康检查 | P1 |
 | `GET` | `/model-calls?team_id=` | 模型调用审计 | P0 |
 | `GET` | `/audit?team_id=` | 业务审计日志 | P0 |
@@ -607,13 +608,27 @@ P0 的 `judge_mode` 允许 `rules`、`rules_and_manual`。LLM-as-Judge 在评分
 | `POST` | `/admin/model-policy/update` | 修改部署级上限 | P0 |
 | `GET` | `/admin/providers` | 全部供应商 | P0 |
 | `POST` | `/admin/providers/create` | 创建全局供应商 | P0 |
+| `POST` | `/admin/providers/models` | 平台管理员根据上游配置获取模型列表 | P0 |
 | `POST` | `/admin/providers/update` | 修改供应商 | P0 |
 | `GET` | `/admin/models` | 模型列表 | P0 |
 | `POST` | `/admin/models/update` | 启用或禁用模型 | P0 |
 | `GET` | `/admin/audit` | 平台管理员查看全局审计日志（可跨团队） | P0 |
 | `GET` | `/admin/audit/detail?audit_id=` | 平台管理员查看全局审计详情 | P0 |
 
+供应商 `provider_type` 仅允许：
+
+- `openai_responses`：OpenAI Responses API。
+- `openai_chat_completions`：OpenAI Chat Completions API，兼容面最广。
+- `anthropic_messages`：Anthropic Messages API。
+
+OpenAI 两种格式均通过 `GET {base_url}/v1/models` 获取模型列表，使用
+`Authorization: Bearer <API_KEY>`。Anthropic Messages 通过
+`GET {base_url}/v1/models` 获取模型列表，使用 `x-api-key` 和
+`anthropic-version: 2023-06-01`。Base URL 允许填写根地址、`/v1` 地址或完整推理
+地址，后端会规范化为模型列表地址。
+
 API Key 只写不读。任何响应都不得返回完整密钥，只能返回掩码和最后更新时间。
+上游不提供模型列表接口时，模型发现返回结构化错误，客户端仍可手动填写模型 ID。
 
 ## 14. 索引管理
 

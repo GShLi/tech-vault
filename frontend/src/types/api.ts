@@ -281,10 +281,23 @@ export interface ModelPolicy {
 export interface ModelProvider {
   id: string
   name: string
-  provider_type: string
+  provider_type: ProviderType | string
   base_url?: string
   model_ids?: string[]
   status: string
+  api_key_masked?: string
+  api_key_updated_at?: string | null
+}
+
+export type ProviderType =
+  | 'openai_responses'
+  | 'openai_chat_completions'
+  | 'anthropic_messages'
+
+export interface ProviderModelsInput {
+  provider_type: ProviderType
+  base_url: string
+  api_key: string
 }
 
 export interface ModelCall {

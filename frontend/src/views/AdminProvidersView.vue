@@ -1,24 +1,20 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Plus, RefreshCw, Server } from 'lucide-vue-next'
+import { RefreshCw, Server } from 'lucide-vue-next'
 import { Message } from '@arco-design/web-vue'
 
 import { api, ApiRequestError } from '@/api/client'
+import ProviderCreateForm from '@/components/ProviderCreateForm.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import type { ModelProvider } from '@/types/api'
-import { parseLines } from '@/utils/format'
+import { providerTypeLabel } from '@/utils/providers'
 
 const providers = ref<ModelProvider[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
 const nextCursor = ref<string | null>(null)
 const hasMore = ref(false)
-const saving = ref(false)
 const error = ref<ApiRequestError | null>(null)
-const name = ref('')
-const providerType = ref('openai_compatible')
-const baseUrl = ref('')
-const modelIds = ref('')
 
 async function load(): Promise<void> {
   loading.value = true
@@ -50,28 +46,6 @@ async function loadMore(): Promise<void> {
   }
 }
 
-async function createProvider(): Promise<void> {
-  saving.value = true
-  error.value = null
-  try {
-    await api.createAdminProvider({
-      name: name.value.trim(),
-      provider_type: providerType.value,
-      base_url: baseUrl.value.trim(),
-      model_ids: parseLines(modelIds.value),
-    })
-    Message.success('平台供应商已创建')
-    name.value = ''
-    baseUrl.value = ''
-    modelIds.value = ''
-    await load()
-  } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
-  } finally {
-    saving.value = false
-  }
-}
-
 async function toggleStatus(provider: ModelProvider): Promise<void> {
   try {
     await api.updateAdminProvider({
@@ -95,7 +69,23 @@ onMounted(load)
     <div class="split-grid">
       <section class="panel detail-panel">
         <div class="section-heading"><h3>平台供应商</h3><span class="muted-text">{{ providers.length }} 个</span></div>
-        <div v-if="providers.length" class="stack-list"><article v-for="provider in providers" :key="provider.id" class="list-card"><div class="list-card-heading"><div><strong>{{ provider.name }}</strong><span class="cell-subtitle">{{ provider.provider_type }}</span></div><StatusPill :status="provider.status" /></div><button class="secondary-button" type="button" @click="toggleStatus(provider)">{{ provider.status === 'active' ? '停用' : '启用' }}</button></article></div>
+        <div v-if="providers.length" class="stack-list">
+          <article v-for="provider in providers" :key="provider.id" class="list-card">
+            <div class="list-card-heading">
+              <div>
+                <strong>{{ provider.name }}</strong>
+                <span class="cell-subtitle">{{ providerTypeLabel(provider.provider_type) }}<template v-if="provider.api_key_masked"> · API Key {{ provider.api_key_masked }}</template></span>
+                <span v-if="provider.base_url" class="cell-subtitle">{{ provider.base_url }}</span>
+              </div>
+              <StatusPill :status="provider.status" />
+            </div>
+            <div class="tag-list">
+              <span v-for="model in provider.model_ids || []" :key="model" class="tag">{{ model }}</span>
+              <span v-if="!(provider.model_ids || []).length" class="muted-text">未配置模型</span>
+            </div>
+            <button class="secondary-button" type="button" @click="toggleStatus(provider)">{{ provider.status === 'active' ? '停用' : '启用' }}</button>
+          </article>
+        </div>
         <div v-else class="empty-state compact"><Server :size="22" /><span>暂无平台供应商</span></div>
         <div v-if="hasMore" class="load-more">
           <button class="secondary-button" type="button" :disabled="loadingMore" @click="loadMore">
@@ -104,8 +94,7 @@ onMounted(load)
         </div>
       </section>
       <section class="panel detail-panel">
-        <div class="section-heading"><h3>新增平台供应商</h3><Plus :size="16" /></div>
-        <form class="form-stack" @submit.prevent="createProvider"><label class="field"><span>名称</span><input v-model="name" type="text" required /></label><label class="field"><span>类型</span><select v-model="providerType"><option value="openai_compatible">OpenAI Compatible</option><option value="ollama">Ollama</option><option value="internal">内部模型</option></select></label><label class="field"><span>Base URL</span><input v-model="baseUrl" type="url" required /></label><label class="field"><span>模型 ID（逗号或换行）</span><textarea v-model="modelIds" rows="3" required /></label><button class="primary-button" type="submit" :disabled="saving"><Plus :size="16" />创建供应商</button></form>
+        <ProviderCreateForm admin @created="load" />
       </section>
     </div>
   </div>

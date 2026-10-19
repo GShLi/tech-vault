@@ -91,8 +91,9 @@ def test_team_provider_rejects_non_list_model_ids(api_client, admin_headers):
         json={
             "team_id": team["id"],
             "name": "Invalid Provider",
-            "provider_type": "openai_compatible",
+            "provider_type": "openai_chat_completions",
             "base_url": "https://provider.invalid",
+            "api_key": "sk-test",
             "model_ids": "model-a",
         },
         headers=admin_headers,
@@ -109,8 +110,9 @@ def test_admin_provider_update_rejects_invalid_status_and_model_ids(
         "/api/v1/admin/providers/create",
         json={
             "name": "Validated Provider",
-            "provider_type": "openai_compatible",
+            "provider_type": "openai_chat_completions",
             "base_url": "https://provider.invalid",
+            "api_key": "sk-test",
             "model_ids": ["model-a"],
         },
         headers=admin_headers,

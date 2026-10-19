@@ -2,7 +2,7 @@ import json
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,12 +11,18 @@ from backend.app.api.envelope import envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import paginate_items, paginate_scalars
 from backend.app.api.v1.teams import _leader_or_error, _membership_or_error
+from backend.app.core.secrets import encrypt_secret
 from backend.app.db.models import (
     DeploymentModelPolicyRecord,
     ModelCall,
     ModelPolicyRecord,
     ModelProvider,
     User,
+    utc_now,
+)
+from backend.app.modules.providers.discovery import (
+    ModelDiscoveryError,
+    discover_models,
 )
 from backend.app.modules.audit.service import write_audit
 
@@ -32,8 +38,10 @@ Identifier = Annotated[
 ProviderName = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
 ]
-ProviderType = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)
+ProviderType = Literal[
+    "openai_responses",
+    "openai_chat_completions",
+    "anthropic_messages",
 ]
 ProviderBaseUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 ModelId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -45,18 +53,34 @@ class ProviderCreateRequest(BaseModel):
 
     team_id: Identifier
     name: ProviderName
-    provider_type: ProviderType = "openai_compatible"
-    base_url: ProviderBaseUrl = ""
+    provider_type: ProviderType
+    base_url: ProviderBaseUrl = Field(min_length=1)
+    api_key: SecretStr
     model_ids: list[ModelId] = Field(default_factory=list)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("API Key must not be empty.")
+        return value
 
 
 class AdminProviderCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: ProviderName
-    provider_type: ProviderType = "openai_compatible"
-    base_url: ProviderBaseUrl = ""
+    provider_type: ProviderType
+    base_url: ProviderBaseUrl = Field(min_length=1)
+    api_key: SecretStr
     model_ids: list[ModelId] = Field(default_factory=list)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("API Key must not be empty.")
+        return value
 
 
 class AdminProviderUpdateRequest(BaseModel):
@@ -64,7 +88,101 @@ class AdminProviderUpdateRequest(BaseModel):
 
     provider_id: Identifier
     status: Optional[ProviderStatus] = None
+    provider_type: Optional[ProviderType] = None
+    base_url: Optional[ProviderBaseUrl] = None
+    api_key: Optional[SecretStr] = None
     model_ids: Optional[list[ModelId]] = None
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: Optional[SecretStr]) -> Optional[SecretStr]:
+        if value is not None and not value.get_secret_value().strip():
+            raise ValueError("API Key must not be empty.")
+        return value
+
+
+class ProviderModelsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: Identifier
+    provider_type: ProviderType
+    base_url: ProviderBaseUrl = Field(min_length=1)
+    api_key: SecretStr
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("API Key must not be empty.")
+        return value
+
+
+class AdminProviderModelsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_type: ProviderType
+    base_url: ProviderBaseUrl = Field(min_length=1)
+    api_key: SecretStr
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("API Key must not be empty.")
+        return value
+
+
+def _masked_secret(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    return "****" + (normalized[-4:] if len(normalized) > 4 else "")
+
+
+def _set_provider_api_key(provider: ModelProvider, value: SecretStr, settings) -> None:
+    api_key = value.get_secret_value().strip()
+    provider.api_key_masked = _masked_secret(api_key)
+    provider.api_key_encrypted = encrypt_secret(api_key, settings)
+    provider.api_key_updated_at = utc_now()
+
+
+def _provider_view(provider: ModelProvider, *, include_endpoint: bool = True) -> dict:
+    data = {
+        "id": provider.id,
+        "name": provider.name,
+        "provider_type": provider.provider_type,
+        "status": provider.status,
+        "api_key_masked": provider.api_key_masked,
+        "api_key_updated_at": (
+            provider.api_key_updated_at.isoformat()
+            if provider.api_key_updated_at is not None
+            else None
+        ),
+    }
+    if include_endpoint:
+        data.update(
+            {
+                "base_url": provider.base_url,
+                "model_ids": json.loads(provider.model_ids or "[]"),
+            }
+        )
+    return data
+
+
+def _discover_provider_models(
+    *,
+    provider_type: str,
+    base_url: str,
+    api_key: SecretStr,
+) -> list[str]:
+    try:
+        return discover_models(
+            provider_type=provider_type,
+            base_url=base_url,
+            api_key=api_key.get_secret_value(),
+        )
+    except ModelDiscoveryError as error:
+        raise ApiError(error.status_code, error.code, str(error)) from error
 
 
 def _policy_view(policy: ModelPolicyRecord) -> dict:
@@ -369,14 +487,7 @@ def list_providers(
         cursor=cursor,
         limit=limit,
         request_id=request.state.request_id,
-        view=lambda row: {
-            "id": row.id,
-            "name": row.name,
-            "provider_type": row.provider_type,
-            "base_url": row.base_url,
-            "model_ids": json.loads(row.model_ids or "[]"),
-            "status": row.status,
-        },
+        view=_provider_view,
     )
 
 
@@ -397,6 +508,7 @@ def create_provider(
         model_ids=json.dumps(body.model_ids),
         created_by=user.id,
     )
+    _set_provider_api_key(provider, body.api_key, request.app.state.settings)
     session.add(provider)
     session.flush()
     write_audit(
@@ -413,7 +525,26 @@ def create_provider(
         },
     )
     session.commit()
-    return envelope({"id": provider.id, "name": provider.name}, request.state.request_id)
+    return envelope(_provider_view(provider), request.state.request_id)
+
+
+@router.post("/providers/models")
+def discover_team_provider_models(
+    body: ProviderModelsRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _leader_or_error(session, body.team_id, user.id)
+    models = _discover_provider_models(
+        provider_type=body.provider_type,
+        base_url=body.base_url,
+        api_key=body.api_key,
+    )
+    return envelope(
+        {"provider_type": body.provider_type, "models": models},
+        request.state.request_id,
+    )
 
 
 @router.post("/providers/test")
@@ -552,12 +683,7 @@ def admin_list_providers(
         cursor=cursor,
         limit=limit,
         request_id=request.state.request_id,
-        view=lambda row: {
-            "id": row.id,
-            "name": row.name,
-            "provider_type": row.provider_type,
-            "status": row.status,
-        },
+        view=_provider_view,
     )
 
 
@@ -576,6 +702,7 @@ def admin_create_provider(
         model_ids=json.dumps(body.model_ids),
         created_by=admin.id,
     )
+    _set_provider_api_key(provider, body.api_key, request.app.state.settings)
     session.add(provider)
     session.flush()
     write_audit(
@@ -593,7 +720,25 @@ def admin_create_provider(
         },
     )
     session.commit()
-    return envelope({"id": provider.id, "name": provider.name}, request.state.request_id)
+    return envelope(_provider_view(provider), request.state.request_id)
+
+
+@router.post("/admin/providers/models")
+def discover_admin_provider_models(
+    body: AdminProviderModelsRequest,
+    request: Request,
+    admin: User = Depends(require_super_admin),
+    session: Session = Depends(get_session),
+):
+    models = _discover_provider_models(
+        provider_type=body.provider_type,
+        base_url=body.base_url,
+        api_key=body.api_key,
+    )
+    return envelope(
+        {"provider_type": body.provider_type, "models": models},
+        request.state.request_id,
+    )
 
 
 @router.post("/admin/providers/update")
@@ -608,6 +753,12 @@ def admin_update_provider(
         raise ApiError(404, "NOT_FOUND", "Provider was not found.")
     if body.status is not None:
         provider.status = body.status
+    if body.provider_type is not None:
+        provider.provider_type = body.provider_type
+    if body.base_url is not None:
+        provider.base_url = body.base_url
+    if body.api_key is not None:
+        _set_provider_api_key(provider, body.api_key, request.app.state.settings)
     if body.model_ids is not None:
         provider.model_ids = json.dumps(body.model_ids)
     write_audit(
@@ -620,11 +771,13 @@ def admin_update_provider(
         details={
             "scope": "deployment",
             "status": provider.status,
+            "provider_type": provider.provider_type,
+            "api_key_masked": provider.api_key_masked,
             "model_ids": json.loads(provider.model_ids or "[]"),
         },
     )
     session.commit()
-    return envelope({"id": provider.id, "status": provider.status}, request.state.request_id)
+    return envelope(_provider_view(provider), request.state.request_id)
 
 
 @router.get("/admin/models")

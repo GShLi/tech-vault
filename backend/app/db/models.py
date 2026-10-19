@@ -354,6 +354,11 @@ class ModelProvider(Base):
     name: Mapped[str] = mapped_column(String(120))
     provider_type: Mapped[str] = mapped_column(String(40))
     base_url: Mapped[str] = mapped_column(String(500))
+    api_key_masked: Mapped[str] = mapped_column(String(40), default="")
+    api_key_encrypted: Mapped[str] = mapped_column(Text, default="")
+    api_key_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     model_ids: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))

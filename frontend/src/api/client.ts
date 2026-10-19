@@ -32,6 +32,8 @@ import type {
   ModelCall,
   ModelPolicy,
   ModelProvider,
+  ProviderModelsInput,
+  ProviderType,
   PageEnvelope,
   AdminUserCreateInput,
   AdminUser,
@@ -970,11 +972,18 @@ export const api = {
   createProvider(body: {
     team_id: string
     name: string
-    provider_type: string
+    provider_type: ProviderType
     base_url: string
+    api_key: string
     model_ids: string[]
   }) {
-    return postData<{ id: string; name: string }>('/providers/create', body)
+    return postData<ModelProvider>('/providers/create', body)
+  },
+  discoverProviderModels(
+    teamId: string,
+    body: ProviderModelsInput,
+  ): Promise<{ provider_type: ProviderType; models: string[] }> {
+    return postData('/providers/models', { team_id: teamId, ...body })
   },
   testProvider(teamId: string, providerId: string) {
     return postData<{ provider_id: string; status: string }>('/providers/test', {
@@ -1014,18 +1023,27 @@ export const api = {
   },
   createAdminProvider(body: {
     name: string
-    provider_type: string
+    provider_type: ProviderType
     base_url: string
+    api_key: string
     model_ids: string[]
   }) {
-    return postData<{ id: string; name: string }>('/admin/providers/create', body)
+    return postData<ModelProvider>('/admin/providers/create', body)
+  },
+  discoverAdminProviderModels(
+    body: ProviderModelsInput,
+  ): Promise<{ provider_type: ProviderType; models: string[] }> {
+    return postData('/admin/providers/models', body)
   },
   updateAdminProvider(body: {
     provider_id: string
     status?: string
+    provider_type?: ProviderType
+    base_url?: string
+    api_key?: string
     model_ids?: string[]
   }) {
-    return postData<{ id: string; status: string }>('/admin/providers/update', body)
+    return postData<ModelProvider>('/admin/providers/update', body)
   },
   listAdminModels(
     cursor?: string | null,

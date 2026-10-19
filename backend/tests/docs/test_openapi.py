@@ -73,11 +73,13 @@ def test_openapi_contains_core_p0_paths():
         "/evals/datasets/cases",
         "/model-policy",
         "/providers",
+        "/providers/models",
         "/generations/activate",
         "/generations/rollback",
         "/docs/grants",
         "/sources/sync",
         "/admin/model-policy",
+        "/admin/providers/models",
     }
 
     assert required.issubset(paths)
@@ -589,9 +591,11 @@ def test_p0_write_status_codes_match_backend_handlers():
         "/evals/runs/cancel": "202",
         "/model-policy/update": "200",
         "/providers/create": "201",
+        "/providers/models": "200",
         "/providers/test": "200",
         "/admin/model-policy/update": "200",
         "/admin/providers/create": "201",
+        "/admin/providers/models": "200",
         "/admin/providers/update": "200",
         "/admin/models/update": "200",
         "/generations/validate": "202",
@@ -606,6 +610,22 @@ def test_p0_write_status_codes_match_backend_handlers():
     for path, status in expected.items():
         assert status in paths[path]["post"]["responses"], path
         assert set(paths[path]["post"]["responses"]) == {status, "default"}
+
+
+def test_provider_contract_supports_three_formats_and_write_only_api_keys():
+    schemas = _spec()["components"]["schemas"]
+
+    assert schemas["ProviderType"]["enum"] == [
+        "openai_responses",
+        "openai_chat_completions",
+        "anthropic_messages",
+    ]
+    for schema_name in ("ProviderCreateBody", "AdminProviderCreateBody"):
+        schema = schemas[schema_name]
+        assert "api_key" in schema["properties"]
+        assert schema["properties"]["api_key"]["writeOnly"] is True
+        assert schema["properties"]["provider_type"]["$ref"].endswith("/ProviderType")
+    assert schemas["AdminProviderUpdateBody"]["properties"]["api_key"]["writeOnly"] is True
 
 
 def test_unimplemented_p1_routes_are_not_in_p0_contract():

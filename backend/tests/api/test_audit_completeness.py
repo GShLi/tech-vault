@@ -135,7 +135,14 @@ def test_knowledge_base_and_team_policy_success_paths_are_audited_once(
 
     provider = api_client.post(
         "/api/v1/providers/create",
-        json={"team_id": team["id"], "name": "Team Provider", "model_ids": ["m1"]},
+        json={
+            "team_id": team["id"],
+            "name": "Team Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "https://provider.example/v1",
+            "api_key": "sk-team-secret",
+            "model_ids": ["m1"],
+        },
         headers=admin_headers,
     )
     assert provider.status_code == 201, provider.text
@@ -183,8 +190,9 @@ def test_admin_model_and_provider_success_paths_are_audited_once(
         "/api/v1/admin/providers/create",
         json={
             "name": "Global Provider",
-            "provider_type": "openai_compatible",
+            "provider_type": "openai_responses",
             "base_url": "https://user:secret@example.invalid?api_key=hidden",
+            "api_key": "sk-admin-secret",
             "model_ids": ["model-a"],
         },
         headers=admin_headers,

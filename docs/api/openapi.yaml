@@ -2521,6 +2521,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /providers/models:
+    post:
+      tags:
+      - policies
+      summary: Discover models from a team provider upstream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderModelsBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /providers/test:
     post:
       tags:
@@ -2758,6 +2778,26 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /admin/providers/models:
+    post:
+      tags:
+      - policies
+      summary: Discover models from a global provider upstream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminProviderModelsBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
           content:
             application/json:
               schema:
@@ -4400,6 +4440,10 @@ components:
       additionalProperties: false
       required:
       - team_id
+      - name
+      - provider_type
+      - base_url
+      - api_key
       properties:
         team_id:
           type: string
@@ -4407,20 +4451,43 @@ components:
         name:
           type: string
           maxLength: 120
-          default: provider
         provider_type:
-          type: string
-          maxLength: 40
-          default: openai_compatible
+          $ref: '#/components/schemas/ProviderType'
         base_url:
           type: string
+          minLength: 1
           maxLength: 500
-          default: ''
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
         model_ids:
           type: array
           default: []
           items:
             type: string
+    ProviderModelsBody:
+      type: object
+      additionalProperties: false
+      required:
+      - team_id
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
     ProviderTestBody:
       type: object
       required:
@@ -4456,24 +4523,46 @@ components:
       additionalProperties: false
       required:
       - name
+      - provider_type
+      - base_url
+      - api_key
       properties:
         name:
           type: string
           maxLength: 120
-          default: provider
         provider_type:
-          type: string
-          maxLength: 40
-          default: openai_compatible
+          $ref: '#/components/schemas/ProviderType'
         base_url:
           type: string
+          minLength: 1
           maxLength: 500
-          default: ''
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
         model_ids:
           type: array
           default: []
           items:
             type: string
+    AdminProviderModelsBody:
+      type: object
+      additionalProperties: false
+      required:
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
     AdminProviderUpdateBody:
       type: object
       additionalProperties: false
@@ -4485,6 +4574,15 @@ components:
           maxLength: 26
         status:
           $ref: '#/components/schemas/ProviderStatus'
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
         model_ids:
           type: array
           items:
@@ -5435,9 +5533,15 @@ components:
         name:
           type: string
         provider_type:
-          type: string
+          $ref: '#/components/schemas/ProviderType'
         base_url:
           type: string
+        api_key_masked:
+          type: string
+        api_key_updated_at:
+          type: string
+          format: date-time
+          nullable: true
         model_ids:
           type: array
           items:
@@ -5450,6 +5554,8 @@ components:
       - id
       - name
       - provider_type
+      - base_url
+      - model_ids
       - status
       properties:
         id:
@@ -5457,7 +5563,19 @@ components:
         name:
           type: string
         provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
           type: string
+        model_ids:
+          type: array
+          items:
+            type: string
+        api_key_masked:
+          type: string
+        api_key_updated_at:
+          type: string
+          format: date-time
+          nullable: true
         status:
           $ref: '#/components/schemas/ProviderStatus'
     ModelCall:
@@ -5689,6 +5807,12 @@ components:
       enum:
       - active
       - disabled
+    ProviderType:
+      type: string
+      enum:
+      - openai_responses
+      - openai_chat_completions
+      - anthropic_messages
     Visibility:
       type: string
       enum:

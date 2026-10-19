@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { Activity, Plus, RefreshCw, Server, TestTube2 } from 'lucide-vue-next'
+import { Activity, RefreshCw, Server, TestTube2 } from 'lucide-vue-next'
 import { Message } from '@arco-design/web-vue'
 
 import { api, ApiRequestError } from '@/api/client'
+import ProviderCreateForm from '@/components/ProviderCreateForm.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { useTeamStore } from '@/stores/team'
 import type { ModelCall, ModelProvider } from '@/types/api'
-import { formatDate, parseLines } from '@/utils/format'
+import { formatDate } from '@/utils/format'
+import { providerTypeLabel } from '@/utils/providers'
 
 const team = useTeamStore()
 const providers = ref<ModelProvider[]>([])
@@ -19,12 +21,7 @@ const providersNextCursor = ref<string | null>(null)
 const callsNextCursor = ref<string | null>(null)
 const providersHasMore = ref(false)
 const callsHasMore = ref(false)
-const saving = ref(false)
 const error = ref<ApiRequestError | null>(null)
-const name = ref('')
-const providerType = ref('openai_compatible')
-const baseUrl = ref('')
-const modelIds = ref('')
 
 async function load(): Promise<void> {
   if (!team.selectedTeamId) return
@@ -78,30 +75,6 @@ async function loadMoreCalls(): Promise<void> {
   }
 }
 
-async function createProvider(): Promise<void> {
-  if (!team.selectedTeamId) return
-  saving.value = true
-  error.value = null
-  try {
-    await api.createProvider({
-      team_id: team.selectedTeamId,
-      name: name.value.trim(),
-      provider_type: providerType.value,
-      base_url: baseUrl.value.trim(),
-      model_ids: parseLines(modelIds.value),
-    })
-    Message.success('供应商已创建')
-    name.value = ''
-    baseUrl.value = ''
-    modelIds.value = ''
-    await load()
-  } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
-  } finally {
-    saving.value = false
-  }
-}
-
 async function testProvider(provider: ModelProvider): Promise<void> {
   if (!team.selectedTeamId) return
   try {
@@ -125,7 +98,8 @@ watch(() => team.selectedTeamId, load)
         <div class="section-heading"><h3>可用供应商</h3><span class="muted-text">{{ providers.length }} 个</span></div>
         <div v-if="providers.length" class="stack-list">
           <article v-for="provider in providers" :key="provider.id" class="list-card">
-            <div class="list-card-heading"><div><strong>{{ provider.name }}</strong><span class="cell-subtitle">{{ provider.provider_type }} · {{ provider.base_url || '使用默认地址' }}</span></div><StatusPill :status="provider.status" /></div>
+            <div class="list-card-heading"><div><strong>{{ provider.name }}</strong><span class="cell-subtitle">{{ providerTypeLabel(provider.provider_type) }} · {{ provider.base_url || '使用默认地址' }}</span></div><StatusPill :status="provider.status" /></div>
+            <span v-if="provider.api_key_masked" class="cell-subtitle">API Key {{ provider.api_key_masked }}</span>
             <div class="tag-list"><span v-for="model in provider.model_ids || []" :key="model" class="tag">{{ model }}</span><span v-if="!(provider.model_ids || []).length" class="muted-text">未配置模型</span></div>
             <div class="row-actions" v-if="team.canManage"><button class="ghost-button" type="button" @click="testProvider(provider)"><TestTube2 :size="14" />测试连接</button></div>
           </article>
@@ -138,14 +112,11 @@ watch(() => team.selectedTeamId, load)
         </div>
       </section>
       <section class="panel detail-panel">
-        <div class="section-heading"><h3>添加团队供应商</h3><Plus :size="16" /></div>
-        <form class="form-stack" @submit.prevent="createProvider">
-          <label class="field"><span>名称</span><input v-model="name" type="text" required /></label>
-          <label class="field"><span>类型</span><select v-model="providerType"><option value="openai_compatible">OpenAI Compatible</option><option value="ollama">Ollama</option><option value="internal">内部模型</option></select></label>
-          <label class="field"><span>Base URL</span><input v-model="baseUrl" type="url" required /></label>
-          <label class="field"><span>模型 ID（逗号或换行）</span><textarea v-model="modelIds" rows="3" required /></label>
-          <button class="primary-button" type="submit" :disabled="saving || !team.canManage"><Plus :size="16" />创建供应商</button>
-        </form>
+        <ProviderCreateForm
+          :team-id="team.selectedTeamId"
+          :can-manage="team.canManage"
+          @created="load"
+        />
       </section>
     </div>
 

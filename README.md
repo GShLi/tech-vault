@@ -2,7 +2,7 @@
 
 面向研发团队的私有技术知识库与 RAG 问答系统。它支持文件与 GitHub 文档接入、团队共享与私有资料隔离、结构感知分块、混合检索、重排、带引用回答、拒答和检索链路追踪。
 
-项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、注册登录、团队和知识库 API，以及对应的 Vue3 登录、团队选择和知识库管理页面；文档接入、对话、检索适配器、Celery 和其余前端页面仍待后续迭代接入。
+项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、注册登录、团队和知识库 API、文档上传与分块入库、Elasticsearch/Qdrant 生产检索适配器，以及对应的 Vue3 页面；Reranker、真实 LLM 生成、Trace 和其余前端页面仍待后续迭代接入。
 
 完整设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)。
 
@@ -104,10 +104,12 @@ tech-vault/
 - Recall、MRR、nDCG 评测指标
 - 黄金集加载和种子样本
 - 内存索引 generation 和内存检索适配器
+- Elasticsearch BM25 与 Qdrant Dense 生产适配器
+- `dual_engine` 应用层 RRF 与 `elastic_single` ES 混合检索
 
 第一个垂直切片尚未接入：
 
-- Elasticsearch 和 Qdrant 生产检索适配器；当前仅支持内存检索
+- Reranker 与真实 LLM 生成链路
 - 文档上传与来源同步 API
 - Chunk 管理 API
 - 对话、Trace 和评测 API
@@ -164,7 +166,8 @@ uvicorn backend.app.main:create_app --factory --reload
 
 默认服务地址为 `http://127.0.0.1:8000`，API 前缀为 `/api/v1`，交互文档为
 `http://127.0.0.1:8000/docs`。当前 API 已覆盖健康检查、注册登录、
-当前用户、团队和知识库；文档上传、检索问答、Celery 和前端仍待接入。
+团队、知识库、文档上传、Chunk 和对话基础接口；流式问答、Reranker、
+真实 LLM 生成和 Trace 仍待接入。
 
 生产环境必须显式设置至少 32 字节的唯一 `TECHVAULT_JWT_SECRET`，且不得使用
 `development` 环境。
@@ -179,6 +182,15 @@ pytest backend/tests/smoke/test_vertical_slice.py -q
 ```
 
 该烟雾测试覆盖 Markdown 分块、权限过滤、内存混合检索、RRF 排序和评测指标，并校验请求结果中的非空 `trace_id`。
+
+验证真实 Elasticsearch + Qdrant 检索栈（需先启动 Docker 中的 ES/Qdrant）：
+
+```bash
+.venv/bin/python scripts/verify_retrieval_stack.py
+```
+
+该脚本写入 staging generation、执行校验与激活，分别运行 `dual_engine` 和
+`elastic_single`，并确认其他成员的私有文档不会被召回。
 
 后续安装 API 依赖时使用：
 

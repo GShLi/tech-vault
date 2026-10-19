@@ -73,6 +73,7 @@ class Chunk:
     logical_chunk_key: str
     content_hash: str
     source_locator: Dict[str, Any] = field(default_factory=dict)
+    content_vector: List[float] = field(default_factory=list)
     product: Optional[str] = None
     version_values: Tuple[str, ...] = ()
     doc_status: DocumentStatus = DocumentStatus.ACTIVE

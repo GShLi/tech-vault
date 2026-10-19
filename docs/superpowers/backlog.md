@@ -15,5 +15,4 @@ Items below are deliberately deferred from the current API and RAG slices.
 - Add Alembic migrations instead of schema creation at application startup.
 - Add refresh-token rotation, logout revocation, and password-change endpoints.
 - Add active-membership filtering to `/auth/me` if disabled memberships should not be displayed.
-- Add cursor pagination for team and knowledge-base lists.
 - Add API tests for validation-error redaction regression and request-ID sanitization as new endpoints are added.

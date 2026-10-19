@@ -4,7 +4,6 @@ import { useAuthStore } from './auth'
 
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
-  register: vi.fn(),
   me: vi.fn(),
   getToken: vi.fn(),
   setToken: vi.fn(),
@@ -18,7 +17,6 @@ vi.mock('@/api/client', async (importOriginal) => {
     api: {
       ...actual.api,
       login: mocks.login,
-      register: mocks.register,
       me: mocks.me,
     },
     getAccessToken: mocks.getToken,
@@ -33,6 +31,8 @@ const me = {
     email: 'member@example.com',
     display_name: 'Member',
     status: 'active',
+    is_super_admin: false,
+    is_builtin: false,
     created_at: '2026-10-19T12:00:00+00:00',
   },
   memberships: [],

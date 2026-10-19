@@ -15,6 +15,7 @@ from backend.app.api.middleware import RequestIdMiddleware
 from backend.app.api.v1.router import api_router
 from backend.app.core.config import Settings
 from backend.app.db.session import build_engine, build_session_factory, create_schema
+from backend.app.modules.identity.bootstrap import seed_builtin_admin
 
 
 def create_app(
@@ -44,6 +45,7 @@ def create_app(
     app.state.settings = effective_settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    seed_builtin_admin(session_factory, effective_settings)
 
     app.add_middleware(RequestIdMiddleware)
     app.include_router(api_router, prefix="/api/v1")

@@ -18,6 +18,18 @@ _DEFAULT_QDRANT_URL = "http://localhost:6333"
 _DEFAULT_MINIO_URL = "http://localhost:9000"
 _DEFAULT_EMBEDDING_URL = "http://localhost:8001"
 _DEFAULT_UPLOAD_DIR = "data/uploads"
+_DEFAULT_ADMIN_EMAIL = "admin@techvault.local"
+_DEFAULT_ADMIN_PASSWORD = "ChangeMe-123!"
+_DEFAULT_ADMIN_DISPLAY_NAME = "TechVault Admin"
+_DEFAULT_ALLOW_REGISTRATION = False
+_DEFAULT_ALLOW_LEGACY_TEAM_CREATION = False
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -36,6 +48,11 @@ class Settings:
     minio_bucket: str = "techvault"
     embedding_url: str = _DEFAULT_EMBEDDING_URL
     upload_dir: str = _DEFAULT_UPLOAD_DIR
+    admin_email: str = _DEFAULT_ADMIN_EMAIL
+    admin_password: str = _DEFAULT_ADMIN_PASSWORD
+    admin_display_name: str = _DEFAULT_ADMIN_DISPLAY_NAME
+    allow_registration: bool = _DEFAULT_ALLOW_REGISTRATION
+    allow_legacy_team_creation: bool = _DEFAULT_ALLOW_LEGACY_TEAM_CREATION
 
     def __post_init__(self) -> None:
         if self.access_token_ttl_seconds <= 0:
@@ -76,4 +93,18 @@ class Settings:
             minio_bucket=os.getenv("TECHVAULT_MINIO_BUCKET", "techvault"),
             embedding_url=os.getenv("TECHVAULT_EMBEDDING_URL", _DEFAULT_EMBEDDING_URL),
             upload_dir=os.getenv("TECHVAULT_UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
+            admin_email=os.getenv("TECHVAULT_ADMIN_EMAIL", _DEFAULT_ADMIN_EMAIL),
+            admin_password=os.getenv(
+                "TECHVAULT_ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD
+            ),
+            admin_display_name=os.getenv(
+                "TECHVAULT_ADMIN_DISPLAY_NAME", _DEFAULT_ADMIN_DISPLAY_NAME
+            ),
+            allow_registration=_env_bool(
+                "TECHVAULT_ALLOW_REGISTRATION", _DEFAULT_ALLOW_REGISTRATION
+            ),
+            allow_legacy_team_creation=_env_bool(
+                "TECHVAULT_ALLOW_LEGACY_TEAM_CREATION",
+                _DEFAULT_ALLOW_LEGACY_TEAM_CREATION,
+            ),
         )

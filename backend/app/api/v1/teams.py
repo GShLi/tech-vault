@@ -106,6 +106,16 @@ def create_team(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    if (
+        not user.is_super_admin
+        and not request.app.state.settings.allow_legacy_team_creation
+    ):
+        raise ApiError(
+            403,
+            "PERMISSION_DENIED",
+            "Only the platform administrator can create teams.",
+        )
+
     team = Team(
         name=body.name.strip(),
         description=body.description,

@@ -38,6 +38,8 @@ describe('LoginView', () => {
         email: 'member@example.com',
         display_name: 'Member',
         status: 'active',
+        is_super_admin: false,
+        is_builtin: false,
         created_at: '2026-10-19T12:00:00+00:00',
       },
       memberships: [],

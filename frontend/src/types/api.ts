@@ -5,6 +5,8 @@ export interface User {
   email: string
   display_name: string
   status: string
+  is_super_admin: boolean
+  is_builtin: boolean
   created_at: string
 }
 
@@ -64,12 +66,7 @@ export interface PageEnvelope<T> {
 export interface LoginResponse {
   access_token: string
   token_type: string
-}
-
-export interface RegisterInput {
-  email: string
-  password: string
-  display_name: string
+  user?: User
 }
 
 export interface TeamCreateInput {
@@ -89,4 +86,17 @@ export interface KnowledgeBaseInput {
 
 export interface KnowledgeBaseUpdateInput extends KnowledgeBaseInput {
   kb_id: string
+}
+
+export interface PasswordChangeInput {
+  old_password: string
+  new_password: string
+}
+
+export interface AdminUserCreateInput {
+  email: string
+  display_name: string
+  password: string
+  team_id: string
+  role: 'leader' | 'member' | 'viewer'
 }

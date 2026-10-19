@@ -33,6 +33,20 @@ http://127.0.0.1:9001          # MinIO console (minioadmin/minioadmin)
 http://127.0.0.1:5555          # Flower
 ```
 
+## Initial administrator
+
+The backend creates the protected super administrator on first startup:
+
+```text
+email:    admin@techvault.local
+password: ChangeMe-123!
+```
+
+Change this password after the first login. Override the initial values with
+`TECHVAULT_ADMIN_EMAIL`, `TECHVAULT_ADMIN_PASSWORD`, and
+`TECHVAULT_ADMIN_DISPLAY_NAME`. External registration is disabled by default;
+create all other users through the administrator's user-management page.
+
 ## With Local Embedding
 
 The `embedding` service downloads BGE-M3 (~2 GB) on first start:

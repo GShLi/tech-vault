@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BookOpen, LogOut, MessageSquare, Users } from 'lucide-vue-next'
+import { BookOpen, LogOut, MessageSquare, UserPlus, Users } from 'lucide-vue-next'
 
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
@@ -95,6 +95,14 @@ onMounted(async () => {
         <RouterLink to="/teams" class="nav-link">
           <Users :size="18" />
           <span>团队</span>
+        </RouterLink>
+        <RouterLink
+          v-if="auth.me?.user.is_super_admin"
+          to="/admin/users"
+          class="nav-link"
+        >
+          <UserPlus :size="18" />
+          <span>用户管理</span>
         </RouterLink>
       </nav>
 

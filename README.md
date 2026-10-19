@@ -2,7 +2,7 @@
 
 面向研发团队的私有技术知识库与 RAG 问答系统。它支持文件与 GitHub 文档接入、团队共享与私有资料隔离、结构感知分块、混合检索、重排、带引用回答、拒答和检索链路追踪。
 
-项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、注册登录、团队和知识库 API、文档上传与分块入库、Elasticsearch/Qdrant 生产检索适配器，以及对应的 Vue3 页面；Reranker、真实 LLM 生成、Trace 和其余前端页面仍待后续迭代接入。
+项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、内置管理员与登录、团队和知识库 API、文档上传与分块入库、Elasticsearch/Qdrant 生产检索适配器，以及对应的 Vue3 页面；Reranker、真实 LLM 生成、Trace 和其余前端页面仍待后续迭代接入。
 
 完整设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)。
 
@@ -171,6 +171,20 @@ uvicorn backend.app.main:create_app --factory --reload
 
 生产环境必须显式设置至少 32 字节的唯一 `TECHVAULT_JWT_SECRET`，且不得使用
 `development` 环境。
+
+### 初始管理员与账号开通
+
+首次启动会创建内置超级管理员：
+
+```text
+邮箱：admin@techvault.local
+密码：ChangeMe-123!
+```
+
+请首次登录后在“设置 → 修改密码”中更换密码。外部注册默认关闭，
+团队和用户只能由超级管理员创建；内置管理员不允许删除、停用或降级。
+可通过 `TECHVAULT_ADMIN_EMAIL`、`TECHVAULT_ADMIN_PASSWORD` 和
+`TECHVAULT_ADMIN_DISPLAY_NAME` 覆盖初始账号配置。
 
 测试数据库使用独立的 SQLite 内存库；本地开发默认使用
 `data/techvault.db`，可通过 `TECHVAULT_DATABASE_URL` 覆盖。

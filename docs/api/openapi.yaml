@@ -60,6 +60,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /admin/users/create:
+    post:
+      tags:
+      - auth
+      summary: Create a user and assign a team role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericBody'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /auth/refresh:
     post:
       tags:
@@ -2700,6 +2718,10 @@ components:
           type: string
         status:
           type: string
+        is_super_admin:
+          type: boolean
+        is_builtin:
+          type: boolean
         created_at:
           type: string
           format: date-time

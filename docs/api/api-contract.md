@@ -162,9 +162,14 @@ message_status: generating | completed | refused | cancelled | failed
 
 ## 4. 认证与团队
 
+认证模块默认关闭外部注册。部署时通过 `TECHVAULT_ADMIN_EMAIL` 和
+`TECHVAULT_ADMIN_PASSWORD` 初始化内置超级管理员；管理员通过
+`POST /admin/users/create` 创建用户并分配团队角色。内置管理员不允许被删除、
+停用或降级，但可以修改自己的密码。
+
 | 方法 | 路径 | 说明 | 优先级 |
 | --- | --- | --- | --- |
-| `POST` | `/auth/register` | 注册账号 | P0 |
+| `POST` | `/auth/register` | 注册账号（默认关闭，返回 `REGISTRATION_DISABLED`） | P0 |
 | `POST` | `/auth/login` | 登录并返回 Access Token | P0 |
 | `POST` | `/auth/refresh` | 刷新 Access Token | P0 |
 | `POST` | `/auth/logout` | 注销 | P0 |
@@ -183,6 +188,7 @@ message_status: generating | completed | refused | cancelled | failed
 | `POST` | `/members/update` | 修改角色或状态，body 包含 `team_id`、`user_id` | P0 |
 | `POST` | `/members/remove` | 移除成员，body 包含 `team_id`、`user_id` | P0 |
 | `POST` | `/members/transfer-documents` | 转移离职成员私有文档 | P0 |
+| `POST` | `/admin/users/create` | 超级管理员创建用户并分配团队角色 | P0 |
 
 ## 5. 知识库
 

@@ -88,9 +88,7 @@ async function submit(): Promise<void> {
         </button>
       </form>
 
-      <p class="auth-link">
-        还没有账号？<RouterLink to="/register">创建账号</RouterLink>
-      </p>
+      <p class="auth-link">账号由平台管理员统一创建。</p>
     </div>
   </div>
 </template>

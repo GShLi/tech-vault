@@ -67,6 +67,29 @@ def _bridge_teams_description(engine: Engine) -> None:
         connection.execute(text("ALTER TABLE teams ADD COLUMN description TEXT"))
 
 
+def _bridge_users_admin_flags(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("users"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    statements = []
+    if "is_super_admin" not in columns:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN is_super_admin BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if "is_builtin" not in columns:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN is_builtin BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _bridge_teams_description(engine)
+    _bridge_users_admin_flags(engine)

@@ -37,3 +37,13 @@ def get_current_user(
     if user is None or not user.is_active:
         raise ApiError(401, "UNAUTHENTICATED", "User is not active.")
     return user
+
+
+def require_super_admin(user: User = Depends(get_current_user)) -> User:
+    if not user.is_super_admin:
+        raise ApiError(
+            403,
+            "PERMISSION_DENIED",
+            "Platform administrator permission is required.",
+        )
+    return user

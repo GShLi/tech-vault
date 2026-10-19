@@ -22,6 +22,8 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now

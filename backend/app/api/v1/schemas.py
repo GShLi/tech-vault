@@ -57,11 +57,48 @@ class LoginRequest(BaseModel):
         return _normalize_email(value)
 
 
+class PasswordChangeRequest(BaseModel):
+    old_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AdminUserCreateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=8, max_length=128)
+    team_id: str = Field(min_length=1, max_length=26)
+    role: str = Field(min_length=1, max_length=16)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return _normalize_email(value)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Display name must not be empty.")
+        return normalized
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"leader", "member", "viewer"}:
+            raise ValueError("role must be leader, member, or viewer")
+        return value
+
+
 class UserView(BaseModel):
     id: str
     email: str
     display_name: str
     status: str
+    is_super_admin: bool
+    is_builtin: bool
     created_at: datetime
 
 

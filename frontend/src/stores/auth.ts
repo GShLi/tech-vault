@@ -9,7 +9,7 @@ import {
   setAccessToken,
   normalizeApiError,
 } from '@/api/client'
-import type { Me, RegisterInput } from '@/types/api'
+import type { Me } from '@/types/api'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getAccessToken())
@@ -36,11 +36,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function register(input: RegisterInput): Promise<void> {
-    await api.register(input)
-    await login(input.email, input.password)
-  }
-
   async function loadMe(): Promise<void> {
     if (!token.value) {
       me.value = null
@@ -63,7 +58,6 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     isAuthenticated,
     login,
-    register,
     loadMe,
     logout,
   }

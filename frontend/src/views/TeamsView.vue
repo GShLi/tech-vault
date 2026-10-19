@@ -59,6 +59,7 @@ async function createTeam(): Promise<void> {
         <p>当前账号可访问的团队与角色。</p>
       </div>
       <button
+        v-if="auth.me?.user.is_super_admin"
         class="secondary-button"
         data-testid="team-create-open"
         type="button"
@@ -101,7 +102,9 @@ async function createTeam(): Promise<void> {
     <div v-else class="panel empty-state">
       <Users :size="28" />
       <h3>还没有加入团队</h3>
-      <p>创建一个团队后即可开始管理知识库。</p>
+      <p>
+        {{ auth.me?.user.is_super_admin ? '创建一个团队后即可开始管理知识库。' : '请联系平台管理员创建团队。' }}
+      </p>
     </div>
 
     <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">

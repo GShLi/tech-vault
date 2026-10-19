@@ -58,7 +58,7 @@
 | 页面 | 路由 | 主要组件 | 依赖 API |
 | --- | --- | --- | --- |
 | 登录 | `/login` | 账号密码表单、登录状态 | `POST /auth/login` |
-| 注册 | `/register` | 注册表单、密码规则 | `POST /auth/register` |
+| 账号开通 | - | 由平台管理员在用户管理中创建，不提供外部注册入口 | `POST /admin/users/create` |
 | 接受邀请 | `/invite/:token` | 邀请信息、加入团队 | `GET /invitations/detail?token=`、`POST /invitations/accept` |
 | 找回密码 | `/forgot-password` | 邮箱表单 | `POST /auth/password/forgot`（P1） |
 
@@ -243,6 +243,7 @@
 | --- | --- | --- |
 | 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update` |
 | 供应商准入 | `/admin/model-providers` | `GET /admin/providers`、`POST /admin/providers/create`、`POST /admin/providers/update` |
+| 用户管理 | `/admin/users` | `POST /admin/users/create`、`GET /teams` |
 | 系统状态 | `/admin/system` | `GET /health`、`GET /ready`、`GET /version` |
 
 ## 8. 页面与 API 优先级

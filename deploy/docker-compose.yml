@@ -14,6 +14,11 @@ x-backend-env: &backend-env
   TECHVAULT_MINIO_BUCKET: techvault
   TECHVAULT_EMBEDDING_URL: http://embedding:8001
   TECHVAULT_UPLOAD_DIR: /data/uploads
+  TECHVAULT_ADMIN_EMAIL: admin@techvault.local
+  TECHVAULT_ADMIN_PASSWORD: ChangeMe-123!
+  TECHVAULT_ADMIN_DISPLAY_NAME: TechVault Admin
+  TECHVAULT_ALLOW_REGISTRATION: "false"
+  TECHVAULT_ALLOW_LEGACY_TEAM_CREATION: "false"
 
 services:
   postgres:

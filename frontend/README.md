@@ -4,7 +4,8 @@ Vue 3 + Vite + TypeScript frontend for the TechVault API.
 
 ## Current scope
 
-- Register and login
+- Login and self-service password change
+- Administrator-managed account creation; external registration is disabled
 - Team selection and team creation
 - Knowledge-base list, create, edit and archive
 - Role-aware controls (`leader` can manage, `member`/`viewer` are read-only)
@@ -28,6 +29,9 @@ The Vite dev server runs at `http://127.0.0.1:5173` and proxies `/api` to
 cd ..
 TECHVAULT_ENVIRONMENT=development .venv/bin/uvicorn backend.app.main:create_app --factory --reload
 ```
+
+Initial administrator credentials are `admin@techvault.local` /
+`ChangeMe-123!`. Change the password from Settings after first login.
 
 ## Verification
 

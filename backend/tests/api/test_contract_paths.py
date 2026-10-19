@@ -8,6 +8,8 @@ def test_implemented_p0_paths_are_exposed_with_expected_methods(api_client):
         "/api/v1/auth/register": "post",
         "/api/v1/auth/login": "post",
         "/api/v1/auth/me": "get",
+        "/api/v1/auth/password/change": "post",
+        "/api/v1/admin/users/create": "post",
         "/api/v1/teams": "get",
         "/api/v1/teams/create": "post",
         "/api/v1/teams/detail": "get",

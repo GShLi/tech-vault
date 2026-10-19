@@ -41,6 +41,8 @@ function makeStore(role: 'leader' | 'member' = 'leader') {
       email: 'leader@example.com',
       display_name: 'Leader',
       status: 'active',
+      is_super_admin: false,
+      is_builtin: false,
       created_at: '2026-10-19T12:00:00+00:00',
     },
     memberships: [{ ...membership, role }],

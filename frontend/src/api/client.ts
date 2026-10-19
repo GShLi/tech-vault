@@ -8,7 +8,8 @@ import type {
   LoginResponse,
   Me,
   PageEnvelope,
-  RegisterInput,
+  AdminUserCreateInput,
+  PasswordChangeInput,
   Team,
   TeamCreateInput,
   TeamUpdateInput,
@@ -131,9 +132,11 @@ export interface MessageView {
 }
 
 export const api = {
-  register(body: RegisterInput): Promise<User> { return postData<User>('/auth/register', body) },
   login(body: { email: string; password: string }): Promise<LoginResponse> { return postData<LoginResponse>('/auth/login', body) },
+  changePassword(body: PasswordChangeInput) { return postData<Record<string, never>>('/auth/password/change', body) },
   me(): Promise<Me> { return getData<Me>('/auth/me') },
+  listTeams(cursor?: string | null, limit = 100): Promise<PageEnvelope<Team>> { return getPage<Team>('/teams', { limit, ...(cursor ? { cursor } : {}) }) },
+  createUser(body: AdminUserCreateInput) { return postData<Record<string, unknown>>('/admin/users/create', body) },
   createTeam(body: TeamCreateInput): Promise<Team> { return postData<Team>('/teams/create', body) },
   updateTeam(body: TeamUpdateInput, version: number): Promise<Team> { return postData<Team>('/teams/update', body, { 'If-Match': String(version) }) },
   listKbs(teamId: string, cursor?: string | null, limit = 20): Promise<PageEnvelope<KnowledgeBase>> { return getPage<KnowledgeBase>('/kbs', { team_id: teamId, limit, ...(cursor ? { cursor } : {}) }) },

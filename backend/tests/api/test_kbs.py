@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 
-from backend.app.db.models import KnowledgeBase, TeamMember, User
-from backend.tests.api.test_teams import _register_and_login
+from backend.app.db.models import KnowledgeBase
+from backend.tests.api.conftest import (
+    admin_headers_for,
+    create_user_as_admin,
+    login_headers,
+)
 
 
 def _create_team(client, headers):
@@ -22,23 +26,8 @@ def _create_kb(client, headers, team_id, name="Java"):
     ).json()["data"]
 
 
-def _add_team_member(api_app, team_id, email):
-    with api_app.state.session_factory() as session:
-        user = session.scalar(select(User).where(User.email == email))
-        assert user is not None
-        session.add(
-            TeamMember(
-                team_id=team_id,
-                user_id=user.id,
-                role="member",
-                status="active",
-            )
-        )
-        session.commit()
-
-
 def test_leader_can_create_list_and_archive_kb(api_client):
-    headers = _register_and_login(api_client, email="kb-leader@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
 
     created = api_client.post(
@@ -80,7 +69,7 @@ def test_leader_can_create_list_and_archive_kb(api_client):
 
 
 def test_kb_list_paginates_with_cursor(api_client):
-    headers = _register_and_login(api_client, email="kb-pages@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb_ids = [
         _create_kb(api_client, headers, team["id"], name=name)["id"]
@@ -127,7 +116,7 @@ def test_kb_list_paginates_with_cursor(api_client):
 
 
 def test_kb_list_rejects_invalid_cursor(api_client):
-    headers = _register_and_login(api_client, email="kb-cursor@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
 
     response = api_client.get(
@@ -141,7 +130,7 @@ def test_kb_list_rejects_invalid_cursor(api_client):
 
 
 def test_kb_list_paginates_by_created_at_and_id(api_client, api_app):
-    headers = _register_and_login(api_client, email="kb-tiebreak@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb_ids = [
         _create_kb(api_client, headers, team["id"], name=name)["id"]
@@ -191,11 +180,16 @@ def test_kb_list_paginates_by_created_at_and_id(api_client, api_app):
     assert third["meta"]["next_cursor"] is None
 
 
-def test_team_member_cannot_create_kb(api_client, api_app):
-    leader_headers = _register_and_login(api_client, email="owner@example.com")
+def test_team_member_cannot_create_kb(api_client):
+    leader_headers = admin_headers_for(api_client)
     team = _create_team(api_client, leader_headers)
-    member_headers = _register_and_login(api_client, email="member@example.com")
-    _add_team_member(api_app, team["id"], "member@example.com")
+    create_user_as_admin(
+        api_client,
+        leader_headers,
+        team["id"],
+        "member@example.com",
+    )
+    member_headers = login_headers(api_client, "member@example.com")
 
     response = api_client.post(
         "/api/v1/kbs/create",
@@ -207,12 +201,17 @@ def test_team_member_cannot_create_kb(api_client, api_app):
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
-def test_team_member_cannot_update_kb(api_client, api_app):
-    leader_headers = _register_and_login(api_client, email="update-owner@example.com")
+def test_team_member_cannot_update_kb(api_client):
+    leader_headers = admin_headers_for(api_client)
     team = _create_team(api_client, leader_headers)
     kb = _create_kb(api_client, leader_headers, team["id"])
-    member_headers = _register_and_login(api_client, email="update-member@example.com")
-    _add_team_member(api_app, team["id"], "update-member@example.com")
+    create_user_as_admin(
+        api_client,
+        leader_headers,
+        team["id"],
+        "update-member@example.com",
+    )
+    member_headers = login_headers(api_client, "update-member@example.com")
 
     response = api_client.post(
         "/api/v1/kbs/update",
@@ -225,7 +224,7 @@ def test_team_member_cannot_update_kb(api_client, api_app):
 
 
 def test_kb_update_requires_leader_and_if_match(api_client):
-    leader_headers = _register_and_login(api_client, email="kb-update-leader@example.com")
+    leader_headers = admin_headers_for(api_client)
     team = _create_team(api_client, leader_headers)
     kb = api_client.post(
         "/api/v1/kbs/create",
@@ -269,9 +268,13 @@ def test_kb_update_requires_leader_and_if_match(api_client):
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "VERSION_CONFLICT"
 
-    member_headers = _register_and_login(
-        api_client, email="kb-update-member@example.com"
+    create_user_as_admin(
+        api_client,
+        leader_headers,
+        team["id"],
+        "kb-update-member@example.com",
     )
+    member_headers = login_headers(api_client, "kb-update-member@example.com")
     forbidden = api_client.post(
         "/api/v1/kbs/update",
         json={
@@ -285,7 +288,7 @@ def test_kb_update_requires_leader_and_if_match(api_client):
 
 
 def test_duplicate_kb_name_on_create_returns_duplicate_resource(api_client):
-    headers = _register_and_login(api_client, email="duplicate-create@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     _create_kb(api_client, headers, team["id"], name="Java")
 
@@ -300,7 +303,7 @@ def test_duplicate_kb_name_on_create_returns_duplicate_resource(api_client):
 
 
 def test_duplicate_kb_name_on_update_returns_duplicate_resource(api_client):
-    headers = _register_and_login(api_client, email="duplicate-update@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     _create_kb(api_client, headers, team["id"], name="Java")
     kb = _create_kb(api_client, headers, team["id"], name="Python")
@@ -316,7 +319,7 @@ def test_duplicate_kb_name_on_update_returns_duplicate_resource(api_client):
 
 
 def test_kb_create_rejects_whitespace_only_name(api_client):
-    headers = _register_and_login(api_client, email="kb-whitespace-create@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
 
     response = api_client.post(
@@ -330,7 +333,7 @@ def test_kb_create_rejects_whitespace_only_name(api_client):
 
 
 def test_kb_update_rejects_whitespace_only_name(api_client):
-    headers = _register_and_login(api_client, email="kb-whitespace-update@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb = _create_kb(api_client, headers, team["id"])
 
@@ -345,7 +348,7 @@ def test_kb_update_rejects_whitespace_only_name(api_client):
 
 
 def test_kb_archive_rejects_stale_if_match(api_client):
-    headers = _register_and_login(api_client, email="stale-archive@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb = _create_kb(api_client, headers, team["id"])
     updated = api_client.post(
@@ -366,7 +369,7 @@ def test_kb_archive_rejects_stale_if_match(api_client):
 
 
 def test_archived_kb_cannot_be_updated(api_client):
-    headers = _register_and_login(api_client, email="archived-update@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb = _create_kb(api_client, headers, team["id"])
     archived = api_client.post(
@@ -387,7 +390,7 @@ def test_archived_kb_cannot_be_updated(api_client):
 
 
 def test_archived_kb_cannot_be_rearchived(api_client):
-    headers = _register_and_login(api_client, email="rearchive@example.com")
+    headers = admin_headers_for(api_client)
     team = _create_team(api_client, headers)
     kb = _create_kb(api_client, headers, team["id"])
     archived = api_client.post(

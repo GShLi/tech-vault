@@ -74,6 +74,13 @@ def test_padded_public_default_secret_is_rejected_outside_development():
         )
 
 
+def test_registration_and_legacy_team_creation_bypasses_are_removed():
+    settings = Settings(environment="development")
+
+    assert not hasattr(settings, "allow_registration")
+    assert not hasattr(settings, "allow_legacy_team_creation")
+
+
 def test_settings_from_env_reads_runtime_values(monkeypatch):
     monkeypatch.setenv(
         "TECHVAULT_DATABASE_URL", "sqlite+pysqlite:///./test-techvault.db"
@@ -83,6 +90,10 @@ def test_settings_from_env_reads_runtime_values(monkeypatch):
     )
     monkeypatch.setenv("TECHVAULT_ACCESS_TOKEN_TTL_SECONDS", "120")
     monkeypatch.setenv("TECHVAULT_ENVIRONMENT", "test")
+    monkeypatch.setenv(
+        "TECHVAULT_MINIO_PUBLIC_URL", "https://downloads.example.test"
+    )
+    monkeypatch.setenv("TECHVAULT_S3_REGION", "eu-west-1")
 
     settings = Settings.from_env()
 
@@ -90,3 +101,36 @@ def test_settings_from_env_reads_runtime_values(monkeypatch):
     assert settings.jwt_secret == "test-secret-0123456789abcdef0123456789abcdef"
     assert settings.access_token_ttl_seconds == 120
     assert settings.environment == "test"
+    assert settings.minio_public_url == "https://downloads.example.test"
+    assert settings.s3_region == "eu-west-1"
+
+
+def test_download_url_ttl_is_read_from_environment(monkeypatch):
+    monkeypatch.setenv("TECHVAULT_ENVIRONMENT", "development")
+    monkeypatch.setenv("TECHVAULT_DOWNLOAD_URL_TTL_SECONDS", "180")
+
+    settings = Settings.from_env()
+
+    assert settings.download_url_ttl_seconds == 180
+
+
+def test_download_url_ttl_must_be_within_sigv4_limit():
+    with pytest.raises(ValueError, match="download URL TTL"):
+        Settings(environment="development", download_url_ttl_seconds=0)
+    with pytest.raises(ValueError, match="download URL TTL"):
+        Settings(environment="development", download_url_ttl_seconds=604801)
+
+
+def test_document_retention_is_read_from_environment(monkeypatch):
+    monkeypatch.setenv("TECHVAULT_ENVIRONMENT", "development")
+    monkeypatch.setenv("TECHVAULT_DOCUMENT_RETENTION_DAYS", "14")
+
+    settings = Settings.from_env()
+
+    assert settings.document_retention_days == 14
+
+
+@pytest.mark.parametrize("days", [0, 3651])
+def test_document_retention_is_bounded(days):
+    with pytest.raises(ValueError, match="document retention days"):
+        Settings(environment="development", document_retention_days=days)

@@ -1,0 +1,879 @@
+import asyncio
+import json
+
+import backend.app.api.v1.chats as chats_module
+from sqlalchemy import select
+from starlette.requests import Request
+
+from backend.app.api.v1.schemas import AskRequest
+from backend.app.core.llm_policy import resolve_model_policy
+from backend.app.db.models import (
+    ChunkRecord,
+    Document,
+    IndexGenerationRecord,
+    Message,
+    TraceRecord,
+    User,
+)
+from backend.app.rag.answer import AnswerResult
+from backend.app.rag.domain.models import (
+    DataClassification,
+    RetrievedChunk,
+    SearchResult,
+)
+
+
+def _setup_chat(api_client, admin_headers):
+    team = api_client.post(
+        "/api/v1/teams/create",
+        json={"name": "Retrieval Team"},
+        headers=admin_headers,
+    ).json()["data"]
+    kb = api_client.post(
+        "/api/v1/kbs/create",
+        json={"team_id": team["id"], "name": "Retrieval KB"},
+        headers=admin_headers,
+    ).json()["data"]
+    chat = api_client.post(
+        "/api/v1/chats/create",
+        json={"team_id": team["id"], "knowledge_base_ids": [kb["id"]]},
+        headers=admin_headers,
+    ).json()["data"]
+    return team, chat
+
+
+def _add_generation(api_app, team_id):
+    with api_app.state.session_factory() as session:
+        session.add(IndexGenerationRecord(team_id=team_id, status="active"))
+        session.commit()
+
+
+def _stream_request(api_app, *, disconnected=False):
+    async def receive():
+        if disconnected:
+            return {"type": "http.disconnect"}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/v1/chats/ask",
+            "raw_path": b"/api/v1/chats/ask",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "app": api_app,
+        },
+        receive,
+    )
+    request.state.request_id = "req_stream_test"
+    return request
+
+
+def _direct_stream_request(
+    api_app,
+    team_id,
+    chat_id,
+    *,
+    question="Stream this answer",
+    disconnected=False,
+):
+    with api_app.state.session_factory() as session:
+        user = session.scalar(select(User).where(User.email == "admin@techvault.local"))
+        assert user is not None
+        response = asyncio.run(
+            chats_module.ask(
+                AskRequest(
+                    team_id=team_id,
+                    chat_id=chat_id,
+                    question=question,
+                    stream=True,
+                ),
+                _stream_request(api_app, disconnected=disconnected),
+                user,
+                session,
+            )
+        )
+    return response
+
+
+async def _consume_stream(response):
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else str(chunk))
+    return "".join(chunks)
+
+
+def _local_decision():
+    return resolve_model_policy(
+        deployment_mode="local_only",
+        requested_classification=DataClassification.INTERNAL,
+    )
+
+
+def test_gateway_streams_provider_generate_stream_without_buffering():
+    class Provider:
+        model_id = "stream-model"
+        route = "local_model"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_stream(self, *, question, chunks, max_chunks):
+            self.calls += 1
+            yield "first "
+            yield "second"
+
+    provider = Provider()
+    gateway = chats_module.LlmGateway(
+        decision=_local_decision(),
+        local_answer_provider=provider,
+    )
+    chunk = RetrievedChunk(
+        chunk_id="chunk-1",
+        document_version_id="version-1",
+        content="Grounded evidence",
+        fused_rank=1,
+    )
+
+    stream = gateway.generate_stream(
+        question="Question",
+        chunks=(chunk,),
+        classification=DataClassification.INTERNAL,
+    )
+
+    assert provider.calls == 0
+    pieces = asyncio.run(_collect_async(stream))
+    assert pieces == ["first ", "second"]
+    assert stream.result is not None
+    assert stream.result.text == "first second"
+    assert stream.result.citation_chunk_ids == ("chunk-1",)
+    assert provider.calls == 1
+
+
+def test_gateway_accepts_sync_stream_provider_and_reports_result():
+    class Provider:
+        model_id = "sync-stream-model"
+        route = "local_model"
+
+        def stream(self, *, question, chunks, max_chunks):
+            return iter(["alpha", "-beta"])
+
+    gateway = chats_module.LlmGateway(
+        decision=_local_decision(),
+        local_answer_provider=Provider(),
+    )
+    stream = gateway.generate_stream(
+        question="Question",
+        chunks=(
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Evidence",
+                fused_rank=1,
+            ),
+        ),
+        classification=DataClassification.INTERNAL,
+    )
+
+    assert asyncio.run(_collect_async(stream)) == ["alpha", "-beta"]
+    assert stream.result is not None
+    assert stream.result.text == "alpha-beta"
+
+
+def test_gateway_defers_non_stream_provider_until_iteration():
+    class Provider:
+        model_id = "local-model"
+        route = "local_model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, *, question, chunks, max_chunks):
+            self.calls += 1
+            return AnswerResult(
+                text="completed locally",
+                status="completed",
+                citation_chunk_ids=("chunk-1",),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+            )
+
+    provider = Provider()
+    gateway = chats_module.LlmGateway(
+        decision=_local_decision(),
+        local_answer_provider=provider,
+    )
+    stream = gateway.generate_stream(
+        question="Question",
+        chunks=(
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Evidence",
+                fused_rank=1,
+            ),
+        ),
+        classification=DataClassification.INTERNAL,
+    )
+
+    assert provider.calls == 0
+    assert "".join(asyncio.run(_collect_async(stream))) == "completed locally"
+    assert provider.calls == 1
+    assert stream.result is not None
+    assert stream.result.text == "completed locally"
+
+
+async def _collect_async(stream):
+    return [piece async for piece in stream]
+
+
+def test_chat_ask_uses_team_active_generation_and_backend_engine_mode(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    with api_app.state.session_factory() as session:
+        generation = IndexGenerationRecord(team_id=team["id"], status="active")
+        session.add(generation)
+        session.commit()
+        generation_id = generation.id
+
+    captured = {}
+
+    class Retriever:
+        async def search(self, request):
+            captured["mode"] = "called"
+            return SearchResult([], {}, False, "trace-test")
+
+    def build_retriever(settings, selected_generation_id, mode):
+        captured["generation_id"] = selected_generation_id
+        captured["engine_mode"] = mode.value
+        return Retriever()
+
+    monkeypatch.setattr(chats_module.EmbeddingClient, "embed", lambda self, texts: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", build_retriever)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "What is RAG?",
+            "knowledge_base_ids": [],
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert captured["generation_id"] == generation_id
+    assert captured["engine_mode"] == "dual_engine"
+
+
+def test_chat_ask_fails_closed_without_active_generation(api_client, admin_headers):
+    team, chat = _setup_chat(api_client, admin_headers)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "What is RAG?",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "INDEX_NOT_READY"
+
+
+def _mock_ask_stack(api_app, team_id, monkeypatch, result):
+    with api_app.state.session_factory() as session:
+        session.add(IndexGenerationRecord(team_id=team_id, status="active"))
+        session.commit()
+
+    class Retriever:
+        async def search(self, request):
+            return result
+
+    monkeypatch.setattr(chats_module.EmbeddingClient, "embed", lambda self, texts: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+    monkeypatch.setattr(
+        chats_module.RerankerClient,
+        "rerank",
+        lambda self, query, chunks, top_n: list(chunks),
+    )
+
+
+def test_chat_ask_streams_citations_delta_and_done(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    result = SearchResult(
+        chunks=[
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Virtual threads reduce thread cost.",
+                fused_rank=1,
+                source_locator={"file_name": "threads.md"},
+            )
+        ],
+        stage_latency={},
+        degraded=False,
+        trace_id="trace-stream",
+    )
+    _mock_ask_stack(api_app, team["id"], monkeypatch, result)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "How do virtual threads work?",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: meta" in response.text
+    assert "event: citation" in response.text
+    assert '"citation_id": "c1"' in response.text
+    assert "event: delta" in response.text
+    assert '"text": "根据知识库检索结果：' in response.text
+    assert "event: done" in response.text
+    assert "event: answer" not in response.text
+
+
+def test_chat_ask_hydrates_citation_locator_from_persisted_chunk(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    with api_app.state.session_factory() as session:
+        user = session.scalar(select(User).where(User.email == "admin@techvault.local"))
+        assert user is not None
+        knowledge_base_id = chat["knowledge_base_ids"][0]
+        session.add(
+            Document(
+                id="doc-1",
+                knowledge_base_id=knowledge_base_id,
+                owner_user_id=user.id,
+                file_name="threads.md",
+                source_uri="/tmp/threads.md",
+            )
+        )
+        session.flush()
+        session.add(
+            ChunkRecord(
+                id="chunk-1",
+                document_id="doc-1",
+                content="Virtual threads reduce thread cost.",
+                source_locator=json.dumps(
+                    {
+                        "document_id": "doc-1",
+                        "document_version_id": "version-1",
+                        "file_name": "threads.md",
+                        "source_url": "/api/v1/docs/download?team_id=team-a&document_id=doc-1",
+                        "source_path": "threads.md",
+                        "heading_path": ["Virtual Threads"],
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+    result = SearchResult(
+        chunks=[
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Virtual threads reduce thread cost.",
+                fused_rank=1,
+                source_locator={},
+            )
+        ],
+        stage_latency={},
+        degraded=False,
+        trace_id="trace-hydrated-citation",
+    )
+    _mock_ask_stack(api_app, team["id"], monkeypatch, result)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "How do virtual threads work?",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert '"document_id": "doc-1"' in response.text
+    assert '"document_name": "threads.md"' in response.text
+    assert (
+        '"source_url": "/api/v1/docs/download?team_id=team-a&document_id=doc-1"'
+        in response.text
+    )
+
+
+def test_chat_ask_streams_refused_as_terminal_event(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    result = SearchResult([], {}, False, "trace-refused")
+    _mock_ask_stack(api_app, team["id"], monkeypatch, result)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Unknown topic",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert "event: refused" in response.text
+    assert '"reason_code": "INSUFFICIENT_EVIDENCE"' in response.text
+    assert "event: delta" not in response.text
+    assert "event: done" not in response.text
+
+
+def test_chat_ask_accepts_nested_filters_and_retrieves_with_rewritten_query(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    with api_app.state.session_factory() as session:
+        session.add(
+            Message(
+                chat_id=chat["id"],
+                role="user",
+                content="Spring Boot 3.2 如何配置虚拟线程？",
+                status="completed",
+            )
+        )
+        session.add(IndexGenerationRecord(team_id=team["id"], status="active"))
+        session.commit()
+
+    captured = {}
+
+    class Retriever:
+        async def search(self, request):
+            captured["request"] = request
+            return SearchResult([], {}, False, "trace-rewrite")
+
+    monkeypatch.setattr(chats_module.EmbeddingClient, "embed", lambda self, texts: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "它和 2.x 有什么区别？",
+            "filters": {
+                "knowledge_base_ids": chat["knowledge_base_ids"],
+                "product": "spring-boot",
+                "version_values": ["3.2"],
+            },
+            "model_policy": "local_only",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    request = captured["request"]
+    assert request.query == "它和 2.x 有什么区别？"
+    assert "Spring Boot" in request.rewritten_query
+    assert request.filters.product == "spring-boot"
+    assert request.filters.version_values == ("3.2",)
+    assert "event: rewrite" in response.text
+    with api_app.state.session_factory() as session:
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.trace_id == "trace-rewrite")
+        )
+        assert trace.original_query == "它和 2.x 有什么区别？"
+        assert "Spring Boot" in trace.rewritten_query
+        assert '"product": "spring-boot"' in trace.filters
+
+
+def test_message_history_returns_citation_objects_without_validation_error(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    result = SearchResult(
+        [
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Grounded evidence.",
+                fused_rank=1,
+                source_locator={"file_name": "evidence.md"},
+            )
+        ],
+        {},
+        False,
+        "trace-citations",
+    )
+    _mock_ask_stack(api_app, team["id"], monkeypatch, result)
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "What is the evidence?",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+
+    history = api_client.get(
+        "/api/v1/chats/messages",
+        params={"team_id": team["id"], "chat_id": chat["id"]},
+        headers=admin_headers,
+    )
+    assert history.status_code == 200
+    assistant = history.json()["data"][-1]
+    assert assistant["citation_ids"][0]["citation_id"] == "c1"
+    assert assistant["citation_ids"][0]["chunk_id"] == "chunk-1"
+
+
+def test_chat_answer_uses_top_eight_context_chunks_and_marks_local_degradation(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    chunks = [
+        RetrievedChunk(
+            chunk_id="chunk-{0}".format(index),
+            document_version_id="version-1",
+            content="Evidence {0}".format(index),
+            fused_rank=index,
+        )
+        for index in range(1, 13)
+    ]
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        SearchResult(chunks, {}, False, "trace-top-eight"),
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Collect evidence",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.text.count("event: citation") == 8
+    assert '"model_id": "extractive-local"' in response.text
+    assert '"route": "local_extractive_fallback"' in response.text
+    assert '"degraded": true' in response.text
+
+
+def test_streaming_answer_defers_rewrite_embedding_retrieval_and_rerank(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    calls = []
+    original_rewrite = chats_module.LlmGateway.rewrite
+
+    def rewrite(self, **kwargs):
+        calls.append("rewrite")
+        return original_rewrite(self, **kwargs)
+
+    def embed(self, texts, **kwargs):
+        calls.append("embedding")
+        return [[0.1]]
+
+    class Retriever:
+        async def search(self, request):
+            calls.append("retrieval")
+            return SearchResult([], {}, False, "trace-deferred")
+
+    def build_retriever(*args):
+        calls.append("build_retriever")
+        return Retriever()
+
+    monkeypatch.setattr(chats_module.LlmGateway, "rewrite", rewrite)
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", embed)
+    monkeypatch.setattr(chats_module, "build_retriever", build_retriever)
+    monkeypatch.setattr(
+        chats_module.RerankerClient,
+        "rerank",
+        lambda self, query, chunks, top_n: calls.append("rerank") or list(chunks),
+    )
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+
+    assert calls == []
+    body = asyncio.run(_consume_stream(response))
+    assert calls == ["rewrite", "embedding", "build_retriever", "retrieval", "rerank"]
+    assert "event: refused" in body
+
+
+def test_client_disconnect_stops_before_rewrite_and_persists_cancelled(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    calls = []
+
+    monkeypatch.setattr(
+        chats_module.LlmGateway,
+        "rewrite",
+        lambda self, **kwargs: calls.append("rewrite"),
+    )
+    monkeypatch.setattr(
+        chats_module.LlmGateway,
+        "embed",
+        lambda self, texts, **kwargs: calls.append("embedding") or [[0.1]],
+    )
+
+    response = _direct_stream_request(
+        api_app,
+        team["id"],
+        chat["id"],
+        disconnected=True,
+    )
+    body = asyncio.run(_consume_stream(response))
+
+    assert calls == []
+    assert "event: done" not in body
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "cancelled"
+
+
+def test_database_cancelled_stops_before_pipeline_and_persists_terminal_state(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    calls = []
+
+    def rewrite(self, **kwargs):
+        calls.append("rewrite")
+
+    monkeypatch.setattr(chats_module.LlmGateway, "rewrite", rewrite)
+    monkeypatch.setattr(
+        chats_module.LlmGateway,
+        "embed",
+        lambda self, texts, **kwargs: calls.append("embedding") or [[0.1]],
+    )
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        message.status = "cancelled"
+        session.commit()
+
+    body = asyncio.run(_consume_stream(response))
+
+    assert calls == []
+    assert "event: done" not in body
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "cancelled"
+
+
+def test_stream_error_persists_failed_message_and_trace_terminal_state(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    result = SearchResult(
+        [
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Grounding evidence",
+                fused_rank=1,
+            )
+        ],
+        {},
+        False,
+        "trace-stream-error",
+    )
+
+    class Retriever:
+        async def search(self, request):
+            return result
+
+    async def failing_generate_stream(self, **kwargs):
+        if False:
+            yield ""
+        raise RuntimeError("provider stream failed")
+
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", lambda self, texts, **kwargs: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+    monkeypatch.setattr(
+        chats_module.RerankerClient,
+        "rerank",
+        lambda self, query, chunks, top_n: list(chunks),
+    )
+    monkeypatch.setattr(
+        chats_module.LlmGateway,
+        "generate_stream",
+        failing_generate_stream,
+        raising=False,
+    )
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+    body = asyncio.run(_consume_stream(response))
+
+    assert "event: error" in body
+    assert "event: done" not in body
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "failed"
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.trace_id == "trace-stream-error")
+        )
+        assert trace is not None
+        assert trace.message_id == message.id
+        assert trace.error_code == "STREAM_ERROR"
+
+
+def test_retrieval_failure_before_result_persists_failed_trace(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+
+    class Retriever:
+        async def search(self, request):
+            raise RuntimeError("qdrant unavailable")
+
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", lambda self, texts, **kwargs: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+    body = asyncio.run(_consume_stream(response))
+
+    assert "event: error" in body
+    assert "qdrant unavailable" in body
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "failed"
+        assert message.trace_id
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.message_id == message.id)
+        )
+        assert trace is not None
+        assert trace.trace_id == message.trace_id
+        assert trace.error_code == "STREAM_ERROR"
+        assert trace.degraded is True
+        latencies = json.loads(trace.stage_latency_ms)
+        assert latencies["rewrite_ms"] >= 0
+        assert latencies["embedding_ms"] >= 0
+        assert latencies["retrieval_ms"] >= 0
+
+
+def test_embedding_failure_before_retrieval_persists_failed_trace(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", lambda self, texts, **kwargs: [])
+
+    response = _direct_stream_request(api_app, team["id"], chat["id"])
+    body = asyncio.run(_consume_stream(response))
+
+    assert "event: error" in body
+    assert "embedding provider returned no vectors" in body
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "failed"
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.message_id == message.id)
+        )
+        assert trace is not None
+        assert trace.error_code == "STREAM_ERROR"
+        assert trace.degraded is True
+        latencies = json.loads(trace.stage_latency_ms)
+        assert latencies["rewrite_ms"] >= 0
+        assert latencies["embedding_ms"] >= 0
+
+
+def test_non_stream_retrieval_failure_persists_failed_trace(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    _add_generation(api_app, team["id"])
+
+    class Retriever:
+        async def search(self, request):
+            raise RuntimeError("retrieval backend unavailable")
+
+    monkeypatch.setattr(chats_module.LlmGateway, "embed", lambda self, texts, **kwargs: [[0.1]])
+    monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Trigger a retrieval failure",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "RETRIEVAL_UNAVAILABLE"
+    with api_app.state.session_factory() as session:
+        message = session.scalar(
+            select(Message).where(Message.chat_id == chat["id"], Message.role == "assistant")
+        )
+        assert message is not None
+        assert message.status == "failed"
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.message_id == message.id)
+        )
+        assert trace is not None
+        assert trace.error_code == "RETRIEVAL_UNAVAILABLE"
+        assert trace.degraded is True
+        latencies = json.loads(trace.stage_latency_ms)
+        assert latencies["rewrite_ms"] >= 0
+        assert latencies["embedding_ms"] >= 0
+        assert latencies["retrieval_ms"] >= 0

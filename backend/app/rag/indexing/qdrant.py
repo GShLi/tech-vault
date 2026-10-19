@@ -120,6 +120,118 @@ class QdrantIndexWriter:
         self._staged.add(generation_id)
         self._validated.discard(generation_id)
 
+    async def delete_document(self, generation_id: str, document_id: str) -> None:
+        """Remove every dense-vector point for a document."""
+
+        try:
+            await self._request(
+                "POST",
+                "/collections/{0}/points/delete".format(_collection_name(generation_id)),
+                params={"wait": "true"},
+                json={
+                    "filter": {
+                        "must": [
+                            {"key": "document_id", "match": {"value": document_id}}
+                        ]
+                    }
+                },
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def delete_chunks(
+        self,
+        generation_id: str,
+        chunk_ids: Iterable[str],
+    ) -> None:
+        ids = [_point_id(chunk_id) for chunk_id in chunk_ids if chunk_id]
+        if not ids:
+            return
+        try:
+            await self._request(
+                "POST",
+                "/collections/{0}/points/delete".format(
+                    _collection_name(generation_id)
+                ),
+                params={"wait": "true"},
+                json={"points": ids},
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def set_document_status(
+        self,
+        generation_id: str,
+        document_id: str,
+        status: str,
+    ) -> None:
+        try:
+            await self._request(
+                "POST",
+                "/collections/{0}/points/payload".format(
+                    _collection_name(generation_id)
+                ),
+                params={"wait": "true"},
+                json={
+                    "payload": {"doc_status": status},
+                    "filter": {
+                        "must": [
+                            {"key": "document_id", "match": {"value": document_id}}
+                        ]
+                    },
+                },
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def set_chunk_status(
+        self, generation_id: str, chunk_id: str, status: str
+    ) -> None:
+        """Update retrieval status without rebuilding the chunk vector."""
+
+        try:
+            await self._request(
+                "POST",
+                "/collections/{0}/points/payload".format(_collection_name(generation_id)),
+                params={"wait": "true"},
+                json={
+                    "payload": {"chunk_status": status},
+                    "points": [_point_id(chunk_id)],
+                },
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def update_chunk(
+        self,
+        generation_id: str,
+        chunk_id: str,
+        content: str,
+        content_vector: List[float],
+    ) -> None:
+        name = _collection_name(generation_id)
+        point_id = _point_id(chunk_id)
+        try:
+            await self._request(
+                "PUT",
+                "/collections/{0}/points/vectors".format(name),
+                params={"wait": "true"},
+                json={"points": [{"id": point_id, "vector": list(content_vector)}]},
+            )
+            await self._request(
+                "POST",
+                "/collections/{0}/points/payload".format(name),
+                params={"wait": "true"},
+                json={"payload": {"content": content}, "points": [point_id]},
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
     async def validate(self, generation_id: str) -> ValidationResult:
         if generation_id not in self._staged:
             return ValidationResult(False, ("generation not staged",), 0)

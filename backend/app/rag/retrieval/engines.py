@@ -86,7 +86,7 @@ class ElasticsearchBM25Retriever(_BaseEngine):
         hits = response.json().get("hits", {}).get("hits", [])
         chunks = [
             self._to_retrieved(_source(hit), rank, bm25_rank=rank)
-            for rank, hit in enumerate(hits[: request.final_top_n], start=1)
+            for rank, hit in enumerate(hits, start=1)
         ]
         latency = {"bm25_ms": (time.perf_counter() - started) * 1000.0}
         return self._result(chunks, latency, False)
@@ -138,18 +138,34 @@ class ElasticsearchHybridRetriever(_BaseEngine):
 
         bm25_rank = {chunk_id: rank for rank, chunk_id in enumerate(bm25_ids, start=1)}
         dense_rank = {chunk_id: rank for rank, chunk_id in enumerate(dense_ids, start=1)}
-        chunks = [
+        rrf_candidates = [
             self._to_retrieved(
                 sources.get(candidate.chunk_id, {}),
                 candidate.fused_rank,
                 bm25_rank=bm25_rank.get(candidate.chunk_id),
                 dense_rank=dense_rank.get(candidate.chunk_id),
             )
-            for candidate in fused[: request.final_top_n]
+            for candidate in fused[: request.rerank_input_size]
         ]
+        chunks = list(rrf_candidates[: request.final_top_n])
 
         latency = {"retrieval_ms": (time.perf_counter() - started) * 1000.0}
-        return self._result(chunks, latency, False)
+        result = self._result(chunks, latency, False)
+        return SearchResult(
+            chunks=result.chunks,
+            stage_latency=result.stage_latency,
+            degraded=result.degraded,
+            trace_id=result.trace_id,
+            bm25_candidates=tuple(
+                self._to_retrieved(_source(hit), rank, bm25_rank=rank)
+                for rank, hit in enumerate(bm25_hits, start=1)
+            ),
+            dense_candidates=tuple(
+                self._to_retrieved(_source(hit), rank, dense_rank=rank)
+                for rank, hit in enumerate(dense_hits, start=1)
+            ),
+            rrf_candidates=tuple(rrf_candidates),
+        )
 
 
 class QdrantDenseRetriever(_BaseEngine):
@@ -177,7 +193,7 @@ class QdrantDenseRetriever(_BaseEngine):
         points = response.json().get("result", [])
         chunks = [
             self._to_retrieved(point.get("payload", {}), rank, dense_rank=rank)
-            for rank, point in enumerate(points[: request.final_top_n], start=1)
+            for rank, point in enumerate(points, start=1)
         ]
         latency = {"dense_ms": (time.perf_counter() - started) * 1000.0}
         return self._result(chunks, latency, False)
@@ -211,7 +227,7 @@ class DualEngineRetriever:
         bm25_rank = {chunk.chunk_id: chunk.bm25_rank for chunk in lexical.chunks}
         dense_rank = {chunk.chunk_id: chunk.dense_rank for chunk in dense.chunks}
 
-        chunks = [
+        rrf_candidates = [
             RetrievedChunk(
                 chunk_id=candidate.chunk_id,
                 document_version_id=sources[candidate.chunk_id].document_version_id,
@@ -221,9 +237,10 @@ class DualEngineRetriever:
                 dense_rank=dense_rank.get(candidate.chunk_id),
                 source_locator=sources[candidate.chunk_id].source_locator,
             )
-            for candidate in fused[: request.final_top_n]
+            for candidate in fused[: request.rerank_input_size]
             if candidate.chunk_id in sources
         ]
+        chunks = list(rrf_candidates[: request.final_top_n])
 
         latency = {
             **lexical.stage_latency,
@@ -235,6 +252,9 @@ class DualEngineRetriever:
             stage_latency=latency,
             degraded=dense.degraded,
             trace_id=lexical.trace_id,
+            bm25_candidates=tuple(lexical.chunks),
+            dense_candidates=tuple(dense.chunks),
+            rrf_candidates=tuple(rrf_candidates),
         )
 
     @staticmethod
@@ -247,4 +267,6 @@ class DualEngineRetriever:
             },
             degraded=True,
             trace_id=lexical.trace_id,
+            bm25_candidates=tuple(lexical.chunks),
+            rrf_candidates=tuple(lexical.chunks),
         )

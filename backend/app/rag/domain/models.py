@@ -121,6 +121,10 @@ class SearchResult:
     stage_latency: Dict[str, float]
     degraded: bool
     trace_id: str
+    bm25_candidates: Tuple[RetrievedChunk, ...] = ()
+    dense_candidates: Tuple[RetrievedChunk, ...] = ()
+    rrf_candidates: Tuple[RetrievedChunk, ...] = ()
+    rerank_candidates: Tuple[RetrievedChunk, ...] = ()
 
 
 @dataclass(frozen=True)

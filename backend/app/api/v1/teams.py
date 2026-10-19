@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
-from backend.app.api.deps import get_current_user, get_session
+from backend.app.api.deps import get_current_user, get_session, require_super_admin
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.v1.schemas import TeamCreateRequest, TeamUpdateRequest
 from backend.app.db.models import Team, TeamMember, User
+from backend.app.modules.audit.service import write_audit
 
 
 router = APIRouter(tags=["teams"])
@@ -34,6 +35,13 @@ def _leader_or_error(session: Session, team_id: str, user_id: str) -> TeamMember
     membership = _membership_or_error(session, team_id, user_id)
     if membership.role != "leader":
         raise ApiError(403, "PERMISSION_DENIED", "Team leader permission is required.")
+    return membership
+
+
+def _editor_or_error(session: Session, team_id: str, user_id: str) -> TeamMember:
+    membership = _membership_or_error(session, team_id, user_id)
+    if membership.role not in {"leader", "member"}:
+        raise ApiError(403, "PERMISSION_DENIED", "Document edit permission is required.")
     return membership
 
 
@@ -103,19 +111,9 @@ def list_teams(
 def create_team(
     body: TeamCreateRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_super_admin),
     session: Session = Depends(get_session),
 ):
-    if (
-        not user.is_super_admin
-        and not request.app.state.settings.allow_legacy_team_creation
-    ):
-        raise ApiError(
-            403,
-            "PERMISSION_DENIED",
-            "Only the platform administrator can create teams.",
-        )
-
     team = Team(
         name=body.name.strip(),
         description=body.description,
@@ -130,6 +128,15 @@ def create_team(
             role="leader",
             status="active",
         )
+    )
+    write_audit(
+        session,
+        action="team.created",
+        actor_id=user.id,
+        team_id=team.id,
+        resource_type="team",
+        resource_id=team.id,
+        details={"name": team.name},
     )
     session.commit()
     return envelope(_team_view(team, "leader"), request.state.request_id)
@@ -170,6 +177,15 @@ def update_team(
     if result.rowcount == 0:
         session.rollback()
         raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
+    write_audit(
+        session,
+        action="team.updated",
+        actor_id=user.id,
+        team_id=body.team_id,
+        resource_type="team",
+        resource_id=body.team_id,
+        details={"name": body.name},
+    )
     session.commit()
 
     team = session.get(Team, body.team_id)

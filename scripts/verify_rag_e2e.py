@@ -7,7 +7,15 @@ from backend.app.main import create_app
 engine = build_engine('sqlite+pysqlite:///:memory:')
 create_schema(engine)
 factory = build_session_factory(engine)
-settings = Settings(environment='test', jwt_secret='test-secret-at-least-32-bytes-long', allow_registration=True, allow_legacy_team_creation=True, enable_indexing=True, es_url='http://127.0.0.1:59200', qdrant_url='http://127.0.0.1:56333', embedding_url='http://127.0.0.1:58001')
+settings = Settings(
+    environment='test',
+    jwt_secret='test-secret-at-least-32-bytes-long',
+    enable_indexing=True,
+    task_execution_mode='inline',
+    es_url='http://127.0.0.1:59200',
+    qdrant_url='http://127.0.0.1:56333',
+    embedding_url='http://127.0.0.1:58001',
+)
 app = create_app(settings=settings, session_factory=factory)
 with TestClient(app) as client:
     login = client.post('/api/v1/auth/login', json={'email':'admin@techvault.local','password':'ChangeMe-123!'})

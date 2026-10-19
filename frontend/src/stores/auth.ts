@@ -44,11 +44,13 @@ export const useAuthStore = defineStore('auth', () => {
     me.value = await api.me()
   }
 
-  function logout(): void {
+  async function logout(): Promise<void> {
+    const serverLogout = token.value ? api.logout().catch(() => undefined) : Promise.resolve()
     clearAccessToken()
     token.value = null
     me.value = null
     error.value = null
+    await serverLogout
   }
 
   return {

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Optional
@@ -6,12 +7,15 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from backend.app.api.deps import get_current_user, get_session
+from backend.app.api.deps import get_current_user, get_session, require_super_admin
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.v1.teams import _leader_or_error, _membership_or_error
 from backend.app.db.models import AuditLog, ChunkRecord, IndexGenerationRecord, User
+from backend.app.modules.audit.service import audit_details, write_audit
+from backend.app.rag.indexing import generation as generation_indexing
+from backend.app.workers.dispatch import TaskDispatchError, dispatch_generation_reindex
 
 
 router = APIRouter(tags=["audit"])
@@ -25,7 +29,7 @@ def _audit_view(record: AuditLog) -> dict:
         "action": record.action,
         "resource_type": record.resource_type,
         "resource_id": record.resource_id,
-        "details": json.loads(record.details or "{}"),
+        "details": audit_details(record),
         "created_at": record.created_at.isoformat(),
     }
 
@@ -66,59 +70,29 @@ def _audit(
     generation_id: str,
     details: Optional[dict] = None,
 ) -> None:
-    session.add(
-        AuditLog(
-            team_id=team_id,
-            actor_id=actor_id,
-            action=action,
-            resource_type="index_generation",
-            resource_id=generation_id,
-            details=json.dumps(details or {}, separators=(",", ":")),
-        )
+    write_audit(
+        session,
+        team_id=team_id,
+        actor_id=actor_id,
+        action=action,
+        resource_type="index_generation",
+        resource_id=generation_id,
+        details=details,
     )
 
 
 def _validate_generation(
-    session: Session, generation: IndexGenerationRecord
+    session: Session,
+    generation: IndexGenerationRecord,
+    settings,
 ) -> dict:
-    chunks = session.scalars(
-        select(ChunkRecord).where(
-            ChunkRecord.team_id == generation.team_id,
-            ChunkRecord.index_generation == generation.id,
+    return asyncio.run(
+        generation_indexing.validate_existing_generation(
+            session,
+            generation,
+            settings,
         )
-    ).all()
-    errors = []
-    if not chunks:
-        errors.append("generation contains no chunks")
-    if len(chunks) != generation.chunk_count:
-        errors.append(
-            "chunk_count mismatch: expected {0}, found {1}".format(
-                generation.chunk_count, len(chunks)
-            )
-        )
-    for chunk in chunks:
-        if not chunk.content.strip():
-            errors.append("empty content: " + chunk.id)
-        if (
-            chunk.team_id != generation.team_id
-            or not chunk.knowledge_base_id
-            or not chunk.owner_user_id
-        ):
-            errors.append("missing authorization scope: " + chunk.id)
-
-    passed = not errors
-    now = datetime.now(timezone.utc)
-    generation.validated_at = now
-    generation.validation_errors = json.dumps(errors, separators=(",", ":"))
-    generation.error_message = None if passed else "; ".join(errors)
-    generation.status = "validated" if passed else "failed"
-    return {
-        "generation_id": generation.id,
-        "passed": passed,
-        "errors": errors,
-        "checked_chunks": len(chunks),
-        "validated_at": now.isoformat(),
-    }
+    )
 
 
 def _cursor_filter(query, model, cursor):
@@ -159,7 +133,7 @@ def list_audit(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    _membership_or_error(session, team_id, user.id)
+    _leader_or_error(session, team_id, user.id)
     query = _cursor_filter(
         select(AuditLog).where(AuditLog.team_id == team_id), AuditLog, cursor
     )
@@ -174,9 +148,34 @@ def get_audit(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    _membership_or_error(session, team_id, user.id)
+    _leader_or_error(session, team_id, user.id)
     record = session.get(AuditLog, audit_id)
     if record is None or record.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Audit record was not found.")
+    return envelope(_audit_view(record), request.state.request_id)
+
+
+@router.get("/admin/audit")
+def list_admin_audit(
+    request: Request,
+    limit: int = 20,
+    cursor: Optional[str] = None,
+    admin: User = Depends(require_super_admin),
+    session: Session = Depends(get_session),
+):
+    query = _cursor_filter(select(AuditLog), AuditLog, cursor)
+    return _page(session, query, AuditLog, limit, request, _audit_view)
+
+
+@router.get("/admin/audit/detail")
+def get_admin_audit(
+    request: Request,
+    audit_id: str,
+    admin: User = Depends(require_super_admin),
+    session: Session = Depends(get_session),
+):
+    record = session.get(AuditLog, audit_id)
+    if record is None:
         raise ApiError(404, "NOT_FOUND", "Audit record was not found.")
     return envelope(_audit_view(record), request.state.request_id)
 
@@ -270,8 +269,11 @@ def validate_generation(
     else:
         generation.status = "validating"
         session.commit()
-        result = _validate_generation(session, generation)
-        result["status"] = generation.status
+        result = _validate_generation(
+            session,
+            generation,
+            request.app.state.settings,
+        )
         _audit(
             session,
             team_id,
@@ -282,6 +284,72 @@ def validate_generation(
         )
         session.commit()
     return envelope(result, request.state.request_id)
+
+
+@router.post("/generations/reindex", status_code=202)
+def reindex_generation(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    _leader_or_error(session, team_id, user.id)
+    generation = IndexGenerationRecord(team_id=team_id, status="staging")
+    session.add(generation)
+    session.commit()
+
+    try:
+        run = dispatch_generation_reindex(
+            session,
+            generation.id,
+            request.app.state.settings,
+        )
+    except TaskDispatchError as error:
+        generation.status = "failed"
+        generation.error_message = str(error)
+        generation.validation_errors = json.dumps(["TASK_QUEUE_UNAVAILABLE"])
+        _audit(
+            session,
+            team_id,
+            user.id,
+            "generation.reindex.queue_failed",
+            generation.id,
+            {
+                "generation_id": generation.id,
+                "status": generation.status,
+                "error_code": "TASK_QUEUE_UNAVAILABLE",
+            },
+        )
+        session.commit()
+        raise ApiError(
+            503,
+            "TASK_QUEUE_UNAVAILABLE",
+            "The reindex task queue is unavailable.",
+            {"generation_id": generation.id},
+        ) from error
+
+    session.refresh(generation)
+    _audit(
+        session,
+        team_id,
+        user.id,
+        "generation.reindex",
+        generation.id,
+        {
+            "generation_id": generation.id,
+            "run_status": run["status"],
+            "execution_mode": run["execution_mode"],
+            "task_id": run["task_id"],
+            "passed": run["passed"],
+            "checked_chunks": run["checked_chunks"],
+        },
+    )
+    session.commit()
+    return envelope(
+        {"generation": _generation_view(generation), "run": run},
+        request.state.request_id,
+    )
 
 
 @router.post("/generations/activate", status_code=202)
@@ -307,10 +375,20 @@ def activate_generation(
             IndexGenerationRecord.status == "active",
         )
     ).all()
-    for active in active_rows:
-        active.status = "validated"
-    generation.status = "active"
-    generation.activated_at = datetime.now(timezone.utc)
+    result = asyncio.run(
+        generation_indexing.activate_existing_generation(
+            session,
+            generation,
+            request.app.state.settings,
+        )
+    )
+    if not result["passed"]:
+        raise ApiError(
+            409,
+            "GENERATION_VALIDATION_FAILED",
+            "The index generation failed validation before activation.",
+            {"validation_errors": result["errors"]},
+        )
     _audit(
         session,
         team_id,
@@ -362,9 +440,20 @@ def rollback_generation(
             "No previous active generation is available for rollback.",
         )
 
-    active.status = "validated"
-    previous.status = "active"
-    previous.activated_at = datetime.now(timezone.utc)
+    result = asyncio.run(
+        generation_indexing.activate_existing_generation(
+            session,
+            previous,
+            request.app.state.settings,
+        )
+    )
+    if not result["passed"]:
+        raise ApiError(
+            409,
+            "GENERATION_VALIDATION_FAILED",
+            "The rollback generation failed validation.",
+            {"validation_errors": result["errors"]},
+        )
     _audit(
         session,
         team_id,

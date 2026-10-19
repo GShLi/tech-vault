@@ -217,3 +217,57 @@ def test_audit_detail_hides_records_from_other_teams(api_client, api_app):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_audit_reads_require_leader_role(api_client, api_app):
+    headers, team, session_factory = _admin_session(api_client, api_app)
+    with session_factory() as session:
+        admin = session.query(User).filter(User.email == "admin@techvault.local").one()
+        audit = AuditLog(
+            team_id=team["id"],
+            actor_id=admin.id,
+            action="document.upload",
+            resource_type="document",
+            details="{}",
+        )
+        session.add(audit)
+        session.commit()
+        audit_id = audit.id
+
+    for role in ("member", "viewer"):
+        email = "{0}-audit-reader@example.com".format(role)
+        created = api_client.post(
+            "/api/v1/admin/users/create",
+            json={
+                "email": email,
+                "display_name": role.title(),
+                "password": "password-123",
+                "team_id": team["id"],
+                "role": role,
+            },
+            headers=headers,
+        )
+        assert created.status_code == 201
+        login = api_client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "password-123"},
+        )
+        role_headers = {
+            "Authorization": "Bearer " + login.json()["data"]["access_token"]
+        }
+
+        listed = api_client.get(
+            "/api/v1/audit",
+            params={"team_id": team["id"]},
+            headers=role_headers,
+        )
+        detail = api_client.get(
+            "/api/v1/audit/detail",
+            params={"team_id": team["id"], "audit_id": audit_id},
+            headers=role_headers,
+        )
+
+        assert listed.status_code == 403
+        assert listed.json()["error"]["code"] == "PERMISSION_DENIED"
+        assert detail.status_code == 403
+        assert detail.json()["error"]["code"] == "PERMISSION_DENIED"

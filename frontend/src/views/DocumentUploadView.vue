@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import { Upload } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
+import { api, ApiRequestError, loadAllPages } from '@/api/client'
 import { useTeamStore } from '@/stores/team'
 import type { KnowledgeBase } from '@/types/api'
 
@@ -14,6 +14,8 @@ const router = useRouter()
 const kbs = ref<KnowledgeBase[]>([])
 const selectedKbId = ref('')
 const file = ref<File | null>(null)
+const product = ref('')
+const versionValues = ref('')
 const visibility = ref('team_shared')
 const dataClassification = ref('internal')
 const error = ref<ApiRequestError | null>(null)
@@ -21,10 +23,11 @@ const uploading = ref(false)
 
 async function loadKbs(): Promise<void> {
   if (!team.selectedTeamId) return
-  const page = await api.listKbs(team.selectedTeamId)
-  kbs.value = page.data
-  if (!selectedKbId.value && page.data.length) {
-    selectedKbId.value = page.data[0].id
+  kbs.value = await loadAllPages((cursor) =>
+    api.listKbs(team.selectedTeamId!, cursor, 100),
+  )
+  if (!selectedKbId.value && kbs.value.length) {
+    selectedKbId.value = kbs.value[0].id
   }
 }
 
@@ -42,6 +45,12 @@ async function upload(): Promise<void> {
     form.append('team_id', team.selectedTeamId)
     form.append('kb_id', selectedKbId.value)
     form.append('file', file.value)
+    if (product.value.trim()) form.append('product', product.value.trim())
+    versionValues.value
+      .split(/[,\n]/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach((value) => form.append('version_values', value))
     form.append('visibility', visibility.value)
     form.append('data_classification', dataClassification.value)
 
@@ -96,6 +105,26 @@ watch(() => team.selectedTeamId, loadKbs, { immediate: true })
         </label>
 
         <label class="field">
+          <span>产品</span>
+          <input
+            v-model="product"
+            data-testid="upload-product"
+            type="text"
+            placeholder="例如 Spring Boot"
+          />
+        </label>
+
+        <label class="field">
+          <span>版本标签</span>
+          <input
+            v-model="versionValues"
+            data-testid="upload-versions"
+            type="text"
+            placeholder="多个版本用逗号分隔，例如 3.2, 3.3"
+          />
+        </label>
+
+        <label class="field">
           <span>可见性</span>
           <select v-model="visibility">
             <option value="team_shared">团队共享</option>
@@ -108,6 +137,7 @@ watch(() => team.selectedTeamId, loadKbs, { immediate: true })
           <select v-model="dataClassification">
             <option value="internal">内部</option>
             <option value="private">私有</option>
+            <option value="restricted">受限</option>
             <option value="public">公开</option>
           </select>
         </label>

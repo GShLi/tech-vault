@@ -32,7 +32,9 @@ async function login(email, password) {
 
 try {
   await login(adminEmail, adminPassword)
-  await page.waitForURL('**/teams')
+  await page.waitForURL(/\/(teams|knowledge-bases)$/)
+  await page.goto(`${frontendUrl}/teams`)
+  await page.waitForSelector('[data-testid="team-create-open"]')
 
   await page.click('[data-testid="team-create-open"]')
   await page.fill('[data-testid="team-name-input"]', teamName)
@@ -46,13 +48,7 @@ try {
 
   await page.goto(`${frontendUrl}/admin/users`)
   await page.waitForSelector('[data-testid="admin-user-team"]')
-  const teamValue = await page
-    .locator('[data-testid="admin-user-team"] option')
-    .nth(1)
-    .getAttribute('value')
-  if (teamValue) {
-    await page.selectOption('[data-testid="admin-user-team"]', teamValue)
-  }
+  await page.selectOption('[data-testid="admin-user-team"]', { label: teamName })
   await page.fill('[data-testid="admin-user-name"]', '联调成员')
   await page.fill('[data-testid="admin-user-email"]', memberEmail)
   await page.fill('[data-testid="admin-user-password"]', memberPassword)
@@ -64,6 +60,24 @@ try {
     path: resolve(artifactsDir, 'frontend-admin.png'),
     fullPage: true,
   })
+
+  await page.goto(`${frontendUrl}/knowledge-bases`)
+  await page.getByText(kbName, { exact: true }).click()
+  await page.waitForURL(/\/knowledge-bases\/[^/]+$/)
+  const memberOption = page
+    .locator('label.kb-member-option')
+    .filter({ hasText: memberEmail })
+    .locator('input')
+  await memberOption.check()
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/v1/kbs/members/update') &&
+        response.request().method() === 'POST' &&
+        response.ok(),
+    ),
+    page.click('[data-testid="kb-member-save"]'),
+  ])
 
   await page.click('[data-testid="logout-button"]')
   await page.waitForURL('**/login')

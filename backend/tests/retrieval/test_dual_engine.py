@@ -6,7 +6,11 @@ from backend.app.rag.domain.models import (
     SearchRequest,
     SearchResult,
 )
-from backend.app.rag.retrieval.engines import DualEngineRetriever
+from backend.app.rag.retrieval.engines import (
+    DualEngineRetriever,
+    ElasticsearchBM25Retriever,
+    QdrantDenseRetriever,
+)
 
 
 def _request() -> SearchRequest:
@@ -73,6 +77,9 @@ def test_dual_engine_fuses_bm25_and_dense_without_losing_source_ranks():
     assert result.degraded is False
     assert result.trace_id == "trace-1"
     assert result.stage_latency["dense_ms"] == 2.0
+    assert [chunk.chunk_id for chunk in result.bm25_candidates] == ["a", "b"]
+    assert [chunk.chunk_id for chunk in result.dense_candidates] == ["b", "c"]
+    assert [chunk.chunk_id for chunk in result.rrf_candidates] == ["b", "a", "c"]
 
 
 def test_dual_engine_degrades_to_bm25_when_dense_engine_fails():
@@ -93,3 +100,64 @@ def test_dual_engine_degrades_to_bm25_when_dense_engine_fails():
     assert [chunk.chunk_id for chunk in result.chunks] == ["a"]
     assert result.degraded is True
     assert result.trace_id == "trace-1"
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def test_bm25_and_dense_candidates_use_top_k_not_final_top_n():
+    calls = []
+
+    async def fake_request(method, path, **kwargs):
+        calls.append((path, kwargs.get("json")))
+        hits = [
+            {
+                "_source": {
+                    "chunk_id": "bm25-{0}".format(index),
+                    "document_version_id": "dv-1",
+                    "content": "bm25",
+                }
+            }
+            for index in range(50)
+        ]
+        points = [
+            {
+                "payload": {
+                    "chunk_id": "dense-{0}".format(index),
+                    "document_version_id": "dv-1",
+                    "content": "dense",
+                }
+            }
+            for index in range(50)
+        ]
+        return _FakeResponse({"hits": {"hits": hits}, "result": points})
+
+    request = SearchRequest(
+        query="virtual threads",
+        rewritten_query=None,
+        query_vector=[1.0, 0.0],
+        filters=RetrievalFilters(team_id="team-a", knowledge_base_ids=("kb-a",), viewer_user_id="user-a"),
+        bm25_top_k=50,
+        dense_top_k=50,
+        final_top_n=1,
+    )
+    lexical = ElasticsearchBM25Retriever("http://es", "index")
+    lexical._request = fake_request
+    dense = QdrantDenseRetriever("http://qdrant", "collection")
+    dense._request = fake_request
+
+    lexical_result = asyncio.run(lexical.search(request))
+    dense_result = asyncio.run(dense.search(request))
+
+    assert len(lexical_result.chunks) == 50
+    assert len(dense_result.chunks) == 50
+    assert calls[0][1]["size"] == 50
+    assert calls[1][1]["limit"] == 50

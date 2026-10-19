@@ -202,7 +202,9 @@ watch(() => team.selectedTeamId, () => load(true))
           <tbody>
             <tr v-for="kb in items" :key="kb.id">
               <td data-label="名称">
-                <strong data-testid="kb-row-name">{{ kb.name }}</strong>
+                <RouterLink :to="`/knowledge-bases/${kb.id}`">
+                  <strong data-testid="kb-row-name">{{ kb.name }}</strong>
+                </RouterLink>
                 <span class="cell-subtitle">{{ policyLabel(kb.default_model_policy_mode) }}</span>
               </td>
               <td class="muted-text" data-label="描述">{{ kb.description || '—' }}</td>
@@ -214,6 +216,9 @@ watch(() => team.selectedTeamId, () => load(true))
               </td>
               <td class="muted-text" data-label="更新时间">{{ formatDate(kb.updated_at) }}</td>
               <td v-if="team.canManage" class="actions-column" data-label="操作">
+                <RouterLink class="icon-button" :to="`/knowledge-bases/${kb.id}`" title="查看详情">
+                  <BookOpen :size="16" />
+                </RouterLink>
                 <button class="icon-button" type="button" title="编辑" @click="openEdit(kb)">
                   <Pencil :size="16" />
                 </button>

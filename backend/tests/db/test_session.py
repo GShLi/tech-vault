@@ -29,6 +29,131 @@ def test_create_schema_adds_description_to_legacy_teams_table():
     columns = {column["name"] for column in inspect(engine).get_columns("teams")}
     assert "description" in columns
 
+
+def test_create_schema_adds_secret_encrypted_to_legacy_credentials_table():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE credentials ("
+                "id VARCHAR(26) PRIMARY KEY, "
+                "team_id VARCHAR(26) NOT NULL, "
+                "name VARCHAR(120) NOT NULL, "
+                "secret_masked VARCHAR(40) NOT NULL, "
+                "created_by VARCHAR(26) NOT NULL, "
+                "created_at DATETIME NOT NULL"
+                ")"
+            )
+        )
+
+    create_schema(engine)
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("credentials")
+    }
+    assert "secret_encrypted" in columns
+
+    create_schema(engine)
+    columns = [
+        column["name"] for column in inspect(engine).get_columns("credentials")
+    ]
+    assert columns.count("secret_encrypted") == 1
+
     create_schema(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("teams")}
     assert "description" in columns
+
+
+def test_identifier_columns_use_runtime_lengths():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    inspector = inspect(engine)
+
+    def length(table_name, column_name):
+        columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
+        return columns[column_name]["type"].length
+
+    assert length("chunks", "id") == 68
+    assert length("chunk_history", "chunk_id") == 68
+    assert length("messages", "trace_id") == 36
+    assert length("retrieval_traces", "trace_id") >= 36
+
+
+def test_create_schema_widens_legacy_identifier_columns():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE chunks (id VARCHAR(26) PRIMARY KEY, "
+                 "document_id VARCHAR(26) NOT NULL, content TEXT NOT NULL)")
+        )
+        connection.execute(
+            text("CREATE TABLE chunk_history (id VARCHAR(26) PRIMARY KEY, "
+                 "chunk_id VARCHAR(26) NOT NULL)")
+        )
+        connection.execute(
+            text("CREATE TABLE messages (id VARCHAR(26) PRIMARY KEY, trace_id VARCHAR(26))")
+        )
+        connection.execute(
+            text("CREATE TABLE retrieval_traces (id VARCHAR(26) PRIMARY KEY, "
+                 "trace_id VARCHAR(64))")
+        )
+
+    create_schema(engine)
+    create_schema(engine)
+    inspector = inspect(engine)
+
+    def length(table_name, column_name):
+        columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
+        return columns[column_name]["type"].length
+
+    assert length("chunks", "id") == 68
+    assert length("chunk_history", "chunk_id") == 68
+    assert length("messages", "trace_id") == 36
+    assert length("retrieval_traces", "trace_id") >= 36
+
+
+def test_create_schema_adds_chunk_auto_content_and_override_table():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE chunks ("
+                "id VARCHAR(68) PRIMARY KEY, "
+                "document_id VARCHAR(26) NOT NULL, "
+                "content TEXT NOT NULL"
+                ")"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunks (id, document_id, content) "
+                "VALUES ('chk_legacy', 'doc_legacy', 'Automatic legacy content')"
+            )
+        )
+
+    create_schema(engine)
+    inspector = inspect(engine)
+
+    columns = {column["name"] for column in inspector.get_columns("chunks")}
+    assert "auto_content" in columns
+    assert inspector.has_table("chunk_overrides")
+    override_columns = {
+        column["name"] for column in inspector.get_columns("chunk_overrides")
+    }
+    assert {
+        "logical_chunk_key",
+        "content",
+        "manual_status",
+        "status",
+        "pending_reason",
+        "applied_chunk_id",
+    }.issubset(override_columns)
+
+    with engine.connect() as connection:
+        auto_content = connection.execute(
+            text("SELECT auto_content FROM chunks WHERE id = 'chk_legacy'")
+        ).scalar_one()
+    assert auto_content == "Automatic legacy content"

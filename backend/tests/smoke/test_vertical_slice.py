@@ -87,6 +87,14 @@ def test_vertical_slice_chunks_filters_fuses_and_scores_retrieval():
 
     result = asyncio.run(retriever.search(request))
 
+    ranked_ids = [chunk.chunk_id for chunk in result.chunks]
+    assert ranked_ids == [
+        virtual_chunk.chunk_id,
+        carrier_chunk.chunk_id,
+        scheduling_chunk.chunk_id,
+    ]
+    assert private_chunks[0].chunk_id not in ranked_ids
+    assert foreign_chunks[0].chunk_id not in ranked_ids
     assert [chunk.content for chunk in result.chunks] == [
         "Virtual threads",
         "lightweight concurrency",
@@ -97,15 +105,13 @@ def test_vertical_slice_chunks_filters_fuses_and_scores_retrieval():
         (chunk.bm25_rank, chunk.dense_rank) for chunk in result.chunks
     ] == [(1, 2), (None, 1), (2, None)]
 
-    ranked_ids = [chunk.chunk_id for chunk in result.chunks]
     relevant_ids = {virtual_chunk.chunk_id, carrier_chunk.chunk_id}
     assert recall_at_k(ranked_ids, relevant_ids, k=1) == 0.5
     assert recall_at_k(ranked_ids, relevant_ids, k=3) == 1.0
     assert mrr(ranked_ids, relevant_ids) == 1.0
     assert ndcg_at_k(ranked_ids, relevant_ids, k=3) == pytest.approx(1.0)
 
-    # One request result owns one trace id; separate requests need not reuse it.
-    trace_id = result.trace_id
-    assert isinstance(trace_id, str)
-    assert trace_id.strip()
-    assert result.trace_id == trace_id
+    # This slice only verifies the request result carries a non-empty trace_id;
+    # a later trace recorder will verify persistence.
+    assert isinstance(result.trace_id, str)
+    assert result.trace_id.strip()

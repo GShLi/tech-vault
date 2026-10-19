@@ -1853,7 +1853,7 @@ Add to `README.md` after the local test commands:
 
 ```bash
 python -m pip install -e ".[test,api]"
-uvicorn backend.app.main:app --reload
+uvicorn backend.app.main:create_app --factory --reload
 ```
 
 默认地址为 `http://127.0.0.1:8000/api/v1`，交互文档为

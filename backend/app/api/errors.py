@@ -86,13 +86,21 @@ async def http_error_handler(
 async def validation_error_handler(
     request: Request, error: RequestValidationError
 ) -> JSONResponse:
+    errors = [
+        {
+            key: validation_error[key]
+            for key in ("loc", "msg")
+            if key in validation_error
+        }
+        for validation_error in error.errors()
+    ]
     return JSONResponse(
         status_code=422,
         content={
             "error": {
                 "code": "VALIDATION_FAILED",
                 "message": "Request validation failed.",
-                "details": {"errors": jsonable_encoder(error.errors())},
+                "details": {"errors": jsonable_encoder(errors)},
                 "request_id": _request_id(request),
             }
         },

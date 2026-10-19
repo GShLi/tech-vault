@@ -21,26 +21,19 @@ from backend.app.db.models import Team, TeamMember, User
 router = APIRouter(tags=["auth"])
 
 
-def _normalize_email(email: str) -> str:
-    normalized = email.strip().lower()
-    if "@" not in normalized or " " in normalized:
-        raise ApiError(400, "INVALID_ARGUMENT", "A valid email is required.")
-    return normalized
-
-
 @router.post("/auth/register", status_code=201)
 def register(
     body: RegisterRequest,
     request: Request,
     session: Session = Depends(get_session),
 ):
-    email = _normalize_email(body.email)
+    email = body.email
     if session.scalar(select(User).where(User.email == email)) is not None:
         raise ApiError(409, "DUPLICATE_RESOURCE", "Email is already registered.")
 
     user = User(
         email=email,
-        display_name=body.display_name.strip(),
+        display_name=body.display_name,
         password_hash=hash_password(body.password),
     )
     session.add(user)
@@ -59,7 +52,7 @@ def login(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    email = _normalize_email(body.email)
+    email = body.email
     user = session.scalar(select(User).where(User.email == email))
     if user is None or not user.is_active or not verify_password(
         body.password, user.password_hash

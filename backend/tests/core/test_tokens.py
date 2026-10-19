@@ -6,15 +6,18 @@ from backend.app.core.config import Settings
 from backend.app.core.tokens import TokenError, create_access_token, decode_access_token
 
 
+_JWT_SECRET = "test-secret-0123456789abcdef0123456789abcdef"
+
+
 def test_access_token_round_trips_subject():
-    settings = Settings(jwt_secret="test-secret", access_token_ttl_seconds=60)
+    settings = Settings(jwt_secret=_JWT_SECRET, access_token_ttl_seconds=60)
     token = create_access_token("user-1", settings)
 
     assert decode_access_token(token, settings) == "user-1"
 
 
 def test_expired_access_token_is_rejected():
-    settings = Settings(jwt_secret="test-secret", access_token_ttl_seconds=60)
+    settings = Settings(jwt_secret=_JWT_SECRET, access_token_ttl_seconds=60)
     issued_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     token = create_access_token("user-1", settings, now=issued_at)
 
@@ -23,8 +26,8 @@ def test_expired_access_token_is_rejected():
 
 
 def test_wrong_secret_is_rejected():
-    issued = Settings(jwt_secret="first-secret")
-    verifier = Settings(jwt_secret="second-secret")
+    issued = Settings(jwt_secret=_JWT_SECRET)
+    verifier = Settings(jwt_secret=_JWT_SECRET + "-different")
     token = create_access_token("user-1", issued)
 
     with pytest.raises(TokenError):

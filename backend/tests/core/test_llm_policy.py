@@ -190,18 +190,31 @@ def test_sensitive_scan_redacts_credentials_email_and_internal_urls():
     assert set(scan.categories) >= {"email", "bearer_token", "internal_url", "password"}
 
 
-def test_gateway_uses_local_fallback_without_external_key_and_marks_route():
+def test_gateway_uses_injected_answer_provider_without_external_key():
     from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.answer import AnswerResult
     from backend.app.rag.llm_gateway import LlmGateway
 
-    class ExternalAnswer:
-        called = False
+    class AnswerProvider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "local_model"
 
-        def generate(self, **_kwargs):
-            self.called = True
-            raise AssertionError("external provider must not be called without a key")
+        def __init__(self):
+            self.calls = 0
 
-    external = ExternalAnswer()
+        def generate(self, *, question, chunks, max_chunks):
+            self.calls += 1
+            return AnswerResult(
+                text="Provider answer [c1].",
+                status="completed",
+                citation_chunk_ids=(chunks[0].chunk_id,),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+            )
+
+    provider = AnswerProvider()
     decision = resolve_model_policy(
         deployment_mode="external_allowed",
         requested_classification=DataClassification.PUBLIC,
@@ -209,7 +222,7 @@ def test_gateway_uses_local_fallback_without_external_key_and_marks_route():
     )
     gateway = LlmGateway(
         decision=decision,
-        external_answer_provider=external,
+        external_answer_provider=provider,
         external_api_key="",
     )
 
@@ -226,10 +239,11 @@ def test_gateway_uses_local_fallback_without_external_key_and_marks_route():
         classification=DataClassification.PUBLIC,
     )
 
-    assert external.called is False
-    assert result.route == "local_extractive_fallback"
-    assert result.model_id == "extractive-local"
-    assert result.degraded is True
+    assert provider.calls == 1
+    assert result.text == "Provider answer [c1]."
+    assert result.model_id == "model-a"
+    assert gateway.audits[-1].provider_id == "provider-a"
+    assert gateway.audits[-1].model_id == "model-a"
 
 
 def test_gateway_rewrites_follow_up_from_recent_product_and_version():
@@ -281,6 +295,50 @@ def test_external_required_without_key_fails_instead_of_silently_falling_back():
             ),
             classification=DataClassification.PUBLIC,
         )
+
+
+def test_gateway_rejects_answer_generation_without_provider():
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, ModelUnavailableError
+
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="local_only",
+            requested_classification=DataClassification.INTERNAL,
+        )
+    )
+
+    with pytest.raises(ModelUnavailableError, match="No answer provider"):
+        gateway.generate(
+            question="Question",
+            chunks=[],
+            max_chunks=1,
+        )
+
+
+def test_gateway_rejects_answer_stream_without_provider():
+    import asyncio
+
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, ModelUnavailableError
+
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="local_only",
+            requested_classification=DataClassification.INTERNAL,
+        )
+    )
+    stream = gateway.generate_stream(
+        question="Question",
+        chunks=[],
+        max_chunks=1,
+    )
+
+    async def collect():
+        return [piece async for piece in stream]
+
+    with pytest.raises(ModelUnavailableError, match="No answer provider"):
+        asyncio.run(collect())
 
 
 def test_external_gateway_sends_redacted_payload_and_marks_route():
@@ -336,11 +394,20 @@ def test_external_required_restricted_data_returns_policy_denial():
     from backend.app.core.llm_policy import resolve_model_policy
     from backend.app.rag.llm_gateway import LlmGateway, PolicyDeniedError
 
+    class UnusedProvider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def generate(self, **_kwargs):
+            raise AssertionError("provider must not be called for denied data")
+
     gateway = LlmGateway(
         decision=resolve_model_policy(
             deployment_mode="external_required",
             requested_classification=DataClassification.RESTRICTED,
-        )
+        ),
+        external_answer_provider=UnusedProvider(),
     )
 
     with pytest.raises(PolicyDeniedError):

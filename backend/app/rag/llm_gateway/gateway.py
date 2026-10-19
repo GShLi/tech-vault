@@ -8,12 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from backend.app.core.llm_policy import assert_external_call_allowed
-from backend.app.rag.answer import (
-    AnswerAccumulator,
-    AnswerResult,
-    AnswerStream,
-    ExtractiveLocalGenerator,
-)
+from backend.app.rag.answer import AnswerAccumulator, AnswerResult, AnswerStream
 from backend.app.rag.domain.models import (
     DataClassification,
     ModelPolicyDecision,
@@ -257,7 +252,6 @@ class LlmGateway:
         self,
         *,
         decision: ModelPolicyDecision,
-        local_answer_provider: Any = None,
         external_answer_provider: Any = None,
         local_embed_provider: Any = None,
         external_embed_provider: Any = None,
@@ -267,8 +261,7 @@ class LlmGateway:
         audit_sink: Optional[Callable[[GatewayAudit], None]] = None,
     ) -> None:
         self._decision = decision
-        self._local_answer = local_answer_provider or ExtractiveLocalGenerator()
-        self._external_answer = external_answer_provider
+        self._answer_provider = external_answer_provider
         self._local_embed = local_embed_provider
         self._external_embed = external_embed_provider
         self._local_rerank = local_rerank_provider
@@ -356,14 +349,14 @@ class LlmGateway:
             product=product,
             version_values=version_values,
         )
-        if not self._has_external_route(self._external_answer):
+        if not self._has_external_route(self._answer_provider):
             self._require_local_fallback("query rewrite")
-        if self._has_external_route(self._external_answer) and self._decision.allow_external:
+        if self._has_external_route(self._answer_provider) and self._decision.allow_external:
             try:
                 assert_external_call_allowed(self._decision, classification)
                 scan = scan_and_redact(question)
                 redacted_count = scan.redacted_count
-                external_rewrite = getattr(self._external_answer, "rewrite", None)
+                external_rewrite = getattr(self._answer_provider, "rewrite", None)
                 if external_rewrite is None:
                     if self._decision.fallback_mode == "reject":
                         raise ModelUnavailableError(
@@ -392,7 +385,7 @@ class LlmGateway:
                 route=result.route,
                 model_id=result.model_id,
                 provider_id=(
-                    self._provider_id(self._external_answer)
+                    self._provider_id(self._answer_provider)
                     if route == "external"
                     else None
                 ),
@@ -541,14 +534,16 @@ class LlmGateway:
         max_chunks: int = 8,
     ) -> AnswerResult:
         started = time.perf_counter()
-        provider = self._local_answer
+        provider = self._answer_provider
+        if provider is None:
+            raise ModelUnavailableError("No answer provider is configured.")
         external = False
-        route = "local_extractive_fallback"
+        route = str(getattr(provider, "route", "local_model"))
         redacted_count = 0
         effective_question = question
         effective_chunks = list(chunks[:max_chunks])
 
-        if self._has_external_route(self._external_answer):
+        if self._has_external_route(provider):
             try:
                 assert_external_call_allowed(self._decision, classification)
                 question_scan = scan_and_redact(question)
@@ -567,7 +562,6 @@ class LlmGateway:
                     )
                     for chunk in effective_chunks
                 ]
-                provider = self._external_answer
                 external = True
                 route = "external"
             except Exception as error:
@@ -575,7 +569,6 @@ class LlmGateway:
 
         if not external:
             self._require_local_fallback("answer generation")
-        self._require_local(provider, "answer generation")
         try:
             result = provider.generate(
                 question=effective_question,
@@ -586,33 +579,14 @@ class LlmGateway:
             if not external:
                 raise
             self._external_failure_policy(error)
-            self._require_local(self._local_answer, "answer generation")
-            result = self._local_answer.generate(
-                question=effective_question,
-                chunks=effective_chunks,
-                max_chunks=max_chunks,
-            )
-            external = False
-            route = result.route
-            result = AnswerResult(
-                text=result.text,
-                status=result.status,
-                citation_chunk_ids=result.citation_chunk_ids,
-                model_id=result.model_id,
-                route=result.route,
-                degraded=True,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                cost_micros=result.cost_micros,
-                refusal_reason=result.refusal_reason,
-            )
+            raise
 
         self._audit(
             GatewayAudit(
                 purpose="answer",
                 route=result.route if not external else route,
                 model_id=result.model_id,
-                provider_id=self._provider_id(provider) if external else None,
+                provider_id=self._provider_id(provider),
                 external=external,
                 classification=classification.value,
                 policy_version=self._decision.policy_version,
@@ -622,7 +596,7 @@ class LlmGateway:
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
                 cost_micros=result.cost_micros,
-                degraded=result.degraded or (not external and self._decision.allow_external),
+                degraded=result.degraded,
             )
         )
         return result
@@ -641,14 +615,16 @@ class LlmGateway:
 
         async def iterate():
             started = time.perf_counter()
-            provider = self._local_answer
+            provider = self._answer_provider
+            if provider is None:
+                raise ModelUnavailableError("No answer provider is configured.")
             external = False
-            route = "local_extractive_fallback"
+            route = str(getattr(provider, "route", "local_model"))
             redacted_count = 0
             effective_question = question
             effective_chunks = list(chunks[:max_chunks])
 
-            if self._has_external_route(self._external_answer):
+            if self._has_external_route(provider):
                 try:
                     assert_external_call_allowed(self._decision, classification)
                     question_scan = scan_and_redact(question)
@@ -667,7 +643,6 @@ class LlmGateway:
                         )
                         for chunk in effective_chunks
                     ]
-                    provider = self._external_answer
                     external = True
                     route = "external"
                 except Exception as error:
@@ -675,7 +650,6 @@ class LlmGateway:
 
             if not external:
                 self._require_local_fallback("answer generation")
-            self._require_local(provider, "answer generation")
             accumulator = AnswerAccumulator(
                 question=effective_question,
                 chunks=effective_chunks,
@@ -688,6 +662,7 @@ class LlmGateway:
                 degraded=bool(getattr(provider, "degraded", False)),
             )
             result = None
+            completed = False
             try:
                 stream_method = getattr(provider, "generate_stream", None)
                 if not callable(stream_method):
@@ -707,6 +682,7 @@ class LlmGateway:
                         accumulator.add(piece)
                         yield piece
                     result = accumulator.finish()
+                    completed = True
                 else:
                     result = provider.generate(
                         question=effective_question,
@@ -716,46 +692,19 @@ class LlmGateway:
                     if result.status != "refused":
                         for piece in _completed_text_slices(result.text):
                             yield piece
+                    completed = True
             except Exception as error:
-                if external and not accumulator.has_content:
+                if external:
                     self._external_failure_policy(error)
-                    local_provider = self._local_answer
-                    self._require_local(local_provider, "answer generation")
-                    local_result = local_provider.generate(
-                        question=effective_question,
-                        chunks=effective_chunks,
-                        max_chunks=max_chunks,
-                    )
-                    provider = local_provider
-                    external = False
-                    route = local_result.route
-                    result = AnswerResult(
-                        text=local_result.text,
-                        status=local_result.status,
-                        citation_chunk_ids=local_result.citation_chunk_ids,
-                        model_id=local_result.model_id,
-                        route=local_result.route,
-                        degraded=True,
-                        input_tokens=local_result.input_tokens,
-                        output_tokens=local_result.output_tokens,
-                        cost_micros=local_result.cost_micros,
-                        refusal_reason=local_result.refusal_reason,
-                    )
-                    if result.status != "refused":
-                        for piece in _completed_text_slices(result.text):
-                            yield piece
-                else:
-                    raise
+                raise
             finally:
-                if result is None and accumulator.has_content:
-                    result = accumulator.finish()
-                if result is not None:
+                if completed and result is not None:
                     self._audit(
                         GatewayAudit(
                             purpose="answer",
                             route=result.route if not external else route,
                             model_id=result.model_id,
-                            provider_id=self._provider_id(provider) if external else None,
+                            provider_id=self._provider_id(provider),
                             external=external,
                             classification=classification.value,
                             policy_version=self._decision.policy_version,
@@ -768,8 +717,7 @@ class LlmGateway:
                             input_tokens=result.input_tokens,
                             output_tokens=result.output_tokens,
                             cost_micros=result.cost_micros,
-                            degraded=result.degraded
-                            or (not external and self._decision.allow_external),
+                            degraded=result.degraded,
                         )
                     )
                     stream.result = result

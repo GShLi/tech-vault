@@ -4,6 +4,7 @@ import threading
 import time
 
 import backend.app.api.v1.chats as chats_module
+import pytest
 from sqlalchemy import select
 from starlette.requests import Request
 
@@ -117,6 +118,60 @@ def _local_decision():
     )
 
 
+class _FakeAnswerProvider:
+    provider_id = "provider-test"
+    model_id = "model-test"
+    route = "local_model"
+
+    def __init__(self):
+        self.context_chunks = []
+
+    def generate(self, *, question, chunks, max_chunks):
+        selected = list(chunks[:max_chunks])
+        self.context_chunks.append(selected)
+        if not selected:
+            return AnswerResult(
+                text="No evidence.",
+                status="refused",
+                citation_chunk_ids=(),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+                refusal_reason="INSUFFICIENT_EVIDENCE",
+            )
+        citations = tuple(chunk.chunk_id for chunk in selected)
+        text = "Provider answer " + " ".join(
+            "[c{0}]".format(index) for index in range(1, len(selected) + 1)
+        )
+        return AnswerResult(
+            text=text,
+            status="completed",
+            citation_chunk_ids=citations,
+            model_id=self.model_id,
+            route=self.route,
+            degraded=False,
+        )
+
+
+def _install_answer_provider(monkeypatch, provider=None):
+    provider = provider or _FakeAnswerProvider()
+
+    def build_gateway(request, decision):
+        return chats_module.LlmGateway(
+            decision=decision,
+            external_answer_provider=provider,
+            local_embed_provider=chats_module.EmbeddingClient(
+                request.app.state.settings.embedding_url
+            ),
+            local_rerank_provider=chats_module.RerankerClient(
+                request.app.state.settings.rerank_url
+            ),
+        )
+
+    monkeypatch.setattr(chats_module, "_build_gateway", build_gateway)
+    return provider
+
+
 def test_gateway_streams_provider_generate_stream_without_buffering():
     class Provider:
         model_id = "stream-model"
@@ -133,7 +188,7 @@ def test_gateway_streams_provider_generate_stream_without_buffering():
     provider = Provider()
     gateway = chats_module.LlmGateway(
         decision=_local_decision(),
-        local_answer_provider=provider,
+        external_answer_provider=provider,
     )
     chunk = RetrievedChunk(
         chunk_id="chunk-1",
@@ -167,7 +222,7 @@ def test_gateway_accepts_sync_stream_provider_and_reports_result():
 
     gateway = chats_module.LlmGateway(
         decision=_local_decision(),
-        local_answer_provider=Provider(),
+        external_answer_provider=Provider(),
     )
     stream = gateway.generate_stream(
         question="Question",
@@ -185,6 +240,44 @@ def test_gateway_accepts_sync_stream_provider_and_reports_result():
     assert asyncio.run(_collect_async(stream)) == ["alpha", "-beta"]
     assert stream.result is not None
     assert stream.result.text == "alpha-beta"
+
+
+def test_gateway_stream_exception_after_partial_content_does_not_complete_result():
+    class Provider:
+        provider_id = "provider-1"
+        model_id = "stream-model"
+        route = "local_model"
+
+        async def generate_stream(self, *, question, chunks, max_chunks):
+            yield "partial "
+            raise RuntimeError("provider stream failed")
+
+    gateway = chats_module.LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.PUBLIC,
+        ),
+        external_answer_provider=Provider(),
+        external_api_key="secret-key",
+    )
+    stream = gateway.generate_stream(
+        question="Question",
+        chunks=(
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Evidence",
+                fused_rank=1,
+            ),
+        ),
+        classification=DataClassification.PUBLIC,
+    )
+
+    with pytest.raises(RuntimeError, match="provider stream failed"):
+        asyncio.run(_collect_async(stream))
+
+    assert stream.result is None
+    assert gateway.audits == []
 
 
 def test_gateway_defers_non_stream_provider_until_iteration():
@@ -209,7 +302,7 @@ def test_gateway_defers_non_stream_provider_until_iteration():
     provider = Provider()
     gateway = chats_module.LlmGateway(
         decision=_local_decision(),
-        local_answer_provider=provider,
+        external_answer_provider=provider,
     )
     stream = gateway.generate_stream(
         question="Question",
@@ -259,6 +352,7 @@ def test_chat_ask_uses_team_active_generation_and_backend_engine_mode(
 
     monkeypatch.setattr(chats_module.EmbeddingClient, "embed", lambda self, texts: [[0.1]])
     monkeypatch.setattr(chats_module, "build_retriever", build_retriever)
+    _install_answer_provider(monkeypatch)
 
     response = api_client.post(
         "/api/v1/chats/ask",
@@ -295,7 +389,7 @@ def test_chat_ask_fails_closed_without_active_generation(api_client, admin_heade
     assert response.json()["error"]["code"] == "INDEX_NOT_READY"
 
 
-def _mock_ask_stack(api_app, team_id, monkeypatch, result):
+def _mock_ask_stack(api_app, team_id, monkeypatch, result, provider=None):
     with api_app.state.session_factory() as session:
         session.add(IndexGenerationRecord(team_id=team_id, status="active"))
         session.commit()
@@ -311,6 +405,7 @@ def _mock_ask_stack(api_app, team_id, monkeypatch, result):
         "rerank",
         lambda self, query, chunks, top_n: list(chunks),
     )
+    _install_answer_provider(monkeypatch, provider)
 
 
 def test_chat_ask_streams_citations_delta_and_done(
@@ -350,7 +445,8 @@ def test_chat_ask_streams_citations_delta_and_done(
     assert "event: citation" in response.text
     assert '"citation_id": "c1"' in response.text
     assert "event: delta" in response.text
-    assert '"text": "根据知识库检索结果：' in response.text
+    assert '"text": "Provider answer [c1]"' in response.text
+    assert '"model_id": "model-test"' in response.text
     assert "event: done" in response.text
     assert "event: answer" not in response.text
 
@@ -555,7 +651,7 @@ def test_message_history_returns_citation_objects_without_validation_error(
     assert assistant["citation_ids"][0]["chunk_id"] == "chunk-1"
 
 
-def test_chat_answer_uses_top_eight_context_chunks_and_marks_local_degradation(
+def test_chat_answer_uses_top_eight_context_chunks_from_injected_provider(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, chat = _setup_chat(api_client, admin_headers)
@@ -568,11 +664,13 @@ def test_chat_answer_uses_top_eight_context_chunks_and_marks_local_degradation(
         )
         for index in range(1, 13)
     ]
+    provider = _FakeAnswerProvider()
     _mock_ask_stack(
         api_app,
         team["id"],
         monkeypatch,
         SearchResult(chunks, {}, False, "trace-top-eight"),
+        provider,
     )
 
     response = api_client.post(
@@ -588,9 +686,10 @@ def test_chat_answer_uses_top_eight_context_chunks_and_marks_local_degradation(
 
     assert response.status_code == 200
     assert response.text.count("event: citation") == 8
-    assert '"model_id": "extractive-local"' in response.text
-    assert '"route": "local_extractive_fallback"' in response.text
-    assert '"degraded": true' in response.text
+    assert len(provider.context_chunks[-1]) == 8
+    assert '"model_id": "model-test"' in response.text
+    assert '"route": "local_model"' in response.text
+    assert '"degraded": false' in response.text
 
 
 def test_streaming_answer_defers_rewrite_embedding_retrieval_and_rerank(
@@ -626,6 +725,7 @@ def test_streaming_answer_defers_rewrite_embedding_retrieval_and_rerank(
         "rerank",
         lambda self, query, chunks, top_n: calls.append("rerank") or list(chunks),
     )
+    _install_answer_provider(monkeypatch)
 
     response = _direct_stream_request(api_app, team["id"], chat["id"])
 
@@ -665,6 +765,7 @@ def test_streaming_gateway_calls_run_off_event_loop_thread(
     monkeypatch.setattr(chats_module.LlmGateway, "embed", embed)
     monkeypatch.setattr(chats_module.RerankerClient, "rerank", rerank)
     monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+    _install_answer_provider(monkeypatch)
 
     response = _direct_stream_request(api_app, team["id"], chat["id"])
     body = asyncio.run(_consume_stream(response))

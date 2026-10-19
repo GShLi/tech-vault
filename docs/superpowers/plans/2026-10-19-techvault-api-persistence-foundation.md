@@ -1960,7 +1960,7 @@ git commit -m "test: verify API contract and runnable service"
 - `Settings()` and `Settings.from_env()` must fail closed unless the environment is explicitly `development` or a strong secret is supplied.
 - `decode_access_token` must require `sub`, `iat`, and `exp`.
 
-- [ ] **Step 1: Write failing settings tests**
+- [x] **Step 1: Write failing settings tests**
 
 Add to `backend/tests/core/test_config.py`:
 
@@ -1981,7 +1981,7 @@ def test_non_positive_token_ttl_is_rejected():
         Settings(environment="development", access_token_ttl_seconds=0)
 ```
 
-- [ ] **Step 2: Make settings fail closed**
+- [x] **Step 2: Make settings fail closed**
 
 Set `_DEFAULT_ENVIRONMENT = "production"` and add:
 
@@ -1992,7 +1992,7 @@ if self.access_token_ttl_seconds <= 0:
 
 Keep the existing non-development secret-strength check.
 
-- [ ] **Step 3: Require token claims**
+- [x] **Step 3: Require token claims**
 
 In `decode_access_token` use:
 
@@ -2007,7 +2007,7 @@ payload = jwt.decode(
 
 Add a token test that signs a payload without `exp` and expects `TokenError`.
 
-- [ ] **Step 4: Add timing-equalized unknown-user login**
+- [x] **Step 4: Add timing-equalized unknown-user login**
 
 Create a module-level dummy hash in `auth.py` and verify it when the user is missing or inactive:
 
@@ -2021,11 +2021,11 @@ if not verify_password(body.password, user.password_hash):
     raise ApiError(401, "UNAUTHENTICATED", "Invalid email or password.")
 ```
 
-- [ ] **Step 5: Update test settings**
+- [x] **Step 5: Update test settings**
 
 Use a long test secret and `environment="test"` in `backend/tests/api/conftest.py`, or `environment="development"` for tests that intentionally use the local default. Update `test_runtime.py` and `test_tokens.py` so no test constructs `Settings()` without an explicit environment.
 
-- [ ] **Step 6: Document local development**
+- [x] **Step 6: Document local development**
 
 Add to the README start command:
 
@@ -2036,7 +2036,7 @@ uvicorn backend.app.main:create_app --factory --reload
 
 State that production must set a unique `TECHVAULT_JWT_SECRET` of at least 32 bytes and must not use `development`.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 .venv/bin/python -m pytest backend/tests/core backend/tests/api -q
@@ -2066,11 +2066,11 @@ git commit -m "security: fail closed on runtime settings"
 - Team responses expose `description` and the caller's `role`.
 - KB responses expose `updated_at`, `default_model_policy_mode="local_only"`, and `document_count=0`.
 
-- [ ] **Step 1: Write failing pagination and shape tests**
+- [x] **Step 1: Write failing pagination and shape tests**
 
 Add tests that create three teams and three KBs, list with `limit=1`, follow `next_cursor`, and collect all three. Assert an invalid cursor returns 400 `INVALID_ARGUMENT`. Assert team responses include `description` and `role`; KB responses include `updated_at`, `default_model_policy_mode`, and `document_count`; user responses include `status` and omit `is_active`.
 
-- [ ] **Step 2: Implement cursor helpers**
+- [x] **Step 2: Implement cursor helpers**
 
 Create `backend/app/api/pagination.py`:
 
@@ -2111,7 +2111,7 @@ def decode_cursor(cursor: str) -> Tuple[datetime, str]:
         raise ApiError(400, "INVALID_ARGUMENT", "Invalid cursor.") from error
 ```
 
-- [ ] **Step 3: Add pagination to team and KB listings**
+- [x] **Step 3: Add pagination to team and KB listings**
 
 Use `limit + 1` rows, `has_more = len(rows) > limit`, and encode the last returned row when more rows exist. Apply the cursor predicate:
 
@@ -2124,14 +2124,14 @@ or_(
 
 Use `order_by(Team.created_at.desc(), Team.id.desc())`. Repeat with `KnowledgeBase`.
 
-- [ ] **Step 4: Align response shapes**
+- [x] **Step 4: Align response shapes**
 
 - Add nullable `description` to the `Team` model and team create/update schemas.
 - Return the membership role in team views.
 - Return `status` from `UserView` instead of `is_active`.
 - Add `updated_at`, `default_model_policy_mode: "local_only"`, and `document_count: 0` to KB views.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 .venv/bin/python -m pytest backend/tests/api -q

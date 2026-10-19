@@ -12,6 +12,13 @@ _DEFAULT_ENVIRONMENT = "production"
 _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 _MIN_JWT_SECRET_BYTES = 32
 
+_DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+_DEFAULT_ES_URL = "http://localhost:9200"
+_DEFAULT_QDRANT_URL = "http://localhost:6333"
+_DEFAULT_MINIO_URL = "http://localhost:9000"
+_DEFAULT_EMBEDDING_URL = "http://localhost:8001"
+_DEFAULT_UPLOAD_DIR = "data/uploads"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -20,6 +27,15 @@ class Settings:
     jwt_algorithm: str = _DEFAULT_JWT_ALGORITHM
     access_token_ttl_seconds: int = _DEFAULT_ACCESS_TOKEN_TTL_SECONDS
     environment: str = _DEFAULT_ENVIRONMENT
+    redis_url: str = _DEFAULT_REDIS_URL
+    es_url: str = _DEFAULT_ES_URL
+    qdrant_url: str = _DEFAULT_QDRANT_URL
+    minio_url: str = _DEFAULT_MINIO_URL
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "techvault"
+    embedding_url: str = _DEFAULT_EMBEDDING_URL
+    upload_dir: str = _DEFAULT_UPLOAD_DIR
 
     def __post_init__(self) -> None:
         if self.access_token_ttl_seconds <= 0:
@@ -51,5 +67,13 @@ class Settings:
                 )
             ),
             environment=os.getenv("TECHVAULT_ENVIRONMENT", _DEFAULT_ENVIRONMENT),
+            redis_url=os.getenv("TECHVAULT_REDIS_URL", _DEFAULT_REDIS_URL),
+            es_url=os.getenv("TECHVAULT_ES_URL", _DEFAULT_ES_URL),
+            qdrant_url=os.getenv("TECHVAULT_QDRANT_URL", _DEFAULT_QDRANT_URL),
+            minio_url=os.getenv("TECHVAULT_MINIO_URL", _DEFAULT_MINIO_URL),
+            minio_access_key=os.getenv("TECHVAULT_MINIO_ACCESS_KEY", "minioadmin"),
+            minio_secret_key=os.getenv("TECHVAULT_MINIO_SECRET_KEY", "minioadmin"),
+            minio_bucket=os.getenv("TECHVAULT_MINIO_BUCKET", "techvault"),
+            embedding_url=os.getenv("TECHVAULT_EMBEDDING_URL", _DEFAULT_EMBEDDING_URL),
+            upload_dir=os.getenv("TECHVAULT_UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
         )
-

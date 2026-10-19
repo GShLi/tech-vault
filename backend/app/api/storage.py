@@ -1,18 +1,16 @@
+import os
 from pathlib import Path
 from shutil import copyfileobj
 from typing import NamedTuple
 
 
-_DEFAULT_DIR = Path("data/uploads")
+def _uploads_dir() -> Path:
+    return Path(os.getenv("TECHVAULT_UPLOAD_DIR", "data/uploads"))
 
 
 class StoredFile(NamedTuple):
     path: Path
     size_bytes: int
-
-
-def _uploads_dir() -> Path:
-    return Path(_DEFAULT_DIR)
 
 
 def store_file(stream, file_name: str, identifier: str) -> StoredFile:

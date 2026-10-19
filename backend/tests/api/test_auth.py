@@ -107,7 +107,7 @@ def test_register_and_login_normalize_email(api_client):
     assert registered.json()["data"]["email"] == "member@example.com"
     assert registered.json()["data"]["display_name"] == "Member"
 
-    logged_in = _login(api_client, email="member@example.com")
+    logged_in = _login(api_client, email="  Member@Example.COM ")
     assert logged_in.status_code == 200
 
 

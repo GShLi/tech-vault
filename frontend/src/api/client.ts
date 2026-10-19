@@ -159,4 +159,10 @@ export const api = {
 
   deleteChat(teamId: string, chatId: string) { return postData<{ deleted: string }>('/chats/delete', { team_id: teamId, chat_id: chatId }) },
   listMessages(teamId: string, chatId: string): Promise<MessageView[]> { return getData<MessageView[]>('/chats/messages', { team_id: teamId, chat_id: chatId }) },
+
+  listMembers(teamId: string, cursor?: string | null, limit = 20): Promise<PageEnvelope<Record<string, string>>> { return getPage<Record<string, string>>('/members', { team_id: teamId, limit, ...(cursor ? { cursor } : {}) }) },
+
+  updateMember(teamId: string, userId: string, body: { role?: string; status?: string }) { return postData<Record<string, string>>('/members/update', { team_id: teamId, user_id: userId, ...body }) },
+
+  removeMember(teamId: string, userId: string) { return postData<{ removed: string }>('/members/remove', { team_id: teamId, user_id: userId }) },
 }

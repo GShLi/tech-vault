@@ -6,6 +6,7 @@ import AppShell from '@/views/AppShell.vue'
 import ChatPage from '@/views/ChatPage.vue'
 import DocumentDetailPage from '@/views/DocumentDetailPage.vue'
 import DocumentUploadView from '@/views/DocumentUploadView.vue'
+import MembersView from '@/views/MembersView.vue'
 import KnowledgeBasesView from '@/views/KnowledgeBasesView.vue'
 import LoginView from '@/views/LoginView.vue'
 import RegisterView from '@/views/RegisterView.vue'
@@ -27,6 +28,7 @@ const router = createRouter({
         { path: 'knowledge-bases/:kbId/upload', name: 'document-upload', component: DocumentUploadView, meta: { title: '上传文档' } },
         { path: 'documents/:documentId', name: 'document-detail', component: DocumentDetailPage, meta: { title: '文档详情' } },
         { path: 'settings', name: 'settings', component: SettingsView, meta: { title: '设置' } },
+        { path: 'members', name: 'members', component: MembersView, meta: { title: '成员管理' } },
         { path: 'teams', name: 'teams', component: TeamsView, meta: { title: '选择团队' } },
       ],
     },

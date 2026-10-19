@@ -23,6 +23,16 @@ router = APIRouter(tags=["auth"])
 _DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-login-timing")
 
 
+def _user_view(user: User) -> UserView:
+    return UserView(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        status="active" if user.is_active else "disabled",
+        created_at=user.created_at,
+    )
+
+
 @router.post("/auth/register", status_code=201)
 def register(
     body: RegisterRequest,
@@ -45,7 +55,7 @@ def register(
         session.rollback()
         raise ApiError(409, "DUPLICATE_RESOURCE", "Email is already registered.") from error
 
-    return envelope(UserView.model_validate(user).model_dump(), request.state.request_id)
+    return envelope(_user_view(user).model_dump(), request.state.request_id)
 
 
 @router.post("/auth/login")
@@ -92,7 +102,7 @@ def me(
     ]
     return envelope(
         MeView(
-            user=UserView.model_validate(user),
+            user=_user_view(user),
             memberships=memberships,
         ).model_dump(),
         request.state.request_id,

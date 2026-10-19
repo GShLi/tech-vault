@@ -1,11 +1,14 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user, get_session
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
+from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.v1.schemas import (
     KnowledgeBaseArchiveRequest,
     KnowledgeBaseCreateRequest,
@@ -29,8 +32,11 @@ def _kb_view(kb: KnowledgeBase):
         "name": kb.name,
         "description": kb.description,
         "status": kb.status,
+        "default_model_policy_mode": "local_only",
+        "document_count": 0,
         "version": kb.version,
         "created_at": kb.created_at.isoformat(),
+        "updated_at": kb.updated_at.isoformat(),
     }
 
 
@@ -52,22 +58,44 @@ def list_kbs(
     request: Request,
     team_id: str,
     limit: int = 20,
+    cursor: Optional[str] = None,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    kbs = session.scalars(
-        select(KnowledgeBase)
-        .where(
-            KnowledgeBase.team_id == team_id,
-            KnowledgeBase.status == "active",
+    page_limit = max(1, min(limit, 100))
+    query = select(KnowledgeBase).where(
+        KnowledgeBase.team_id == team_id,
+        KnowledgeBase.status == "active",
+    )
+    if cursor is not None:
+        after_created, after_id = decode_cursor(cursor)
+        query = query.where(
+            or_(
+                KnowledgeBase.created_at < after_created,
+                and_(
+                    KnowledgeBase.created_at == after_created,
+                    KnowledgeBase.id < after_id,
+                ),
+            )
         )
-        .order_by(KnowledgeBase.created_at.desc())
-        .limit(max(1, min(limit, 100)))
+
+    rows = session.scalars(
+        query.order_by(KnowledgeBase.created_at.desc(), KnowledgeBase.id.desc()).limit(
+            page_limit + 1
+        )
     ).all()
+    has_more = len(rows) > page_limit
+    page_rows = rows[:page_limit]
+    next_cursor = (
+        encode_cursor(page_rows[-1].created_at, page_rows[-1].id)
+        if has_more and page_rows
+        else None
+    )
     return page_envelope(
-        [_kb_view(kb) for kb in kbs],
+        [_kb_view(kb) for kb in page_rows],
         request.state.request_id,
+        next_cursor,
     )
 
 

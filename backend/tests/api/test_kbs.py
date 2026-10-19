@@ -47,6 +47,9 @@ def test_leader_can_create_list_and_archive_kb(api_client):
     assert created.status_code == 201
     kb = created.json()["data"]
     assert kb["name"] == "Java"
+    assert kb["updated_at"]
+    assert kb["default_model_policy_mode"] == "local_only"
+    assert kb["document_count"] == 0
 
     listed = api_client.get(
         "/api/v1/kbs",
@@ -54,6 +57,9 @@ def test_leader_can_create_list_and_archive_kb(api_client):
         headers=headers,
     )
     assert [item["id"] for item in listed.json()["data"]] == [kb["id"]]
+    assert listed.json()["data"][0]["updated_at"] == kb["updated_at"]
+    assert listed.json()["data"][0]["default_model_policy_mode"] == "local_only"
+    assert listed.json()["data"][0]["document_count"] == 0
 
     archived = api_client.post(
         "/api/v1/kbs/archive",
@@ -69,6 +75,67 @@ def test_leader_can_create_list_and_archive_kb(api_client):
         headers=headers,
     )
     assert listed_after.json()["data"] == []
+
+
+def test_kb_list_paginates_with_cursor(api_client):
+    headers = _register_and_login(api_client, email="kb-pages@example.com")
+    team = _create_team(api_client, headers)
+    kb_ids = [
+        _create_kb(api_client, headers, team["id"], name=name)["id"]
+        for name in ("Java", "Python", "Rust")
+    ]
+
+    first = api_client.get(
+        "/api/v1/kbs",
+        params={"team_id": team["id"], "limit": 1},
+        headers=headers,
+    ).json()
+    assert first["meta"]["has_more"] is True
+    assert first["meta"]["next_cursor"] is not None
+
+    second = api_client.get(
+        "/api/v1/kbs",
+        params={
+            "team_id": team["id"],
+            "limit": 1,
+            "cursor": first["meta"]["next_cursor"],
+        },
+        headers=headers,
+    ).json()
+    assert second["meta"]["has_more"] is True
+    assert second["meta"]["next_cursor"] is not None
+
+    third = api_client.get(
+        "/api/v1/kbs",
+        params={
+            "team_id": team["id"],
+            "limit": 1,
+            "cursor": second["meta"]["next_cursor"],
+        },
+        headers=headers,
+    ).json()
+    assert third["meta"]["has_more"] is False
+    assert third["meta"]["next_cursor"] is None
+
+    assert [
+        first["data"][0]["id"],
+        second["data"][0]["id"],
+        third["data"][0]["id"],
+    ] == kb_ids[::-1]
+
+
+def test_kb_list_rejects_invalid_cursor(api_client):
+    headers = _register_and_login(api_client, email="kb-cursor@example.com")
+    team = _create_team(api_client, headers)
+
+    response = api_client.get(
+        "/api/v1/kbs",
+        params={"team_id": team["id"], "cursor": "not-a-cursor"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_team_member_cannot_create_kb(api_client, api_app):

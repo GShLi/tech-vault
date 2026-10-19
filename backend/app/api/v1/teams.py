@@ -1,10 +1,13 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user, get_session
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
+from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.v1.schemas import TeamCreateRequest, TeamUpdateRequest
 from backend.app.db.models import Team, TeamMember, User
 
@@ -44,10 +47,12 @@ def _if_match_version(request: Request) -> int:
         raise ApiError(400, "INVALID_ARGUMENT", "If-Match must be an integer.") from error
 
 
-def _team_view(team: Team):
+def _team_view(team: Team, role: str):
     return {
         "id": team.id,
         "name": team.name,
+        "description": team.description,
+        "role": role,
         "version": team.version,
         "created_at": team.created_at.isoformat(),
     }
@@ -57,19 +62,39 @@ def _team_view(team: Team):
 def list_teams(
     request: Request,
     limit: int = 20,
+    cursor: Optional[str] = None,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    teams = session.scalars(
-        select(Team)
+    page_limit = max(1, min(limit, 100))
+    query = (
+        select(Team, TeamMember.role)
         .join(TeamMember, TeamMember.team_id == Team.id)
         .where(TeamMember.user_id == user.id, TeamMember.status == "active")
-        .order_by(Team.created_at.desc())
-        .limit(max(1, min(limit, 100)))
+    )
+    if cursor is not None:
+        after_created, after_id = decode_cursor(cursor)
+        query = query.where(
+            or_(
+                Team.created_at < after_created,
+                and_(Team.created_at == after_created, Team.id < after_id),
+            )
+        )
+
+    rows = session.execute(
+        query.order_by(Team.created_at.desc(), Team.id.desc()).limit(page_limit + 1)
     ).all()
+    has_more = len(rows) > page_limit
+    page_rows = rows[:page_limit]
+    next_cursor = (
+        encode_cursor(page_rows[-1][0].created_at, page_rows[-1][0].id)
+        if has_more and page_rows
+        else None
+    )
     return page_envelope(
-        [_team_view(team) for team in teams],
+        [_team_view(team, role) for team, role in page_rows],
         request.state.request_id,
+        next_cursor,
     )
 
 
@@ -80,7 +105,11 @@ def create_team(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    team = Team(name=body.name.strip(), created_by=user.id)
+    team = Team(
+        name=body.name.strip(),
+        description=body.description,
+        created_by=user.id,
+    )
     session.add(team)
     session.flush()
     session.add(
@@ -92,7 +121,7 @@ def create_team(
         )
     )
     session.commit()
-    return envelope(_team_view(team), request.state.request_id)
+    return envelope(_team_view(team, "leader"), request.state.request_id)
 
 
 @router.get("/teams/detail")
@@ -102,11 +131,11 @@ def get_team(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    _membership_or_error(session, team_id, user.id)
+    membership = _membership_or_error(session, team_id, user.id)
     team = session.get(Team, team_id)
     if team is None:
         raise ApiError(403, "PERMISSION_DENIED", "Team is not available.")
-    return envelope(_team_view(team), request.state.request_id)
+    return envelope(_team_view(team, membership.role), request.state.request_id)
 
 
 @router.post("/teams/update")
@@ -116,12 +145,16 @@ def update_team(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    _leader_or_error(session, body.team_id, user.id)
+    membership = _leader_or_error(session, body.team_id, user.id)
     expected_version = _if_match_version(request)
     result = session.execute(
         update(Team)
         .where(Team.id == body.team_id, Team.version == expected_version)
-        .values(name=body.name, version=Team.version + 1)
+        .values(
+            name=body.name,
+            description=body.description,
+            version=Team.version + 1,
+        )
     )
     if result.rowcount == 0:
         session.rollback()
@@ -132,4 +165,4 @@ def update_team(
     if team is None:
         raise ApiError(403, "PERMISSION_DENIED", "Team is not available.")
     session.refresh(team)
-    return envelope(_team_view(team), request.state.request_id)
+    return envelope(_team_view(team, membership.role), request.state.request_id)

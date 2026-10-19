@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -58,12 +58,10 @@ class LoginRequest(BaseModel):
 
 
 class UserView(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: str
     email: str
     display_name: str
-    is_active: bool
+    status: str
     created_at: datetime
 
 
@@ -81,6 +79,7 @@ class MeView(BaseModel):
 
 class TeamCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -91,6 +90,7 @@ class TeamCreateRequest(BaseModel):
 class TeamUpdateRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("name", mode="before")
     @classmethod

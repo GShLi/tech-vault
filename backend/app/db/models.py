@@ -33,6 +33,7 @@ class Team(Base):
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
     name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)

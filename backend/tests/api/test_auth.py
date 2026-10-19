@@ -27,6 +27,8 @@ def test_register_login_and_me(api_client):
     registered = _register(api_client)
     assert registered.status_code == 201
     assert registered.json()["data"]["email"] == "member@example.com"
+    assert registered.json()["data"]["status"] == "active"
+    assert "is_active" not in registered.json()["data"]
     assert "password_hash" not in registered.json()["data"]
 
     logged_in = api_client.post(
@@ -42,6 +44,8 @@ def test_register_login_and_me(api_client):
     )
     assert me.status_code == 200
     assert me.json()["data"]["user"]["display_name"] == "Member"
+    assert me.json()["data"]["user"]["status"] == "active"
+    assert "is_active" not in me.json()["data"]["user"]
 
 
 def test_duplicate_email_and_wrong_password_use_error_envelopes(api_client):

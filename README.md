@@ -125,8 +125,22 @@ pytest -q
 当前基线测试：
 
 ```text
-164 passed
+165 passed
 ```
+
+### 启动 API
+
+```bash
+python -m pip install -e ".[test,api]"
+uvicorn backend.app.main:create_app --factory --reload
+```
+
+默认地址为 `http://127.0.0.1:8000/api/v1`，交互文档为
+`http://127.0.0.1:8000/docs`。当前 API 已覆盖健康检查、注册登录、
+当前用户、团队和知识库；文档上传、检索问答、Celery 和前端仍待接入。
+
+测试数据库使用独立的 SQLite 内存库；本地开发默认使用
+`data/techvault.db`，可通过 `TECHVAULT_DATABASE_URL` 覆盖。
 
 只验证第一个 RAG 垂直切片：
 

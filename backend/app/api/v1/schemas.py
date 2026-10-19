@@ -68,3 +68,33 @@ class MembershipView(BaseModel):
 class MeView(BaseModel):
     user: UserView
     memberships: List[MembershipView]
+
+
+from typing import Optional
+
+
+class TeamCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class TeamUpdateRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class KnowledgeBaseCreateRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
+class KnowledgeBaseUpdateRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    kb_id: str = Field(min_length=1, max_length=26)
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
+class KnowledgeBaseArchiveRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    kb_id: str = Field(min_length=1, max_length=26)

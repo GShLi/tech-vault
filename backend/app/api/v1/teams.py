@@ -55,6 +55,7 @@ def _team_view(team: Team, role: str):
         "role": role,
         "version": team.version,
         "created_at": team.created_at.isoformat(),
+        "updated_at": team.updated_at.isoformat(),
     }
 
 

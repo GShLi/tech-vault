@@ -31,12 +31,14 @@ def test_team_create_list_and_detail(api_client):
     assert team["description"] == "Platform engineering"
     assert team["role"] == "leader"
     assert team["version"] == 1
+    assert team["updated_at"]
 
     listed = api_client.get("/api/v1/teams", headers=headers)
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()["data"]] == [team["id"]]
     assert listed.json()["data"][0]["description"] == "Platform engineering"
     assert listed.json()["data"][0]["role"] == "leader"
+    assert listed.json()["data"][0]["updated_at"] == team["updated_at"]
 
     detail = api_client.get(
         "/api/v1/teams/detail",
@@ -47,6 +49,7 @@ def test_team_create_list_and_detail(api_client):
     assert detail.json()["data"]["id"] == team["id"]
     assert detail.json()["data"]["description"] == "Platform engineering"
     assert detail.json()["data"]["role"] == "leader"
+    assert detail.json()["data"]["updated_at"] == team["updated_at"]
 
 
 def test_team_list_paginates_by_created_at_and_id(api_client, api_app):
@@ -165,6 +168,7 @@ def test_team_update_requires_leader_and_if_match(api_client):
     assert updated.json()["data"]["description"] == "Updated description"
     assert updated.json()["data"]["role"] == "leader"
     assert updated.json()["data"]["version"] == 2
+    assert updated.json()["data"]["updated_at"]
 
     conflict = api_client.post(
         "/api/v1/teams/update",

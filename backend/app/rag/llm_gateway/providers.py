@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
@@ -198,8 +199,16 @@ def _delta_text(payload: Dict[str, Any]) -> str:
     return text if isinstance(text, str) else ""
 
 
-def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
-    """Return normalized text from one provider SSE chunk or event block."""
+@dataclass(frozen=True)
+class _ProviderStreamEvent:
+    text: str
+    terminal: bool
+
+
+def _parse_provider_stream_event(
+    adapter_type: str,
+    chunk_text: str,
+) -> _ProviderStreamEvent:
     aliases = {
         "responses": "responses",
         "openai_responses": "responses",
@@ -217,8 +226,13 @@ def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
         )
 
     pieces = []
+    terminal = False
     for candidate in _stream_json_candidates(chunk_text):
-        if not candidate or candidate == "[DONE]":
+        if not candidate:
+            continue
+        if candidate == "[DONE]":
+            if normalized_type == "chat":
+                terminal = True
             continue
         try:
             payload = json.loads(candidate)
@@ -236,7 +250,9 @@ def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
 
         if normalized_type == "responses":
             event_type = payload.get("type")
-            if event_type in {None, "response.output_text.delta"}:
+            if event_type == "response.completed":
+                terminal = True
+            elif event_type in {None, "response.output_text.delta"}:
                 text = _delta_text(payload)
                 if text:
                     pieces.append(text)
@@ -249,11 +265,19 @@ def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
                     if text:
                         pieces.append(text)
         else:
-            if payload.get("type") == "content_block_delta":
+            event_type = payload.get("type")
+            if event_type == "message_stop":
+                terminal = True
+            elif event_type == "content_block_delta":
                 text = _delta_text(payload)
                 if text:
                     pieces.append(text)
-    return "".join(pieces)
+    return _ProviderStreamEvent(text="".join(pieces), terminal=terminal)
+
+
+def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
+    """Return normalized text from one provider SSE chunk or event block."""
+    return _parse_provider_stream_event(adapter_type, chunk_text).text
 
 
 class _HttpProviderAdapter:
@@ -377,6 +401,7 @@ class _HttpProviderAdapter:
         headers = self._headers(stream=True)
         payload = self._payload(prompt=prompt, stream=True)
         pending_error = None
+        terminal = False
         try:
             if self._transport is not None and not self._has_async_transport():
                 with httpx.Client(
@@ -392,46 +417,55 @@ class _HttpProviderAdapter:
                     ) as response:
                         _raise_for_response(response)
                         for line in response.iter_lines():
-                            text = parse_provider_stream_chunk(
+                            event = _parse_provider_stream_event(
                                 self._stream_type,
                                 line + "\n\n" if line else "\n",
                             )
-                            if text:
-                                yield text
-                return
-
-            async with httpx.AsyncClient(
-                timeout=60.0,
-                transport=self._transport,
-                trust_env=False,
-            ) as client:
-                async with client.stream(
-                    "POST",
-                    self._url,
-                    headers=headers,
-                    json=payload,
-                ) as response:
-                    _raise_for_response(response)
-                    event_lines = []
-                    async for line in response.aiter_lines():
-                        if line:
-                            event_lines.append(line)
-                            continue
+                            terminal = terminal or event.terminal
+                            if event.text:
+                                yield event.text
+            else:
+                async with httpx.AsyncClient(
+                    timeout=60.0,
+                    transport=self._transport,
+                    trust_env=False,
+                ) as client:
+                    async with client.stream(
+                        "POST",
+                        self._url,
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        _raise_for_response(response)
+                        event_lines = []
+                        async for line in response.aiter_lines():
+                            if line:
+                                event_lines.append(line)
+                                continue
+                            if event_lines:
+                                event = _parse_provider_stream_event(
+                                    self._stream_type,
+                                    "\n".join(event_lines) + "\n\n",
+                                )
+                                event_lines = []
+                                terminal = terminal or event.terminal
+                                if event.text:
+                                    yield event.text
                         if event_lines:
-                            text = parse_provider_stream_chunk(
+                            event = _parse_provider_stream_event(
                                 self._stream_type,
                                 "\n".join(event_lines) + "\n\n",
                             )
-                            event_lines = []
-                            if text:
-                                yield text
-                    if event_lines:
-                        text = parse_provider_stream_chunk(
-                            self._stream_type,
-                            "\n".join(event_lines) + "\n\n",
-                        )
-                        if text:
-                            yield text
+                            terminal = terminal or event.terminal
+                            if event.text:
+                                yield event.text
+
+            if not terminal:
+                raise ProviderAdapterError(
+                    502,
+                    "MODEL_RESPONSE_INVALID",
+                    "Upstream stream ended before a terminal event.",
+                )
         except Exception as error:
             normalized = self._provider_error(error)
             if normalized is error:

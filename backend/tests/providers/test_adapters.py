@@ -36,6 +36,72 @@ async def _collect(stream):
     return [piece async for piece in stream]
 
 
+class _AsyncMockTransport(httpx.AsyncBaseTransport):
+    def __init__(self, text):
+        self._text = text
+
+    async def handle_async_request(self, request):
+        return httpx.Response(200, text=self._text)
+
+
+_STREAM_TERMINAL_CASES = [
+    (
+        "openai_chat_completions",
+        'data: {"choices":[{"delta":{"content":"hello [c1]"}}]}\n\n'
+        "data: [DONE]\n\n",
+    ),
+    (
+        "openai_responses",
+        'event: response.output_text.delta\n'
+        'data: {"type":"response.output_text.delta","delta":"hello [c1]"}\n\n'
+        'event: response.completed\n'
+        'data: {"type":"response.completed"}\n\n',
+    ),
+    (
+        "anthropic_messages",
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","delta":'
+        '{"type":"text_delta","text":"hello [c1]"}}\n\n'
+        'event: message_stop\n'
+        'data: {"type":"message_stop"}\n\n',
+    ),
+]
+
+_STREAM_WITHOUT_TERMINAL_CASES = [
+    (
+        "openai_chat_completions",
+        'data: {"choices":[{"delta":{"content":"partial [c1]"}}]}\n\n',
+    ),
+    (
+        "openai_responses",
+        'event: response.output_text.delta\n'
+        'data: {"type":"response.output_text.delta","delta":"partial [c1]"}\n\n',
+    ),
+    (
+        "anthropic_messages",
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","delta":'
+        '{"type":"text_delta","text":"partial [c1]"}}\n\n',
+    ),
+]
+
+
+def _stream_adapter(adapter_type, text, *, async_transport=False):
+    transport = (
+        _AsyncMockTransport(text)
+        if async_transport
+        else httpx.MockTransport(lambda request: httpx.Response(200, text=text))
+    )
+    return build_provider_adapter(
+        adapter_type,
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=transport,
+    )
+
+
 def test_chat_completions_adapter_maps_response_to_answer_result():
     def handler(request):
         assert str(request.url) == "https://gateway.example/v1/chat/completions"
@@ -311,6 +377,58 @@ def test_chat_stream_adapter_yields_text_and_sets_terminal_result():
     assert stream.result.text == "hello [c1]"
     assert stream.result.citation_chunk_ids == ("chunk-1",)
     assert stream.result.model_id == "gpt-test"
+
+
+@pytest.mark.parametrize(("adapter_type", "stream_text"), _STREAM_TERMINAL_CASES)
+def test_all_stream_adapters_accept_their_explicit_terminal_event(
+    adapter_type,
+    stream_text,
+):
+    adapter = _stream_adapter(adapter_type, stream_text)
+
+    stream = adapter.generate_stream(
+        question="What?",
+        chunks=[_chunk()],
+        max_chunks=1,
+    )
+
+    assert asyncio.run(_collect(stream)) == ["hello [c1]"]
+    assert stream.result is not None
+    assert stream.result.text == "hello [c1]"
+
+
+@pytest.mark.parametrize("async_transport", [False, True])
+@pytest.mark.parametrize(
+    ("adapter_type", "stream_text"),
+    _STREAM_WITHOUT_TERMINAL_CASES,
+)
+def test_all_stream_adapters_reject_eof_before_terminal_event(
+    adapter_type,
+    stream_text,
+    async_transport,
+):
+    adapter = _stream_adapter(
+        adapter_type,
+        stream_text,
+        async_transport=async_transport,
+    )
+    stream = adapter.generate_stream(
+        question="What?",
+        chunks=[_chunk()],
+        max_chunks=1,
+    )
+
+    async def consume():
+        iterator = stream.__aiter__()
+        assert await iterator.__anext__() == "partial [c1]"
+        with pytest.raises(ProviderAdapterError) as caught:
+            await iterator.__anext__()
+        assert caught.value.status_code == 502
+        assert caught.value.code == "MODEL_RESPONSE_INVALID"
+
+    asyncio.run(consume())
+
+    assert stream.result is None
 
 
 def test_answer_stream_helper_normalizes_sync_pieces():

@@ -273,7 +273,9 @@ def test_gateway_stream_exception_after_partial_content_does_not_complete_result
         classification=DataClassification.PUBLIC,
     )
 
-    with pytest.raises(RuntimeError, match="provider stream failed"):
+    from backend.app.rag.llm_gateway import ModelUnavailableError
+
+    with pytest.raises(ModelUnavailableError, match="Answer provider failed"):
         asyncio.run(_collect_async(stream))
 
     assert stream.result is None

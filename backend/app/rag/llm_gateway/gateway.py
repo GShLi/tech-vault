@@ -21,7 +21,7 @@ class PolicyDeniedError(PermissionError):
 
 
 class ModelUnavailableError(RuntimeError):
-    """Raised when an external-required policy has no usable provider."""
+    """Raised when no usable model provider or approved fallback is available."""
 
 
 @dataclass(frozen=True)
@@ -300,6 +300,43 @@ class LlmGateway:
             return False
         return True
 
+    def _answer_provider_is_external(self, provider: Any) -> bool:
+        route = str(getattr(provider, "route", "") or "")
+        if route == "local_model":
+            return False
+        return (
+            self._has_external_route(provider)
+            or bool(route)
+            or bool(self._external_api_key)
+        )
+
+    def _require_approved_external_answer_provider(self, provider: Any) -> None:
+        if not self._decision.allow_external:
+            raise PolicyDeniedError(
+                "External answer generation is forbidden by policy."
+            )
+
+        provider_id = str(getattr(provider, "provider_id", "") or "")
+        if (
+            self._decision.allowed_provider_ids
+            and provider_id not in self._decision.allowed_provider_ids
+        ):
+            raise PolicyDeniedError(
+                "Answer provider is not approved by policy."
+            )
+
+        model_id = str(getattr(provider, "model_id", "") or "")
+        if (
+            self._decision.allowed_model_ids
+            and model_id not in self._decision.allowed_model_ids
+        ):
+            raise PolicyDeniedError("Answer model is not approved by policy.")
+
+        if not self._external_api_key:
+            raise ModelUnavailableError(
+                "External answer provider credentials are unavailable."
+            )
+
     @staticmethod
     def _provider_id(provider: Any) -> Optional[str]:
         value = getattr(provider, "provider_id", None)
@@ -330,6 +367,42 @@ class LlmGateway:
             raise ModelUnavailableError(
                 "External model failed and policy forbids fallback."
             ) from error
+
+    def _prepare_external_answer(
+        self,
+        *,
+        question: str,
+        chunks: Sequence[RetrievedChunk],
+        classification: DataClassification,
+    ) -> Tuple[str, List[RetrievedChunk], int]:
+        try:
+            assert_external_call_allowed(self._decision, classification)
+        except PermissionError as error:
+            raise PolicyDeniedError(
+                "Data classification forbids external answer generation."
+            ) from error
+
+        try:
+            question_scan = scan_and_redact(question)
+            effective_chunks = [
+                RetrievedChunk(
+                    chunk_id=chunk.chunk_id,
+                    document_version_id=chunk.document_version_id,
+                    content=scan_and_redact(chunk.content).text,
+                    fused_rank=chunk.fused_rank,
+                    bm25_rank=chunk.bm25_rank,
+                    dense_rank=chunk.dense_rank,
+                    rerank_score=chunk.rerank_score,
+                    source_locator=chunk.source_locator,
+                )
+                for chunk in chunks
+            ]
+        except Exception as error:
+            raise PolicyDeniedError(
+                "External answer redaction failed."
+            ) from error
+
+        return question_scan.text, effective_chunks, question_scan.redacted_count
 
     def rewrite(
         self,
@@ -543,29 +616,19 @@ class LlmGateway:
         effective_question = question
         effective_chunks = list(chunks[:max_chunks])
 
-        if self._has_external_route(provider):
-            try:
-                assert_external_call_allowed(self._decision, classification)
-                question_scan = scan_and_redact(question)
-                redacted_count = question_scan.redacted_count
-                effective_question = question_scan.text
-                effective_chunks = [
-                    RetrievedChunk(
-                        chunk_id=chunk.chunk_id,
-                        document_version_id=chunk.document_version_id,
-                        content=scan_and_redact(chunk.content).text,
-                        fused_rank=chunk.fused_rank,
-                        bm25_rank=chunk.bm25_rank,
-                        dense_rank=chunk.dense_rank,
-                        rerank_score=chunk.rerank_score,
-                        source_locator=chunk.source_locator,
-                    )
-                    for chunk in effective_chunks
-                ]
-                external = True
-                route = "external"
-            except Exception as error:
-                self._external_failure_policy(error)
+        if self._answer_provider_is_external(provider):
+            self._require_approved_external_answer_provider(provider)
+            (
+                effective_question,
+                effective_chunks,
+                redacted_count,
+            ) = self._prepare_external_answer(
+                question=question,
+                chunks=effective_chunks,
+                classification=classification,
+            )
+            external = True
+            route = "external"
 
         if not external:
             self._require_local_fallback("answer generation")
@@ -576,10 +639,7 @@ class LlmGateway:
                 max_chunks=max_chunks,
             )
         except Exception as error:
-            if not external:
-                raise
-            self._external_failure_policy(error)
-            raise
+            raise ModelUnavailableError("Answer provider failed.") from error
 
         self._audit(
             GatewayAudit(
@@ -624,29 +684,19 @@ class LlmGateway:
             effective_question = question
             effective_chunks = list(chunks[:max_chunks])
 
-            if self._has_external_route(provider):
-                try:
-                    assert_external_call_allowed(self._decision, classification)
-                    question_scan = scan_and_redact(question)
-                    redacted_count = question_scan.redacted_count
-                    effective_question = question_scan.text
-                    effective_chunks = [
-                        RetrievedChunk(
-                            chunk_id=chunk.chunk_id,
-                            document_version_id=chunk.document_version_id,
-                            content=scan_and_redact(chunk.content).text,
-                            fused_rank=chunk.fused_rank,
-                            bm25_rank=chunk.bm25_rank,
-                            dense_rank=chunk.dense_rank,
-                            rerank_score=chunk.rerank_score,
-                            source_locator=chunk.source_locator,
-                        )
-                        for chunk in effective_chunks
-                    ]
-                    external = True
-                    route = "external"
-                except Exception as error:
-                    self._external_failure_policy(error)
+            if self._answer_provider_is_external(provider):
+                self._require_approved_external_answer_provider(provider)
+                (
+                    effective_question,
+                    effective_chunks,
+                    redacted_count,
+                ) = self._prepare_external_answer(
+                    question=question,
+                    chunks=effective_chunks,
+                    classification=classification,
+                )
+                external = True
+                route = "external"
 
             if not external:
                 self._require_local_fallback("answer generation")
@@ -694,9 +744,7 @@ class LlmGateway:
                             yield piece
                     completed = True
             except Exception as error:
-                if external:
-                    self._external_failure_policy(error)
-                raise
+                raise ModelUnavailableError("Answer provider failed.") from error
             finally:
                 if completed and result is not None:
                     self._audit(

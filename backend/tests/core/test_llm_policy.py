@@ -1,7 +1,9 @@
 import pytest
 
+import backend.app.rag.llm_gateway.gateway as gateway_module
 from backend.app.rag.domain.models import DataClassification
 from backend.app.rag.domain.models import RetrievedChunk
+from backend.app.rag.llm_gateway.providers import ProviderAdapterError
 
 
 def test_default_policy_blocks_external_calls():
@@ -388,6 +390,241 @@ def test_external_gateway_sends_redacted_payload_and_marks_route():
     assert provider.questions == ["contact [REDACTED:email]"]
     assert gateway.audits[-1].external is True
     assert gateway.audits[-1].redacted_count == 1
+
+
+@pytest.mark.parametrize(
+    ("policy_classification", "classification"),
+    [
+        (DataClassification.PUBLIC, DataClassification.PRIVATE),
+        (DataClassification.PUBLIC, DataClassification.RESTRICTED),
+        (DataClassification.PRIVATE, DataClassification.PRIVATE),
+        (DataClassification.RESTRICTED, DataClassification.RESTRICTED),
+    ],
+)
+def test_policy_denial_after_external_identification_never_calls_provider(
+    policy_classification,
+    classification,
+):
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, PolicyDeniedError
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("provider must not receive denied data")
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=policy_classification,
+        ),
+        external_answer_provider=provider,
+        external_api_key="secret-key",
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        gateway.generate(
+            question="contact dev@example.com",
+            chunks=(
+                RetrievedChunk(
+                    chunk_id="chunk-1",
+                    document_version_id="version-1",
+                    content="private evidence",
+                    fused_rank=1,
+                ),
+            ),
+            classification=classification,
+        )
+
+    assert provider.calls == 0
+    assert gateway.audits == []
+
+
+@pytest.mark.parametrize(
+    ("policy_classification", "classification"),
+    [
+        (DataClassification.PUBLIC, DataClassification.PRIVATE),
+        (DataClassification.PUBLIC, DataClassification.RESTRICTED),
+        (DataClassification.PRIVATE, DataClassification.PRIVATE),
+        (DataClassification.RESTRICTED, DataClassification.RESTRICTED),
+    ],
+)
+def test_stream_policy_denial_after_external_identification_never_calls_provider(
+    policy_classification,
+    classification,
+):
+    import asyncio
+
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, PolicyDeniedError
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_stream(self, **_kwargs):
+            self.calls += 1
+            yield "unredacted private evidence"
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=policy_classification,
+        ),
+        external_answer_provider=provider,
+        external_api_key="secret-key",
+    )
+    stream = gateway.generate_stream(
+        question="contact dev@example.com",
+        chunks=(
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="private evidence",
+                fused_rank=1,
+            ),
+        ),
+        classification=classification,
+    )
+
+    async def collect():
+        return [piece async for piece in stream]
+
+    with pytest.raises(PolicyDeniedError):
+        asyncio.run(collect())
+
+    assert provider.calls == 0
+    assert stream.result is None
+    assert gateway.audits == []
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_redaction_failure_never_calls_external_answer_provider(
+    monkeypatch,
+    streaming,
+):
+    import asyncio
+
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.answer import AnswerResult
+    from backend.app.rag.llm_gateway import LlmGateway, PolicyDeniedError
+
+    def fail_redaction(_text):
+        raise RuntimeError("redaction failed")
+
+    monkeypatch.setattr(gateway_module, "scan_and_redact", fail_redaction)
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **_kwargs):
+            self.calls.append("generate")
+            return AnswerResult(
+                text="unredacted answer",
+                status="completed",
+                citation_chunk_ids=(),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+            )
+
+        async def generate_stream(self, **_kwargs):
+            self.calls.append("generate_stream")
+            yield "unredacted answer"
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.PUBLIC,
+        ),
+        external_answer_provider=provider,
+        external_api_key="secret-key",
+    )
+
+    if streaming:
+        stream = gateway.generate_stream(
+            question="contact dev@example.com",
+            chunks=(),
+            classification=DataClassification.PUBLIC,
+        )
+
+        async def collect():
+            return [piece async for piece in stream]
+
+        with pytest.raises(PolicyDeniedError):
+            asyncio.run(collect())
+        assert stream.result is None
+    else:
+        with pytest.raises(PolicyDeniedError):
+            gateway.generate(
+                question="contact dev@example.com",
+                chunks=(),
+                classification=DataClassification.PUBLIC,
+            )
+
+    assert provider.calls == []
+    assert gateway.audits == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("provider transport failed"),
+        ProviderAdapterError(
+            503,
+            "MODEL_UNAVAILABLE",
+            "Upstream model service is unavailable.",
+        ),
+    ],
+)
+def test_answer_provider_failure_normalizes_to_model_unavailable(error):
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway, ModelUnavailableError
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "external"
+
+        def generate(self, **_kwargs):
+            raise error
+
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.PUBLIC,
+        ),
+        external_answer_provider=Provider(),
+        external_api_key="secret-key",
+    )
+
+    with pytest.raises(ModelUnavailableError, match="Answer provider failed"):
+        gateway.generate(
+            question="public question",
+            chunks=(),
+            classification=DataClassification.PUBLIC,
+        )
+
+    assert gateway.audits == []
 
 
 def test_external_required_restricted_data_returns_policy_denial():

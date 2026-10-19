@@ -1427,6 +1427,66 @@ def test_non_leader_cannot_create_kb(api_client):
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
+def test_kb_update_requires_leader_and_if_match(api_client):
+    leader_headers = _register_and_login(api_client, email="kb-update-leader@example.com")
+    team = _create_team(api_client, leader_headers)
+    kb = api_client.post(
+        "/api/v1/kbs/create",
+        json={"team_id": team["id"], "name": "Java"},
+        headers=leader_headers,
+    ).json()["data"]
+
+    missing_match = api_client.post(
+        "/api/v1/kbs/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": kb["id"],
+            "name": "Java 21",
+        },
+        headers=leader_headers,
+    )
+    assert missing_match.status_code == 400
+
+    updated = api_client.post(
+        "/api/v1/kbs/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": kb["id"],
+            "name": "Java 21",
+        },
+        headers={**leader_headers, "If-Match": "1"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["name"] == "Java 21"
+    assert updated.json()["data"]["version"] == 2
+
+    conflict = api_client.post(
+        "/api/v1/kbs/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": kb["id"],
+            "name": "Java 17",
+        },
+        headers={**leader_headers, "If-Match": "1"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "VERSION_CONFLICT"
+
+    member_headers = _register_and_login(
+        api_client, email="kb-update-member@example.com"
+    )
+    forbidden = api_client.post(
+        "/api/v1/kbs/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": kb["id"],
+            "name": "Forbidden",
+        },
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
 ```
 
 - [ ] **Step 2: Run the tests and verify failure**

@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -14,6 +14,15 @@ def _normalize_email(value: object) -> object:
     normalized = value.strip().lower()
     if _EMAIL_PATTERN.fullmatch(normalized) is None:
         raise ValueError("A valid email address is required.")
+    return normalized
+
+
+def _normalize_required_name(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("Name must not be empty.")
     return normalized
 
 
@@ -70,16 +79,23 @@ class MeView(BaseModel):
     memberships: List[MembershipView]
 
 
-from typing import Optional
-
-
 class TeamCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        return _normalize_required_name(value)
 
 
 class TeamUpdateRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        return _normalize_required_name(value)
 
 
 class KnowledgeBaseCreateRequest(BaseModel):
@@ -87,12 +103,22 @@ class KnowledgeBaseCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: Optional[str] = Field(default=None, max_length=2000)
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        return _normalize_required_name(value)
+
 
 class KnowledgeBaseUpdateRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     kb_id: str = Field(min_length=1, max_length=26)
     name: str = Field(min_length=1, max_length=120)
     description: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        return _normalize_required_name(value)
 
 
 class KnowledgeBaseArchiveRequest(BaseModel):

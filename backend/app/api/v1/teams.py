@@ -1,7 +1,5 @@
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user, get_session
@@ -36,16 +34,14 @@ def _leader_or_error(session: Session, team_id: str, user_id: str) -> TeamMember
     return membership
 
 
-def _if_match_version(request: Request, current_version: int) -> None:
+def _if_match_version(request: Request) -> int:
     raw = request.headers.get("If-Match")
     if raw is None:
         raise ApiError(400, "INVALID_ARGUMENT", "If-Match is required.")
     try:
-        expected = int(raw.strip().strip('"'))
+        return int(raw.strip())
     except ValueError as error:
         raise ApiError(400, "INVALID_ARGUMENT", "If-Match must be an integer.") from error
-    if expected != current_version:
-        raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
 
 
 def _team_view(team: Team):
@@ -121,11 +117,19 @@ def update_team(
     session: Session = Depends(get_session),
 ):
     _leader_or_error(session, body.team_id, user.id)
+    expected_version = _if_match_version(request)
+    result = session.execute(
+        update(Team)
+        .where(Team.id == body.team_id, Team.version == expected_version)
+        .values(name=body.name, version=Team.version + 1)
+    )
+    if result.rowcount == 0:
+        session.rollback()
+        raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
+    session.commit()
+
     team = session.get(Team, body.team_id)
     if team is None:
         raise ApiError(403, "PERMISSION_DENIED", "Team is not available.")
-    _if_match_version(request, team.version)
-    team.name = body.name.strip()
-    team.version += 1
-    session.commit()
+    session.refresh(team)
     return envelope(_team_view(team), request.state.request_id)

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,19 @@ def _kb_view(kb: KnowledgeBase):
         "version": kb.version,
         "created_at": kb.created_at.isoformat(),
     }
+
+
+def _kb_cas_error(session: Session, team_id: str, kb_id: str) -> None:
+    kb = session.get(KnowledgeBase, kb_id)
+    if kb is None or kb.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
+    if kb.status != "active":
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Archived knowledge bases are immutable.",
+        )
+    raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
 
 
 @router.get("/kbs")
@@ -108,14 +121,38 @@ def update_kb(
     session: Session = Depends(get_session),
 ):
     _leader_or_error(session, body.team_id, user.id)
+    expected_version = _if_match_version(request)
+    try:
+        result = session.execute(
+            update(KnowledgeBase)
+            .where(
+                KnowledgeBase.id == body.kb_id,
+                KnowledgeBase.team_id == body.team_id,
+                KnowledgeBase.version == expected_version,
+                KnowledgeBase.status == "active",
+            )
+            .values(
+                name=body.name,
+                description=body.description,
+                version=KnowledgeBase.version + 1,
+            )
+        )
+        if result.rowcount == 0:
+            session.rollback()
+            _kb_cas_error(session, body.team_id, body.kb_id)
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise ApiError(
+            409,
+            "DUPLICATE_RESOURCE",
+            "A knowledge base with this name already exists.",
+        ) from error
+
     kb = session.get(KnowledgeBase, body.kb_id)
     if kb is None or kb.team_id != body.team_id:
         raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
-    _if_match_version(request, kb.version)
-    kb.name = body.name.strip()
-    kb.description = body.description
-    kb.version += 1
-    session.commit()
+    session.refresh(kb)
     return envelope(_kb_view(kb), request.state.request_id)
 
 
@@ -127,11 +164,24 @@ def archive_kb(
     session: Session = Depends(get_session),
 ):
     _leader_or_error(session, body.team_id, user.id)
+    expected_version = _if_match_version(request)
+    result = session.execute(
+        update(KnowledgeBase)
+        .where(
+            KnowledgeBase.id == body.kb_id,
+            KnowledgeBase.team_id == body.team_id,
+            KnowledgeBase.version == expected_version,
+            KnowledgeBase.status == "active",
+        )
+        .values(status="archived", version=KnowledgeBase.version + 1)
+    )
+    if result.rowcount == 0:
+        session.rollback()
+        _kb_cas_error(session, body.team_id, body.kb_id)
+    session.commit()
+
     kb = session.get(KnowledgeBase, body.kb_id)
     if kb is None or kb.team_id != body.team_id:
         raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
-    _if_match_version(request, kb.version)
-    kb.status = "archived"
-    kb.version += 1
-    session.commit()
+    session.refresh(kb)
     return envelope(_kb_view(kb), request.state.request_id)

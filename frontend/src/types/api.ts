@@ -372,6 +372,8 @@ export interface EvaluationRun {
   engine_mode: string
   status: string
   baseline_run_id: string | null
+  provider_id: string
+  model_id: string
   created_at: string
 }
 

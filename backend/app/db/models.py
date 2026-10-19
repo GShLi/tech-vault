@@ -304,6 +304,8 @@ class EvaluationRun(Base):
     engine_mode: Mapped[str] = mapped_column(String(20), default="dual_engine")
     status: Mapped[str] = mapped_column(String(16), default="queued")
     baseline_run_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    provider_id: Mapped[str] = mapped_column(String(26), default="")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)

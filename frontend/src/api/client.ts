@@ -921,6 +921,8 @@ export const api = {
   startEvalRun(body: {
     team_id: string
     dataset_id: string
+    provider_id: string
+    model_id: string
     engine_mode: string
     baseline_run_id?: string | null
   }) {

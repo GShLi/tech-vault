@@ -299,6 +299,31 @@ def _bridge_model_provider_api_key(engine: Engine) -> None:
             connection.execute(text(statement))
 
 
+def _bridge_evaluation_run_provider(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("evaluation_runs"):
+        return
+    columns = {
+        column["name"] for column in inspector.get_columns("evaluation_runs")
+    }
+    statements = []
+    if "provider_id" not in columns:
+        statements.append(
+            "ALTER TABLE evaluation_runs ADD COLUMN "
+            "provider_id VARCHAR(26) NOT NULL DEFAULT ''"
+        )
+    if "model_id" not in columns:
+        statements.append(
+            "ALTER TABLE evaluation_runs ADD COLUMN "
+            "model_id VARCHAR(120) NOT NULL DEFAULT ''"
+        )
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def _bridge_audit_log_nullability(engine: Engine) -> None:
     inspector = inspect(engine)
     if not inspector.has_table("audit_logs"):
@@ -507,5 +532,6 @@ def create_schema(engine: Engine) -> None:
     _bridge_invitation_expiry(engine)
     _bridge_credential_encryption(engine)
     _bridge_model_provider_api_key(engine)
+    _bridge_evaluation_run_provider(engine)
     _bridge_audit_log_nullability(engine)
     _bridge_identifier_lengths(engine)

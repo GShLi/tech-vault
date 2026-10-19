@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, FileJson, Play, Plus, Upload } from 'lucide-vue-next'
 import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
+import { api, ApiRequestError, loadAllPages } from '@/api/client'
 import StatusPill from '@/components/StatusPill.vue'
 import { useTeamStore } from '@/stores/team'
-import type { EvaluationCase, EvaluationDataset, EvaluationRun } from '@/types/api'
+import type {
+  EvaluationCase,
+  EvaluationDataset,
+  EvaluationRun,
+  ModelProvider,
+} from '@/types/api'
 import { formatDate, shortId } from '@/utils/format'
 
 const route = useRoute()
@@ -16,8 +21,11 @@ const team = useTeamStore()
 const dataset = ref<EvaluationDataset | null>(null)
 const cases = ref<EvaluationCase[]>([])
 const runs = ref<EvaluationRun[]>([])
+const providers = ref<ModelProvider[]>([])
+const allowedProviderIds = ref<string[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const loadingProviders = ref(false)
 const loadingMoreCases = ref(false)
 const loadingMoreRuns = ref(false)
 const casesNextCursor = ref<string | null>(null)
@@ -35,6 +43,41 @@ const relevantChunkIds = ref('')
 const importContent = ref('')
 const engineMode = ref('dual_engine')
 const baselineRunId = ref('')
+const selectedProviderId = ref('')
+const selectedModelId = ref('')
+let providerOptionsRequestGeneration = 0
+
+const eligibleProviders = computed(() => {
+  const allowedIds = new Set(allowedProviderIds.value)
+  return providers.value.filter(
+    (provider) =>
+      provider.status === 'active' &&
+      provider.has_api_key === true &&
+      allowedIds.has(provider.id) &&
+      Array.isArray(provider.model_ids) &&
+      provider.model_ids.length > 0,
+  )
+})
+
+const selectedProvider = computed(
+  () =>
+    eligibleProviders.value.find(
+      (provider) => provider.id === selectedProviderId.value,
+    ) ?? null,
+)
+
+const modelOptions = computed(() =>
+  Array.isArray(selectedProvider.value?.model_ids)
+    ? selectedProvider.value?.model_ids ?? []
+    : [],
+)
+
+const hasProviderAndModel = computed(
+  () =>
+    Boolean(selectedProvider.value) &&
+    Boolean(selectedModelId.value) &&
+    modelOptions.value.includes(selectedModelId.value),
+)
 
 function currentDatasetId(): string {
   return String(route.params.datasetId ?? '')
@@ -62,6 +105,56 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function loadProviderOptions(): Promise<void> {
+  const requestGeneration = ++providerOptionsRequestGeneration
+  const teamId = team.selectedTeamId
+  selectedProviderId.value = ''
+  selectedModelId.value = ''
+  if (!teamId) {
+    providers.value = []
+    allowedProviderIds.value = []
+    return
+  }
+  loadingProviders.value = true
+  providers.value = []
+  allowedProviderIds.value = []
+  try {
+    const [policy, providerRows] = await Promise.all([
+      api.getPolicy(teamId),
+      loadAllPages((cursor) => api.listProviders(teamId, cursor, 100)),
+    ])
+    if (
+      requestGeneration !== providerOptionsRequestGeneration ||
+      team.selectedTeamId !== teamId
+    ) {
+      return
+    }
+    providers.value = providerRows
+    allowedProviderIds.value = Array.isArray(policy.allowed_provider_ids)
+      ? policy.allowed_provider_ids
+      : []
+  } catch (caught) {
+    if (
+      requestGeneration !== providerOptionsRequestGeneration ||
+      team.selectedTeamId !== teamId
+    ) {
+      return
+    }
+    providers.value = []
+    allowedProviderIds.value = []
+    error.value = caught instanceof ApiRequestError ? caught : null
+  } finally {
+    if (requestGeneration === providerOptionsRequestGeneration) {
+      loadingProviders.value = false
+    }
+  }
+}
+
+async function openRunModal(): Promise<void> {
+  showRun.value = true
+  await loadProviderOptions()
 }
 
 async function loadMoreCases(): Promise<void> {
@@ -156,13 +249,15 @@ async function deleteCase(item: EvaluationCase): Promise<void> {
 }
 
 async function startRun(): Promise<void> {
-  if (!team.selectedTeamId) return
+  if (!team.selectedTeamId || !hasProviderAndModel.value) return
   saving.value = true
   error.value = null
   try {
     const created = await api.startEvalRun({
       team_id: team.selectedTeamId,
       dataset_id: currentDatasetId(),
+      provider_id: selectedProviderId.value,
+      model_id: selectedModelId.value,
       engine_mode: engineMode.value,
       baseline_run_id: baselineRunId.value || null,
     })
@@ -176,7 +271,24 @@ async function startRun(): Promise<void> {
   }
 }
 
-onMounted(load)
+watch(selectedProviderId, () => {
+  if (!modelOptions.value.includes(selectedModelId.value)) {
+    selectedModelId.value = ''
+  }
+})
+
+watch(
+  () => team.selectedTeamId,
+  async () => {
+    await load()
+    await loadProviderOptions()
+  },
+)
+
+onMounted(async () => {
+  await load()
+  await loadProviderOptions()
+})
 watch(() => route.params.datasetId, load)
 </script>
 
@@ -201,7 +313,12 @@ watch(() => route.params.datasetId, load)
           <Plus :size="16" />
           新增样本
         </button>
-        <button class="primary-button" type="button" @click="showRun = true">
+        <button
+          class="primary-button"
+          type="button"
+          data-testid="open-evaluation-run"
+          @click="openRunModal"
+        >
           <Play :size="16" />
           启动评测
         </button>
@@ -299,9 +416,37 @@ watch(() => route.params.datasetId, load)
       <div class="modal-panel">
         <div class="modal-heading"><h3>启动评测</h3><button class="icon-button" type="button" @click="showRun = false">×</button></div>
         <form class="form-stack" @submit.prevent="startRun">
+          <label class="field">
+            <span>供应商</span>
+            <select
+              v-model="selectedProviderId"
+              data-testid="run-provider-select"
+              :disabled="loadingProviders || !eligibleProviders.length"
+              required
+            >
+              <option value="">选择供应商</option>
+              <option v-for="provider in eligibleProviders" :key="provider.id" :value="provider.id">
+                {{ provider.name }}
+              </option>
+            </select>
+          </label>
+          <label class="field">
+            <span>模型</span>
+            <select
+              v-model="selectedModelId"
+              data-testid="run-model-select"
+              :disabled="!selectedProvider"
+              required
+            >
+              <option value="">选择模型</option>
+              <option v-for="model in modelOptions" :key="model" :value="model">
+                {{ model }}
+              </option>
+            </select>
+          </label>
           <label class="field"><span>检索引擎</span><select v-model="engineMode"><option value="dual_engine">ES + Qdrant 双引擎</option><option value="elastic_single">Elasticsearch 单引擎</option></select></label>
           <label class="field"><span>基线运行 ID（可选）</span><input v-model="baselineRunId" type="text" /></label>
-          <div class="modal-actions"><button class="ghost-button" type="button" @click="showRun = false">取消</button><button class="primary-button" type="submit" :disabled="saving"><Play :size="16" />启动</button></div>
+          <div class="modal-actions"><button class="ghost-button" type="button" @click="showRun = false">取消</button><button class="primary-button" type="submit" data-testid="run-start-submit" :disabled="saving || !hasProviderAndModel"><Play :size="16" />启动</button></div>
         </form>
       </div>
     </div>

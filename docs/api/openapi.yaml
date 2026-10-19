@@ -4397,6 +4397,8 @@ components:
       required:
       - team_id
       - dataset_id
+      - provider_id
+      - model_id
       properties:
         team_id:
           type: string
@@ -4404,6 +4406,14 @@ components:
         dataset_id:
           type: string
           maxLength: 26
+        provider_id:
+          type: string
+          minLength: 1
+          maxLength: 26
+        model_id:
+          type: string
+          minLength: 1
+          maxLength: 120
         engine_mode:
           $ref: '#/components/schemas/EngineMode'
         judge_mode:
@@ -5496,6 +5506,8 @@ components:
       - engine_mode
       - status
       - baseline_run_id
+      - provider_id
+      - model_id
       - created_at
       properties:
         id:
@@ -5509,6 +5521,10 @@ components:
         baseline_run_id:
           type: string
           nullable: true
+        provider_id:
+          type: string
+        model_id:
+          type: string
         created_at:
           type: string
           format: date-time

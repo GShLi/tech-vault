@@ -416,6 +416,19 @@ def test_chat_ask_requires_provider_and_model():
     assert schema["properties"]["model_id"]["minLength"] == 1
 
 
+def test_evaluation_run_start_requires_provider_and_model():
+    schemas = _spec()["components"]["schemas"]
+    start_schema = schemas["EvaluationRunStartBody"]
+    run_schema = schemas["EvaluationRun"]
+
+    assert "provider_id" in start_schema["required"]
+    assert "model_id" in start_schema["required"]
+    assert start_schema["properties"]["provider_id"]["minLength"] == 1
+    assert start_schema["properties"]["model_id"]["minLength"] == 1
+    assert "provider_id" in run_schema["required"]
+    assert "model_id" in run_schema["required"]
+
+
 def test_contract_has_no_extractive_fallback():
     contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
 
@@ -433,6 +446,17 @@ def test_contract_documents_required_selection_and_unavailable_provider_error():
     assert "必填且非空" in ask_contract
     assert "422 VALIDATION_FAILED" in ask_contract
     assert "503 MODEL_UNAVAILABLE" in ask_contract
+
+
+def test_contract_documents_evaluation_provider_selection():
+    contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
+    evaluation_contract = contract.split("## 11. 评测", 1)[1].split(
+        "## 12.", 1
+    )[0]
+
+    assert "`provider_id`" in evaluation_contract
+    assert "`model_id`" in evaluation_contract
+    assert "必填且非空" in evaluation_contract
 
 
 def test_contract_documents_provider_error_semantics():

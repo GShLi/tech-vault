@@ -12,11 +12,16 @@ from backend.app.db.models import (
     EvaluationDataset,
     EvaluationResult,
     EvaluationRun,
+    IndexGenerationRecord,
+    ModelCall,
+    ModelProvider,
     Team,
     User,
 )
 from backend.app.db.session import build_engine, build_session_factory, create_schema
 from backend.app.main import create_app
+from backend.app.rag.answer.service import AnswerResult
+from backend.app.rag.domain.models import RetrievedChunk, SearchResult
 from backend.app.workers import dispatch as dispatch_module
 from backend.tests.api.conftest import create_user_as_admin, login_headers
 
@@ -49,6 +54,51 @@ def _create_dataset(api_client, api_app, headers):
     return team, dataset
 
 
+def _create_evaluation_provider(
+    client,
+    headers,
+    team_id,
+    *,
+    model_id="model-a",
+):
+    response = client.post(
+        "/api/v1/providers/create",
+        json={
+            "team_id": team_id,
+            "name": "Evaluation Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "http://evaluation-provider.test/v1",
+            "api_key": "sk-evaluation-secret",
+            "model_ids": [model_id],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    provider = response.json()["data"]
+    deployment_policy = client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider["id"]],
+            "max_data_classification": "internal",
+        },
+        headers=headers,
+    )
+    assert deployment_policy.status_code == 200, deployment_policy.text
+    team_policy = client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team_id,
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider["id"]],
+            "max_data_classification": "internal",
+        },
+        headers=headers,
+    )
+    assert team_policy.status_code == 200, team_policy.text
+    return provider
+
+
 def _create_run(api_app, dataset, status="running"):
     with api_app.state.session_factory() as session:
         admin_id = session.scalar(select(User.id).where(User.is_super_admin.is_(True)))
@@ -61,6 +111,78 @@ def _create_run(api_app, dataset, status="running"):
         session.add(run)
         session.commit()
         return run.id
+
+
+def _add_active_generation(api_app, team_id):
+    with api_app.state.session_factory() as session:
+        session.add(IndexGenerationRecord(team_id=team_id, status="active"))
+        session.commit()
+
+
+def _install_evaluation_provider_stack(monkeypatch):
+    captured = {}
+
+    class Adapter:
+        def __init__(self, **kwargs):
+            self.provider_id = kwargs["provider_id"]
+            self.model_id = kwargs["model_id"]
+            self.route = "openai_chat_completions"
+
+        def generate(self, *, question, chunks, max_chunks):
+            captured["generate"] = {
+                "question": question,
+                "chunk_ids": [chunk.chunk_id for chunk in chunks],
+            }
+            return AnswerResult(
+                text="Provider evaluation answer [c1].",
+                status="completed",
+                citation_chunk_ids=("chunk-1",),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+            )
+
+    def build_adapter(**kwargs):
+        captured["adapter"] = kwargs
+        return Adapter(**kwargs)
+
+    class Retriever:
+        async def search(self, request):
+            return SearchResult(
+                chunks=[
+                    RetrievedChunk(
+                        chunk_id="chunk-1",
+                        document_version_id="version-1",
+                        content="Grounded evidence.",
+                        fused_rank=1,
+                    )
+                ],
+                stage_latency={},
+                degraded=False,
+                trace_id="trace-evaluation-provider",
+            )
+
+    monkeypatch.setattr(
+        evaluations_module,
+        "build_provider_adapter",
+        build_adapter,
+    )
+    monkeypatch.setattr(
+        evaluations_module.EmbeddingClient,
+        "embed",
+        lambda self, texts: [[0.1]],
+    )
+    monkeypatch.setattr(
+        evaluations_module.RerankerClient,
+        "rerank",
+        lambda self, query, chunks, top_n: list(chunks),
+    )
+    monkeypatch.setattr(
+        evaluations_module,
+        "build_retriever",
+        lambda *args: Retriever(),
+    )
+    return captured
 
 
 def _sse_events(body):
@@ -92,6 +214,9 @@ def test_start_run_persists_real_evaluation_result(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
 
     def fake_collect(*_args, **_kwargs):
         return {
@@ -111,25 +236,52 @@ def test_start_run_persists_real_evaluation_result(
     )
     response = api_client.post(
         "/api/v1/evals/runs/start",
-        json={"team_id": team["id"], "dataset_id": dataset["id"]},
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+        },
         headers=admin_headers,
     )
 
     assert response.status_code == 202
     payload = response.json()["data"]
     assert payload["status"] == "succeeded"
+    assert payload["provider_id"] == provider["id"]
+    assert payload["model_id"] == "model-a"
     with api_app.state.session_factory() as session:
+        run = session.get(EvaluationRun, payload["id"])
+        assert run.provider_id == provider["id"]
+        assert run.model_id == "model-a"
         result = session.scalar(
             select(EvaluationResult).where(EvaluationResult.run_id == payload["id"])
         )
         assert result is not None
         assert '"recall_at_10":1.0' in result.metrics
+    listed = api_client.get(
+        "/api/v1/evals/runs",
+        params={"team_id": team["id"], "dataset_id": dataset["id"]},
+        headers=admin_headers,
+    ).json()["data"][0]
+    assert listed["provider_id"] == provider["id"]
+    assert listed["model_id"] == "model-a"
+    detail = api_client.get(
+        "/api/v1/evals/runs/detail",
+        params={"team_id": team["id"], "run_id": payload["id"]},
+        headers=admin_headers,
+    ).json()["data"]
+    assert detail["provider_id"] == provider["id"]
+    assert detail["model_id"] == "model-a"
 
 
 def test_start_run_failure_is_persisted(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
 
     def fail_collect(*_args, **_kwargs):
         raise RuntimeError("retrieval stack unavailable")
@@ -141,7 +293,12 @@ def test_start_run_failure_is_persisted(
     )
     response = api_client.post(
         "/api/v1/evals/runs/start",
-        json={"team_id": team["id"], "dataset_id": dataset["id"]},
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+        },
         headers=admin_headers,
     )
 
@@ -160,6 +317,9 @@ def test_start_run_does_not_overwrite_concurrent_cancellation(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
 
     def cancel_during_execution(_session, run, *_args, **_kwargs):
         with api_app.state.session_factory() as cancel_session:
@@ -175,7 +335,12 @@ def test_start_run_does_not_overwrite_concurrent_cancellation(
     )
     response = api_client.post(
         "/api/v1/evals/runs/start",
-        json={"team_id": team["id"], "dataset_id": dataset["id"]},
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+        },
         headers=admin_headers,
     )
 
@@ -194,6 +359,9 @@ def test_start_run_persists_release_gate_against_baseline(
     api_client, api_app, admin_headers, monkeypatch
 ):
     team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
     with api_app.state.session_factory() as session:
         admin_id = session.scalar(select(User.id).where(User.is_super_admin.is_(True)))
         baseline = EvaluationRun(
@@ -235,6 +403,8 @@ def test_start_run_persists_release_gate_against_baseline(
         json={
             "team_id": team["id"],
             "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
             "baseline_run_id": baseline_id,
         },
         headers=admin_headers,
@@ -264,6 +434,128 @@ def test_start_run_rejects_missing_required_body_fields(
     assert response.status_code == 422
 
 
+def test_start_run_requires_provider_and_model(api_client, admin_headers):
+    response = api_client.post(
+        "/api/v1/evals/runs/start",
+        json={"team_id": "team-id", "dataset_id": "dataset-id"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_start_run_rejects_missing_provider(
+    api_client, api_app, admin_headers
+):
+    team, dataset = _create_dataset(api_client, api_app, admin_headers)
+
+    response = api_client.post(
+        "/api/v1/evals/runs/start",
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": "01JPROVIDER000000000000001",
+            "model_id": "model-a",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.json()["error"]["message"] == "Provider was not found."
+
+
+def test_start_run_uses_selected_provider_and_persists_model_call(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
+    _add_active_generation(api_app, team["id"])
+    captured = _install_evaluation_provider_stack(monkeypatch)
+
+    response = api_client.post(
+        "/api/v1/evals/runs/start",
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 202, response.text
+    payload = response.json()["data"]
+    assert payload["status"] == "succeeded"
+    assert captured["adapter"]["provider_id"] == provider["id"]
+    assert captured["adapter"]["model_id"] == "model-a"
+    assert captured["adapter"]["api_key"] == "sk-evaluation-secret"
+    assert captured["generate"] == {
+        "question": "What is RAG?",
+        "chunk_ids": ["chunk-1"],
+    }
+    report_response = api_client.get(
+        "/api/v1/evals/runs/report",
+        params={"team_id": team["id"], "run_id": payload["id"]},
+        headers=admin_headers,
+    )
+    report = report_response.json()["data"]
+    assert report["provider_id"] == provider["id"]
+    assert report["model_id"] == "model-a"
+    assert report["report"]["provider_id"] == provider["id"]
+    assert report["report"]["model_id"] == "model-a"
+    with api_app.state.session_factory() as session:
+        model_call = session.scalar(
+            select(ModelCall).where(ModelCall.purpose == "answer")
+        )
+        assert model_call is not None
+        assert model_call.provider_id == provider["id"]
+        assert model_call.model_id == "model-a"
+        assert "sk-evaluation-secret" not in model_call.request_id
+
+
+def test_start_run_fails_when_provider_credentials_cannot_be_decrypted(
+    api_client, api_app, admin_headers
+):
+    team, dataset = _create_dataset(api_client, api_app, admin_headers)
+    provider = _create_evaluation_provider(
+        api_client, admin_headers, team["id"]
+    )
+    _add_active_generation(api_app, team["id"])
+    with api_app.state.session_factory() as session:
+        stored = session.get(ModelProvider, provider["id"])
+        assert stored is not None
+        stored.api_key_encrypted = "not-a-valid-fernet-token"
+        session.commit()
+
+    response = api_client.post(
+        "/api/v1/evals/runs/start",
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 202
+    payload = response.json()["data"]
+    assert payload["status"] == "failed"
+    report = api_client.get(
+        "/api/v1/evals/runs/report",
+        params={"team_id": team["id"], "run_id": payload["id"]},
+        headers=admin_headers,
+    ).json()["data"]
+    assert report["provider_id"] == provider["id"]
+    assert report["model_id"] == "model-a"
+    assert report["report"]["error_code"] == "RESOURCE_STATE_CONFLICT"
+    assert report["report"]["error"] == "Provider credentials are unavailable."
+
+
 def test_start_run_celery_mode_queues_shared_dispatch(monkeypatch):
     app, factory = _celery_app()
     calls = []
@@ -286,6 +578,11 @@ def test_start_run_celery_mode_queues_shared_dispatch(monkeypatch):
             json={"team_id": team["id"], "name": "Queued Golden Set"},
             headers=headers,
         ).json()["data"]
+        provider = _create_evaluation_provider(
+            client,
+            headers,
+            team["id"],
+        )
         with factory() as session:
             session.add(
                 EvaluationCase(
@@ -306,6 +603,8 @@ def test_start_run_celery_mode_queues_shared_dispatch(monkeypatch):
             json={
                 "team_id": team["id"],
                 "dataset_id": dataset["id"],
+                "provider_id": provider["id"],
+                "model_id": "model-a",
                 "judge_mode": "rules",
             },
             headers=headers,
@@ -321,7 +620,10 @@ def test_start_run_celery_mode_queues_shared_dispatch(monkeypatch):
         }
     ]
     with factory() as session:
-        assert session.get(EvaluationRun, payload["id"]).status == "queued"
+        run = session.get(EvaluationRun, payload["id"])
+        assert run.status == "queued"
+        assert run.provider_id == provider["id"]
+        assert run.model_id == "model-a"
 
 
 def test_start_run_returns_503_when_evaluation_queue_is_unavailable(monkeypatch):
@@ -348,6 +650,11 @@ def test_start_run_returns_503_when_evaluation_queue_is_unavailable(monkeypatch)
             json={"team_id": team["id"], "name": "Unavailable Golden Set"},
             headers=headers,
         ).json()["data"]
+        provider = _create_evaluation_provider(
+            client,
+            headers,
+            team["id"],
+        )
         with factory() as session:
             session.add(
                 EvaluationCase(
@@ -365,7 +672,12 @@ def test_start_run_returns_503_when_evaluation_queue_is_unavailable(monkeypatch)
 
         response = client.post(
             "/api/v1/evals/runs/start",
-            json={"team_id": team["id"], "dataset_id": dataset["id"]},
+            json={
+                "team_id": team["id"],
+                "dataset_id": dataset["id"],
+                "provider_id": provider["id"],
+                "model_id": "model-a",
+            },
             headers=headers,
         )
 

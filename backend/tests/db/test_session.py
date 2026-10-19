@@ -63,6 +63,33 @@ def test_create_schema_adds_secret_encrypted_to_legacy_credentials_table():
     assert "description" in columns
 
 
+def test_create_schema_adds_provider_fields_to_legacy_evaluation_runs_table():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE evaluation_runs ("
+                "id VARCHAR(26) PRIMARY KEY, "
+                "dataset_id VARCHAR(26) NOT NULL, "
+                "engine_mode VARCHAR(20) NOT NULL, "
+                "status VARCHAR(16) NOT NULL, "
+                "baseline_run_id VARCHAR(26), "
+                "created_by VARCHAR(26) NOT NULL, "
+                "created_at DATETIME NOT NULL, "
+                "updated_at DATETIME NOT NULL"
+                ")"
+            )
+        )
+
+    create_schema(engine)
+    create_schema(engine)
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("evaluation_runs")
+    }
+
+    assert {"provider_id", "model_id"}.issubset(columns)
+
+
 def test_identifier_columns_use_runtime_lengths():
     engine = build_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)

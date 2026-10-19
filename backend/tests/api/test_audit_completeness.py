@@ -304,6 +304,42 @@ def test_evaluation_success_paths_are_audited_once(
     )
     assert imported.status_code == 201, imported.text
 
+    provider = api_client.post(
+        "/api/v1/providers/create",
+        json={
+            "team_id": team["id"],
+            "name": "Evaluation Audit Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "https://evaluation-audit.example/v1",
+            "api_key": "sk-evaluation-audit-secret",
+            "model_ids": ["model-a"],
+        },
+        headers=admin_headers,
+    )
+    assert provider.status_code == 201, provider.text
+    provider_id = provider.json()["data"]["id"]
+    deployment_policy = api_client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider_id],
+            "max_data_classification": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert deployment_policy.status_code == 200, deployment_policy.text
+    team_policy = api_client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team["id"],
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider_id],
+            "max_data_classification": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert team_policy.status_code == 200, team_policy.text
+
     def fake_collect(*_args, **_kwargs):
         return {
             "metrics": {"case_count": 2, "permission_leakage_count": 0},
@@ -317,7 +353,12 @@ def test_evaluation_success_paths_are_audited_once(
     )
     run_response = api_client.post(
         "/api/v1/evals/runs/start",
-        json={"team_id": team["id"], "dataset_id": dataset["id"]},
+        json={
+            "team_id": team["id"],
+            "dataset_id": dataset["id"],
+            "provider_id": provider_id,
+            "model_id": "model-a",
+        },
         headers=admin_headers,
     )
     assert run_response.status_code == 202, run_response.text

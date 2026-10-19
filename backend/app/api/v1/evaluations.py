@@ -13,6 +13,7 @@ from backend.app.api.envelope import envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import paginate_scalars
 from backend.app.core.config import Settings
+from backend.app.core.secrets import decrypt_secret
 from backend.app.api.v1.chats import (
     _classification_for_chunks,
     _persist_model_calls,
@@ -29,6 +30,7 @@ from backend.app.db.models import (
     User,
 )
 from backend.app.modules.audit.service import write_audit
+from backend.app.modules.providers.resolution import resolve_provider
 from backend.app.rag.domain.models import DataClassification, RetrievalFilters, SearchRequest
 from backend.app.rag.embedding.service import EmbeddingClient
 from backend.app.rag.evaluation.runner import (
@@ -38,6 +40,10 @@ from backend.app.rag.evaluation.runner import (
     evaluate_release_gate,
 )
 from backend.app.rag.llm_gateway import GatewayAudit, LlmGateway
+from backend.app.rag.llm_gateway.providers import (
+    ProviderAdapterError,
+    build_provider_adapter,
+)
 from backend.app.rag.rerank.service import RerankerClient
 from backend.app.rag.retrieval.config import EngineMode
 from backend.app.rag.retrieval.factory import build_retriever
@@ -60,14 +66,43 @@ _EVALUATION_STAGES = {
 }
 
 
+def _evaluation_policy_decision(session, dataset, cases, user_id):
+    knowledge_base_ids = sorted(
+        {
+            knowledge_base_id
+            for case in cases
+            for knowledge_base_id in json.loads(
+                case.filters or "{}"
+            ).get("knowledge_base_ids", [])
+        }
+    )
+    return _policy_decision(
+        session,
+        dataset.team_id,
+        knowledge_base_ids,
+        user_id,
+        "inherit",
+        DataClassification.INTERNAL,
+    )
+
+
 class EvaluationRunStartRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     dataset_id: str = Field(min_length=1, max_length=26)
+    provider_id: str = Field(min_length=1, max_length=26)
+    model_id: str = Field(min_length=1, max_length=120)
     engine_mode: str = "dual_engine"
     judge_mode: str = "rules_and_manual"
     baseline_run_id: Optional[str] = Field(default=None, max_length=26)
 
-    @field_validator("team_id", "dataset_id", "baseline_run_id", mode="before")
+    @field_validator(
+        "team_id",
+        "dataset_id",
+        "provider_id",
+        "model_id",
+        "baseline_run_id",
+        mode="before",
+    )
     @classmethod
     def normalize_identifiers(cls, value: object) -> object:
         if isinstance(value, str):
@@ -171,6 +206,8 @@ def list_runs(
             "engine_mode": row.engine_mode,
             "status": row.status,
             "baseline_run_id": row.baseline_run_id,
+            "provider_id": row.provider_id,
+            "model_id": row.model_id,
             "created_at": row.created_at.isoformat(),
         },
     )
@@ -195,6 +232,14 @@ def start_run(
     ).all()
     if not cases:
         raise ApiError(409, "EMPTY_DATASET", "The evaluation dataset has no cases.")
+    policy = _evaluation_policy_decision(session, dataset, cases, user.id)
+    resolved_provider = resolve_provider(
+        session,
+        team_id,
+        body.provider_id,
+        body.model_id,
+        policy,
+    )
 
     baseline_metrics = {}
     if body.baseline_run_id:
@@ -214,6 +259,8 @@ def start_run(
         dataset_id=dataset.id,
         engine_mode=engine_mode,
         baseline_run_id=body.baseline_run_id,
+        provider_id=resolved_provider.provider_id,
+        model_id=resolved_provider.model_id,
         created_by=user.id,
         status="queued",
     )
@@ -231,6 +278,8 @@ def start_run(
             "engine_mode": engine_mode,
             "judge_mode": judge_mode,
             "baseline_run_id": run.baseline_run_id,
+            "provider_id": run.provider_id,
+            "model_id": run.model_id,
             "status": run.status,
         },
     )
@@ -257,6 +306,8 @@ def start_run(
                             "error_code": "TASK_QUEUE_UNAVAILABLE",
                             "engine_mode": engine_mode,
                             "judge_mode": judge_mode,
+                            "provider_id": run.provider_id,
+                            "model_id": run.model_id,
                         },
                         separators=(",", ":"),
                         ensure_ascii=False,
@@ -272,7 +323,12 @@ def start_run(
         ) from error
     session.refresh(run)
     return envelope(
-        {"id": run.id, "status": run.status},
+        {
+            "id": run.id,
+            "status": run.status,
+            "provider_id": run.provider_id,
+            "model_id": run.model_id,
+        },
         request.state.request_id,
     )
 
@@ -281,7 +337,7 @@ def start_run(
 def get_run(request: Request, team_id: str, run_id: str, user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     _membership_or_error(session, team_id, user.id)
     run = _run_or_error(session, team_id, run_id)
-    return envelope({ "id": run.id, "dataset_id": run.dataset_id, "engine_mode": run.engine_mode, "status": run.status, "baseline_run_id": run.baseline_run_id, "created_at": run.created_at.isoformat() }, request.state.request_id)
+    return envelope({ "id": run.id, "dataset_id": run.dataset_id, "engine_mode": run.engine_mode, "status": run.status, "baseline_run_id": run.baseline_run_id, "provider_id": run.provider_id, "model_id": run.model_id, "created_at": run.created_at.isoformat() }, request.state.request_id)
 
 
 def _dataset_or_error(session: Session, team_id: str, dataset_id: str) -> EvaluationDataset:
@@ -410,6 +466,7 @@ def execute_evaluation_run_record(
             run_id,
             judge_mode,
             str(error) or error.__class__.__name__,
+            getattr(error, "code", None),
         )
 
 
@@ -418,6 +475,7 @@ def _persist_evaluation_failure(
     run_id: str,
     judge_mode: str,
     error_message: str,
+    error_code: Optional[str] = None,
 ) -> dict:
     run = session.get(EvaluationRun, run_id)
     if run is None:
@@ -443,16 +501,21 @@ def _persist_evaluation_failure(
             "id": run_id,
             "status": current.status if current is not None else "not_found",
         }
+    report = {
+        "error": error_message,
+        "engine_mode": run.engine_mode,
+        "judge_mode": judge_mode,
+        "provider_id": run.provider_id,
+        "model_id": run.model_id,
+    }
+    if error_code:
+        report["error_code"] = error_code
     session.add(
         EvaluationResult(
             run_id=run_id,
             metrics="{}",
             report=json.dumps(
-                {
-                    "error": error_message,
-                    "engine_mode": run.engine_mode,
-                    "judge_mode": judge_mode,
-                },
+                report,
                 separators=(",", ":"),
                 ensure_ascii=False,
             ),
@@ -460,6 +523,48 @@ def _persist_evaluation_failure(
     )
     session.commit()
     return {"id": run_id, "status": "failed"}
+
+
+def _build_evaluation_gateway(settings, policy, resolved_provider):
+    try:
+        api_key = decrypt_secret(
+            resolved_provider.encrypted_api_key,
+            settings,
+        )
+    except Exception:
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Provider credentials are unavailable.",
+        ) from None
+    if not api_key.strip():
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Provider credentials are unavailable.",
+        )
+    try:
+        answer_provider = build_provider_adapter(
+            provider_type=resolved_provider.provider_type,
+            provider_id=resolved_provider.provider_id,
+            base_url=resolved_provider.base_url,
+            api_key=api_key,
+            model_id=resolved_provider.model_id,
+        )
+    except ProviderAdapterError as error:
+        raise ApiError(error.status_code, error.code, str(error)) from error
+    audits: list[GatewayAudit] = []
+    return (
+        LlmGateway(
+            decision=policy,
+            external_answer_provider=answer_provider,
+            external_api_key=api_key,
+            local_embed_provider=EmbeddingClient(settings.embedding_url),
+            local_rerank_provider=RerankerClient(settings.rerank_url),
+            audit_sink=audits.append,
+        ),
+        audits,
+    )
 
 
 def _collect_evaluation_result(session, run, dataset, cases, user, settings):
@@ -475,27 +580,18 @@ def _collect_evaluation_result(session, run, dataset, cases, user, settings):
         raise RuntimeError("active index generation is not available")
 
     case_filters = [json.loads(case.filters or "{}") for case in cases]
-    knowledge_base_ids = sorted(
-        {
-            knowledge_base_id
-            for filters in case_filters
-            for knowledge_base_id in filters.get("knowledge_base_ids", [])
-        }
-    )
-    policy = _policy_decision(
+    policy = _evaluation_policy_decision(session, dataset, cases, user.id)
+    resolved_provider = resolve_provider(
         session,
         dataset.team_id,
-        knowledge_base_ids,
-        user.id,
-        "inherit",
-        DataClassification.INTERNAL,
+        run.provider_id,
+        run.model_id,
+        policy,
     )
-    gateway_audits: list[GatewayAudit] = []
-    gateway = LlmGateway(
-        decision=policy,
-        local_embed_provider=EmbeddingClient(settings.embedding_url),
-        local_rerank_provider=RerankerClient(settings.rerank_url),
-        audit_sink=gateway_audits.append,
+    gateway, gateway_audits = _build_evaluation_gateway(
+        settings,
+        policy,
+        resolved_provider,
     )
     retriever = build_retriever(
         settings,
@@ -594,6 +690,8 @@ def _collect_evaluation_result(session, run, dataset, cases, user, settings):
         k=10,
     )
     evaluated.report["engine_mode"] = run.engine_mode
+    evaluated.report["provider_id"] = resolved_provider.provider_id
+    evaluated.report["model_id"] = resolved_provider.model_id
     evaluated.report["policy"] = {
         "reason_code": policy.reason_code,
         "policy_version": policy.policy_version,
@@ -915,6 +1013,8 @@ def run_report(request: Request, team_id: str, run_id: str, user: User = Depends
         {
             "run_id": run.id,
             "status": run.status,
+            "provider_id": run.provider_id,
+            "model_id": run.model_id,
             "metrics": json.loads(result.metrics or "{}") if result else {},
             "report": json.loads(result.report or "{}") if result else {},
         },

@@ -568,11 +568,16 @@ Trace 列表和详情都返回 `feedback` 数组。反馈通过
 {
   "team_id": "01JTEAM000000000000000001",
   "dataset_id": "01JDATASET0000000000000001",
+  "provider_id": "01JPROVIDER000000000000001",
+  "model_id": "gpt-5-mini",
   "engine_mode": "dual_engine",
   "judge_mode": "rules_and_manual",
   "baseline_run_id": null
 }
 ```
+
+`provider_id` 和 `model_id` 必填且非空。服务端在发起评测时校验供应商状态、模型归属、
+凭据可用性和模型策略；运行记录和报告返回实际使用的 `provider_id` 与 `model_id`。
 
 评测 SSE 事件：
 

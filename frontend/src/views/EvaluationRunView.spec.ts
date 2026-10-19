@@ -30,6 +30,8 @@ const runningRun: EvaluationRun = {
   engine_mode: 'dual_engine',
   status: 'running',
   baseline_run_id: null,
+  provider_id: 'provider-1',
+  model_id: 'model-a',
   created_at: '2026-10-19T12:00:00+00:00',
 }
 
@@ -151,6 +153,8 @@ describe('EvaluationRunView', () => {
       }),
     )
     expect(wrapper.text()).toContain('succeeded')
+    expect(wrapper.text()).toContain('provider-1')
+    expect(wrapper.text()).toContain('model-a')
     expect(wrapper.text()).toContain('0.9200')
   })
 

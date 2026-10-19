@@ -200,6 +200,8 @@ onBeforeUnmount(() => {
         </div>
         <div class="detail-grid">
           <div><dt>基线运行</dt><dd>{{ run.baseline_run_id ? shortId(run.baseline_run_id) : '—' }}</dd></div>
+          <div><dt>供应商</dt><dd>{{ run.provider_id ? shortId(run.provider_id) : '—' }}</dd></div>
+          <div><dt>模型</dt><dd>{{ run.model_id || '—' }}</dd></div>
           <div><dt>运行状态</dt><dd>{{ currentStatus }}</dd></div>
           <div><dt>当前阶段</dt><dd>{{ streamStage || (streaming ? '等待事件' : '—') }}</dd></div>
         </div>

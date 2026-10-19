@@ -25,23 +25,23 @@ def test_openapi_contains_core_p0_paths():
 
     required = {
         "/auth/login",
-        "/teams/{team_id}/knowledge-bases",
-        "/teams/{team_id}/knowledge-bases/{kb_id}/documents/upload",
-        "/teams/{team_id}/ingestion-runs/{run_id}/events",
-        "/teams/{team_id}/chunks/{chunk_id}",
-        "/teams/{team_id}/chunks/{chunk_id}/regenerate",
-        "/teams/{team_id}/conversations/{conversation_id}/ask",
-        "/teams/{team_id}/conversations/{conversation_id}/messages/{message_id}/cancel",
-        "/teams/{team_id}/traces/{trace_id}",
-        "/teams/{team_id}/evaluation-runs",
-        "/teams/{team_id}/evaluation-datasets/{dataset_id}/cases",
-        "/teams/{team_id}/model-policy",
-        "/teams/{team_id}/model-providers",
-        "/teams/{team_id}/index-generations/{generation_id}/activate",
-        "/teams/{team_id}/index-generations/{generation_id}/rollback",
-        "/teams/{team_id}/documents/{document_id}/grants",
-        "/teams/{team_id}/sources/{source_id}/sync",
-        "/admin/deployment-model-policy",
+        "/kbs",
+        "/docs/upload",
+        "/ingestions/events",
+        "/chunks",
+        "/chunks/regenerate",
+        "/chats/ask",
+        "/messages/cancel",
+        "/traces/detail",
+        "/evals/runs",
+        "/evals/datasets/cases",
+        "/model-policy",
+        "/providers",
+        "/generations/activate",
+        "/generations/rollback",
+        "/docs/grants",
+        "/sources/sync",
+        "/admin/model-policy",
     }
 
     assert required.issubset(paths)
@@ -52,6 +52,18 @@ def test_openapi_operations_have_summaries():
         for method, operation in item.items():
             if method in {"get", "post", "patch", "delete"}:
                 assert operation.get("summary"), "{0} {1}".format(method, path)
+
+
+def test_openapi_paths_have_no_path_parameters():
+    for path in _spec()["paths"]:
+        assert "{" not in path
+
+
+def test_openapi_mutations_are_post_only():
+    for path, item in _spec()["paths"].items():
+        for method in item:
+            if method != "get":
+                assert method == "post", "{0} {1}".format(method, path)
 
 
 def test_openapi_enums_match_design_separation():

@@ -988,30 +988,35 @@ techvault-b-es-hybrid-<generation>
 
 ### 12.1 核心接口
 
-完整接口目录、请求字段、SSE 事件和错误码以 [`docs/api/api-contract.md`](./docs/api/api-contract.md) 与 [`docs/api/openapi.yaml`](./docs/api/openapi.yaml) 为准。下表只列出主链路入口。
+完整接口目录、请求字段、SSE 事件和错误码以 [`docs/api/api-contract.md`](./docs/api/api-contract.md) 与 [`docs/api/openapi.yaml`](./docs/api/openapi.yaml) 为准。接口不使用路径参数；团队 ID、资源 ID 和业务参数放在请求体中，GET 查询接口只使用少量 query 参数。下表只列出主链路入口。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `POST` | `/api/v1/auth/login` | 登录 |
-| `GET/POST` | `/api/v1/teams` | 团队管理 |
-| `GET/POST` | `/api/v1/teams/{team_id}/knowledge-bases` | 知识库管理 |
-| `POST` | `/api/v1/teams/{team_id}/knowledge-bases/{kb_id}/documents/upload` | 上传文件 |
-| `POST` | `/api/v1/teams/{team_id}/knowledge-bases/{kb_id}/sources/github` | 添加 GitHub 来源 |
-| `GET` | `/api/v1/teams/{team_id}/documents/{document_id}/versions` | 查看文档版本 |
-| `GET/PATCH` | `/api/v1/teams/{team_id}/chunks/{chunk_id}` | 查看或编辑 chunk |
-| `POST` | `/api/v1/teams/{team_id}/chunks/{chunk_id}/disable` | 禁用 chunk |
-| `POST` | `/api/v1/teams/{team_id}/chunks/{chunk_id}/regenerate` | 重新生成 chunk |
-| `POST` | `/api/v1/teams/{team_id}/conversations/{conversation_id}/ask` | 问答 |
-| `POST` | `/api/v1/teams/{team_id}/messages/{message_id}/feedback` | 用户反馈 |
-| `GET` | `/api/v1/teams/{team_id}/traces/{trace_id}` | 检索调试 Trace |
-| `GET/PATCH` | `/api/v1/teams/{team_id}/model-policy` | 模型出境策略 |
-| `GET/POST` | `/api/v1/teams/{team_id}/evaluation-datasets` | 黄金集管理 |
-| `POST` | `/api/v1/teams/{team_id}/index-generations/{generation_id}/activate` | 激活索引 generation |
+| `GET` | `/api/v1/teams` | 团队列表 |
+| `POST` | `/api/v1/teams/create` | 创建团队 |
+| `GET` | `/api/v1/kbs?team_id=` | 知识库列表 |
+| `POST` | `/api/v1/docs/upload` | 上传文件 |
+| `POST` | `/api/v1/sources/github/create` | 添加 GitHub 来源 |
+| `GET` | `/api/v1/docs/versions?team_id=&document_id=` | 查看文档版本 |
+| `GET` | `/api/v1/chunks/detail?team_id=&chunk_id=` | 查看 chunk |
+| `POST` | `/api/v1/chunks/update` | 编辑 chunk |
+| `POST` | `/api/v1/chunks/disable` | 禁用 chunk |
+| `POST` | `/api/v1/chunks/regenerate` | 重新生成 chunk |
+| `POST` | `/api/v1/chats/ask` | 问答 |
+| `POST` | `/api/v1/messages/feedback` | 用户反馈 |
+| `GET` | `/api/v1/traces/detail?team_id=&trace_id=` | 检索调试 Trace |
+| `GET` | `/api/v1/model-policy?team_id=` | 模型出境策略 |
+| `POST` | `/api/v1/model-policy/update` | 更新模型出境策略 |
+| `GET` | `/api/v1/evals/datasets?team_id=` | 黄金集管理 |
+| `POST` | `/api/v1/generations/activate` | 激活索引 generation |
 
 ### 12.2 问答请求示例
 
 ```json
 {
+  "team_id": "01JTEAM000000000000000001",
+  "chat_id": "01JCHAT000000000000000001",
   "question": "Spring Boot 3.2 如何配置虚拟线程？",
   "filters": {
     "knowledge_base_ids": ["kb_001"],

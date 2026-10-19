@@ -7,6 +7,7 @@
 约定：
 
 - 所有业务接口使用 `/api/v1`。
+- 路径中不放置团队 ID 和资源 ID；写操作参数放在请求体，查询接口只使用少量 query 参数。
 - JSON 字段使用 `snake_case`，ID 使用 ULID，时间使用 UTC ISO 8601。
 - 列表使用游标分页，错误使用统一 `error.code` 和 `request_id`。
 - 可编辑资源使用 `If-Match` 做乐观锁。

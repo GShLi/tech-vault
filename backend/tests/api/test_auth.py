@@ -211,3 +211,74 @@ def test_me_rejects_token_for_inactive_user(api_app, api_client):
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+def test_refresh_rotates_session_and_logout_revokes_all_session_tokens(api_client):
+    assert _register(api_client).status_code == 201
+    logged_in = _login(api_client).json()["data"]
+    assert logged_in["refresh_token"]
+
+    refreshed = api_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": logged_in["refresh_token"]},
+    )
+    assert refreshed.status_code == 200
+    rotated = refreshed.json()["data"]
+    assert rotated["access_token"] != logged_in["access_token"]
+    assert rotated["refresh_token"] != logged_in["refresh_token"]
+
+    reused = api_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": logged_in["refresh_token"]},
+    )
+    assert reused.status_code == 401
+    assert reused.json()["error"]["code"] == "UNAUTHENTICATED"
+
+    current_access = rotated["access_token"]
+    assert (
+        api_client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer " + current_access},
+        ).status_code
+        == 200
+    )
+
+    logout = api_client.post(
+        "/api/v1/auth/logout",
+        json={},
+        headers={"Authorization": "Bearer " + current_access},
+    )
+    assert logout.status_code == 204
+    assert (
+        api_client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer " + current_access},
+        ).status_code
+        == 401
+    )
+    assert (
+        api_client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": rotated["refresh_token"]},
+        ).status_code
+        == 401
+    )
+
+
+def test_user_can_update_own_display_name(api_client):
+    assert _register(api_client).status_code == 201
+    token = _login(api_client).json()["data"]["access_token"]
+
+    updated = api_client.post(
+        "/api/v1/users/update",
+        json={"display_name": "  Updated Member  "},
+        headers={"Authorization": "Bearer " + token},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["data"]["display_name"] == "Updated Member"
+    me = api_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer " + token},
+    )
+    assert me.json()["data"]["user"]["display_name"] == "Updated Member"

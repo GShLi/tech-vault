@@ -62,6 +62,46 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1)
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Display name must not be empty.")
+        return normalized
+
+
+class InvitationCreateRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(min_length=1, max_length=16)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return _normalize_email(value)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"leader", "member", "viewer"}:
+            raise ValueError("role must be leader, member, or viewer")
+        return value
+
+
+class InvitationAcceptRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+
+
 class AdminUserCreateRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=120)

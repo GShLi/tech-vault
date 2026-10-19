@@ -2,6 +2,7 @@ import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -13,8 +14,10 @@ from backend.app.api.storage import remove_file, store_file
 from backend.app.api.v1.schemas import DocumentDetailView, DocumentView, IngestionRunView
 from backend.app.api.v1.teams import _if_match_version, _leader_or_error, _membership_or_error
 from backend.app.core.ids import new_ulid
+from backend.app.rag.ingestion.processor import process_markdown
 from backend.app.db.models import (
     Document,
+    ChunkRecord,
     DocumentVersion,
     IngestionRun,
     KnowledgeBase,
@@ -452,3 +455,256 @@ def revoke_document_grant(
     session.delete(grant)
     session.commit()
     return envelope({"revoked": grant_id}, request.state.request_id)
+
+
+@router.get("/docs/download-url")
+def document_download_url(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
+    return envelope(
+        {
+            "url": "/api/v1/docs/download?team_id={0}&document_id={1}".format(
+                team_id, document_id
+            ),
+            "expires_in": 300,
+        },
+        request.state.request_id,
+    )
+
+
+@router.get("/docs/download")
+def download_document(
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    document = _document_or_error(session, team_id, document_id)
+    if not document.source_uri:
+        raise ApiError(404, "NOT_FOUND", "Document source is unavailable.")
+    return FileResponse(document.source_uri, filename=document.file_name)
+
+
+@router.post("/docs/rebuild", status_code=202)
+def rebuild_document(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    document_id = body.get("document_id", "")
+    _leader_or_error(session, team_id, user.id)
+    document = _document_or_error(session, team_id, document_id)
+    run = IngestionRun(
+        id=new_ulid(),
+        document_version_id=document.current_version_id or "",
+        status="queued",
+        current_stage="parsing",
+        stage_progress_pct=0,
+    )
+    document.doc_status = "building"
+    session.add(run)
+    session.commit()
+    process_markdown(document, run, session, request.app.state.settings)
+    return envelope(
+        {
+            "document_id": document.id,
+            "ingestion_run_id": run.id,
+            "status": run.status,
+        },
+        request.state.request_id,
+    )
+
+
+@router.get("/docs/tasks")
+def document_tasks(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    document = _document_or_error(session, team_id, document_id)
+    runs = session.scalars(
+        select(IngestionRun)
+        .join(DocumentVersion, IngestionRun.document_version_id == DocumentVersion.id)
+        .where(DocumentVersion.document_id == document.id)
+        .order_by(IngestionRun.created_at.desc())
+        .limit(50)
+    ).all()
+    return envelope(
+        [
+            {
+                "id": run.id,
+                "status": run.status,
+                "current_stage": run.current_stage,
+                "stage_progress_pct": run.stage_progress_pct,
+                "error_code": run.error_code,
+                "created_at": run.created_at.isoformat(),
+            }
+            for run in runs
+        ],
+        request.state.request_id,
+    )
+
+
+@router.get("/docs/version")
+def document_version_detail(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    version_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
+    version = session.get(DocumentVersion, version_id)
+    if version is None or version.document_id != document_id:
+        raise ApiError(404, "NOT_FOUND", "Document version was not found.")
+    return envelope(
+        {
+            "id": version.id,
+            "document_id": version.document_id,
+            "content_fingerprint": version.content_fingerprint,
+            "file_size_bytes": version.file_size_bytes,
+            "status": version.status,
+            "index_generation": version.index_generation,
+            "chunk_count": version.chunk_count,
+            "created_at": version.created_at.isoformat(),
+        },
+        request.state.request_id,
+    )
+
+
+@router.get("/docs/chunks")
+def document_chunks(
+    request: Request,
+    team_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
+    chunks = session.scalars(
+        select(ChunkRecord)
+        .where(ChunkRecord.document_id == document_id)
+        .order_by(ChunkRecord.created_at.asc())
+    ).all()
+    return envelope(
+        [
+            {
+                "id": chunk.id,
+                "document_id": chunk.document_id,
+                "content": chunk.content,
+                "heading_path": json.loads(chunk.heading_path or "[]"),
+                "status": chunk.status,
+                "version": chunk.version,
+            }
+            for chunk in chunks
+        ],
+        request.state.request_id,
+    )
+
+
+def _run_or_error(session: Session, team_id: str, run_id: str) -> IngestionRun:
+    run = session.scalar(
+        select(IngestionRun)
+        .join(DocumentVersion, IngestionRun.document_version_id == DocumentVersion.id)
+        .join(Document, DocumentVersion.document_id == Document.id)
+        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+        .where(IngestionRun.id == run_id, KnowledgeBase.team_id == team_id)
+    )
+    if run is None:
+        raise ApiError(404, "NOT_FOUND", "Ingestion run was not found.")
+    return run
+
+
+@router.get("/ingestions/events")
+def ingestion_events(
+    request: Request,
+    team_id: str,
+    run_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    run = _run_or_error(session, team_id, run_id)
+    payload = {
+        "run_id": run.id,
+        "status": run.status,
+        "stage": run.current_stage,
+        "percent": run.stage_progress_pct,
+        "error_code": run.error_code,
+        "retryable": run.retryable,
+    }
+    async def events():
+        import json as _json
+        yield "event: progress\ndata: {0}\n\n".format(
+            _json.dumps(payload, ensure_ascii=False)
+        )
+        event = "completed" if run.status == "completed" else "failed"
+        yield "event: {0}\ndata: {1}\n\n".format(
+            event, _json.dumps(payload, ensure_ascii=False)
+        )
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.post("/ingestions/retry", status_code=202)
+def retry_ingestion(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    run_id = body.get("run_id", "")
+    _leader_or_error(session, team_id, user.id)
+    run = _run_or_error(session, team_id, run_id)
+    version = session.get(DocumentVersion, run.document_version_id)
+    if version is None:
+        raise ApiError(404, "NOT_FOUND", "Document version was not found.")
+    document = _document_or_error(session, team_id, version.document_id)
+    run.status = "queued"
+    run.current_stage = "parsing"
+    run.stage_progress_pct = 0
+    run.error_code = None
+    document.doc_status = "building"
+    session.commit()
+    process_markdown(document, run, session, request.app.state.settings)
+    return envelope(
+        {"run_id": run.id, "status": run.status, "stage": run.current_stage},
+        request.state.request_id,
+    )
+
+
+@router.post("/ingestions/cancel", status_code=202)
+def cancel_ingestion(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    run_id = body.get("run_id", "")
+    _leader_or_error(session, team_id, user.id)
+    run = _run_or_error(session, team_id, run_id)
+    if run.status in {"completed", "failed"}:
+        raise ApiError(409, "RESOURCE_STATE_CONFLICT", "Run is already finished.")
+    run.status = "cancelled"
+    run.current_stage = "cancelled"
+    run.retryable = True
+    session.commit()
+    return envelope(
+        {"run_id": run.id, "status": run.status}, request.state.request_id
+    )

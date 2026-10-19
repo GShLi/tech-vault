@@ -1,9 +1,16 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.api.deps import get_current_user, get_session, require_super_admin
+from backend.app.api.deps import (
+    get_auth_context,
+    get_current_user,
+    get_session,
+    require_super_admin,
+)
 from backend.app.api.envelope import envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.v1.schemas import (
@@ -12,12 +19,20 @@ from backend.app.api.v1.schemas import (
     MembershipView,
     MeView,
     PasswordChangeRequest,
+    RefreshRequest,
     RegisterRequest,
+    UserUpdateRequest,
     UserView,
 )
+from backend.app.core.ids import new_ulid
 from backend.app.core.passwords import hash_password, verify_password
-from backend.app.core.tokens import create_access_token
-from backend.app.db.models import Team, TeamMember, User
+from backend.app.core.tokens import (
+    TokenError,
+    create_access_token,
+    create_refresh_token,
+    decode_token_claims,
+)
+from backend.app.db.models import AuthSession, Team, TeamMember, User
 
 
 router = APIRouter(tags=["auth"])
@@ -35,6 +50,24 @@ def _user_view(user: User) -> UserView:
         is_builtin=bool(user.is_builtin),
         created_at=user.created_at,
     )
+
+
+def _session_tokens(user: User, auth_session: AuthSession, settings) -> dict:
+    return {
+        "access_token": create_access_token(
+            user.id,
+            settings,
+            session_id=auth_session.id,
+        ),
+        "refresh_token": create_refresh_token(
+            user.id,
+            settings,
+            session_id=auth_session.id,
+            refresh_jti=auth_session.refresh_jti,
+        ),
+        "token_type": "bearer",
+        "user": _user_view(user).model_dump(),
+    }
 
 
 @router.post("/auth/register", status_code=201)
@@ -83,15 +116,82 @@ def login(
     if not verify_password(body.password, user.password_hash):
         raise ApiError(401, "UNAUTHENTICATED", "Invalid email or password.")
 
-    token = create_access_token(user.id, request.app.state.settings)
+    now = datetime.now(timezone.utc)
+    auth_session = AuthSession(
+        user_id=user.id,
+        refresh_jti=new_ulid(),
+        expires_at=now
+        + timedelta(seconds=request.app.state.settings.refresh_token_ttl_seconds),
+    )
+    session.add(auth_session)
+    session.commit()
     return envelope(
-        {
-            "access_token": token,
-            "token_type": "bearer",
-            "user": _user_view(user).model_dump(),
-        },
+        _session_tokens(user, auth_session, request.app.state.settings),
         request.state.request_id,
     )
+
+
+@router.post("/auth/refresh")
+def refresh_token(
+    body: RefreshRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    try:
+        claims = decode_token_claims(
+            body.refresh_token,
+            request.app.state.settings,
+            expected_type="refresh",
+        )
+    except TokenError as error:
+        raise ApiError(401, "UNAUTHENTICATED", "Invalid or expired token.") from error
+
+    auth_session = session.get(AuthSession, claims.get("sid"))
+    now = datetime.now(timezone.utc)
+    if (
+        auth_session is None
+        or auth_session.user_id != claims["sub"]
+        or auth_session.refresh_jti != claims.get("jti")
+        or auth_session.revoked_at is not None
+        or auth_session.expires_at <= now
+    ):
+        raise ApiError(401, "UNAUTHENTICATED", "Invalid or expired token.")
+    user = session.get(User, auth_session.user_id)
+    if user is None or not user.is_active:
+        raise ApiError(401, "UNAUTHENTICATED", "User is not active.")
+
+    auth_session.refresh_jti = new_ulid()
+    auth_session.expires_at = now + timedelta(
+        seconds=request.app.state.settings.refresh_token_ttl_seconds
+    )
+    session.commit()
+    return envelope(
+        _session_tokens(user, auth_session, request.app.state.settings),
+        request.state.request_id,
+    )
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(
+    context=Depends(get_auth_context),
+    session: Session = Depends(get_session),
+):
+    if context.auth_session is not None:
+        context.auth_session.revoked_at = datetime.now(timezone.utc)
+        session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/users/update")
+def update_user(
+    body: UserUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    user.display_name = body.display_name
+    session.commit()
+    return envelope(_user_view(user).model_dump(), request.state.request_id)
 
 
 @router.post("/auth/password/change", status_code=204)

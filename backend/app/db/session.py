@@ -121,8 +121,76 @@ def _bridge_chunks_scope(engine: Engine) -> None:
             connection.execute(text(statement))
 
 
+def _bridge_kb_policy(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("knowledge_bases"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("knowledge_bases")}
+    if "model_policy_mode" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE knowledge_bases ADD COLUMN "
+                "model_policy_mode VARCHAR(24) NOT NULL DEFAULT 'local_only'"
+            )
+        )
+
+
+def _bridge_index_generation_validation(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("index_generations"):
+        return
+    columns = {
+        column["name"] for column in inspector.get_columns("index_generations")
+    }
+    statements = []
+    if "validation_errors" not in columns:
+        statements.append(
+            "ALTER TABLE index_generations ADD COLUMN "
+            "validation_errors TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "validated_at" not in columns:
+        statements.append(
+            "ALTER TABLE index_generations ADD COLUMN validated_at DATETIME"
+        )
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _bridge_invitation_expiry(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("invitations"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("invitations")}
+    statements = []
+    if "expires_at" not in columns:
+        statements.append(
+            "ALTER TABLE invitations ADD COLUMN expires_at DATETIME NOT NULL "
+            "DEFAULT '1970-01-01 00:00:00'"
+        )
+    if "updated_at" not in columns:
+        statements.append(
+            "ALTER TABLE invitations ADD COLUMN updated_at DATETIME NOT NULL "
+            "DEFAULT '1970-01-01 00:00:00'"
+        )
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _bridge_teams_description(engine)
     _bridge_users_admin_flags(engine)
     _bridge_chunks_scope(engine)
+    _bridge_kb_policy(engine)
+    _bridge_index_generation_validation(engine)
+    _bridge_invitation_expiry(engine)

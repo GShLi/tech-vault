@@ -1,5 +1,7 @@
 from typing import Optional
 
+import json
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -19,7 +21,7 @@ from backend.app.api.v1.teams import (
     _leader_or_error,
     _membership_or_error,
 )
-from backend.app.db.models import KnowledgeBase, User
+from backend.app.db.models import Document, KnowledgeBase, User
 
 
 router = APIRouter(tags=["kbs"])
@@ -32,7 +34,7 @@ def _kb_view(kb: KnowledgeBase):
         "name": kb.name,
         "description": kb.description,
         "status": kb.status,
-        "default_model_policy_mode": "local_only",
+        "default_model_policy_mode": kb.model_policy_mode,
         "document_count": 0,
         "version": kb.version,
         "created_at": kb.created_at.isoformat(),
@@ -213,3 +215,83 @@ def archive_kb(
         raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
     session.refresh(kb)
     return envelope(_kb_view(kb), request.state.request_id)
+
+
+@router.get("/kbs/policy")
+def get_kb_policy(
+    request: Request,
+    team_id: str,
+    kb_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    kb = session.get(KnowledgeBase, kb_id)
+    if kb is None or kb.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
+    return envelope(
+        {
+            "kb_id": kb.id,
+            "mode": kb.model_policy_mode,
+            "version": kb.version,
+        },
+        request.state.request_id,
+    )
+
+
+@router.post("/kbs/policy/update")
+def update_kb_policy(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    kb_id = body.get("kb_id", "")
+    mode = body.get("mode", "local_only")
+    if mode not in {"local_only", "external_allowed", "external_required"}:
+        raise ApiError(400, "INVALID_ARGUMENT", "Invalid model policy mode.")
+    _leader_or_error(session, team_id, user.id)
+    kb = session.get(KnowledgeBase, kb_id)
+    if kb is None or kb.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
+    kb.model_policy_mode = mode
+    kb.version += 1
+    session.commit()
+    return envelope(
+        {"kb_id": kb.id, "mode": kb.model_policy_mode, "version": kb.version},
+        request.state.request_id,
+    )
+
+
+@router.get("/facets")
+def list_facets(
+    request: Request,
+    team_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    rows = session.execute(
+        select(Document, KnowledgeBase)
+        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+        .where(KnowledgeBase.team_id == team_id, Document.doc_status != "deleted")
+    ).all()
+    products = sorted({doc.product for doc, _ in rows if doc.product})
+    versions = sorted(
+        {
+            value
+            for doc, _ in rows
+            for value in json.loads(doc.version_values or "[]")
+        }
+    )
+    sources = sorted({doc.source_type for doc, _ in rows})
+    return envelope(
+        {
+            "products": products,
+            "versions": versions,
+            "sources": sources,
+            "knowledge_base_ids": sorted({kb.id for _, kb in rows}),
+        },
+        request.state.request_id,
+    )

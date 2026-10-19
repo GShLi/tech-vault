@@ -13,7 +13,7 @@ from backend.app.api.pagination import decode_cursor, encode_cursor
 from backend.app.api.v1.schemas import AskRequest, ChatView, MessageView
 from backend.app.api.v1.teams import _membership_or_error, _if_match_version
 from backend.app.core.ids import new_ulid
-from backend.app.db.models import Chat, Message, User
+from backend.app.db.models import Chat, Feedback, Message, TraceRecord, User
 from backend.app.rag.domain.models import RetrievalFilters, SearchRequest
 from backend.app.rag.embedding.service import EmbeddingClient
 from backend.app.rag.retrieval.config import EngineMode
@@ -57,6 +57,16 @@ def _chat_owner_or_error(
     if chat is None or chat.team_id != team_id or chat.user_id != user_id:
         raise ApiError(403, "PERMISSION_DENIED", "Chat is not accessible.")
     return chat
+
+
+def _message_or_error(
+    session: Session, team_id: str, message_id: str, user_id: str
+) -> Message:
+    message = session.get(Message, message_id)
+    if message is None:
+        raise ApiError(404, "NOT_FOUND", "Message was not found.")
+    _chat_owner_or_error(session, team_id, message.chat_id, user_id)
+    return message
 
 
 @router.get("/chats")
@@ -242,6 +252,55 @@ async def ask(
         refusal_reason=refusal_reason,
     )
     session.add(assistant_message)
+    session.add(
+        TraceRecord(
+            team_id=body.team_id,
+            chat_id=chat.id,
+            message_id=assistant_message.id,
+            trace_id=result.trace_id,
+            engine_mode="dual_engine",
+            original_query=question,
+            rewritten_query=None,
+            filters=json.dumps(
+                {
+                    "team_id": body.team_id,
+                    "knowledge_base_ids": knowledge_base_ids,
+                    "viewer_user_id": user.id,
+                }
+            ),
+            bm25_candidates=json.dumps(
+                [
+                    {"chunk_id": chunk.chunk_id, "rank": chunk.fused_rank}
+                    for chunk in result.chunks
+                ],
+                ensure_ascii=False,
+            ),
+            dense_candidates=json.dumps(
+                [
+                    {"chunk_id": chunk.chunk_id, "rank": chunk.fused_rank}
+                    for chunk in result.chunks
+                ],
+                ensure_ascii=False,
+            ),
+            rrf_candidates=json.dumps(
+                [
+                    {"chunk_id": chunk.chunk_id, "rank": chunk.fused_rank}
+                    for chunk in result.chunks
+                ],
+                ensure_ascii=False,
+            ),
+            final_context=json.dumps(
+                [
+                    {"chunk_id": chunk.chunk_id, "content": chunk.content}
+                    for chunk in result.chunks
+                ],
+                ensure_ascii=False,
+            ),
+            stage_latency_ms=json.dumps(result.stage_latency),
+            degraded=result.degraded,
+            model=json.dumps({"mode": "extractive_poc"}),
+        )
+    )
     chat.version += 1
     session.commit()
 
@@ -293,3 +352,105 @@ async def ask(
             )
 
     return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+
+@router.post("/chats/update")
+def update_chat(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    chat_id = body.get("chat_id", "")
+    title = body.get("title", "").strip()
+    if not title:
+        raise ApiError(400, "INVALID_ARGUMENT", "Title is required.")
+    _membership_or_error(session, team_id, user.id)
+    chat = _chat_owner_or_error(session, team_id, chat_id, user.id)
+    expected = _if_match_version(request)
+    if chat.version != expected:
+        raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
+    chat.title = title[:200]
+    chat.version += 1
+    session.commit()
+    return envelope(_chat_view(chat), request.state.request_id)
+
+
+@router.get("/messages/detail")
+def get_message(
+    request: Request,
+    team_id: str,
+    message_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    message = _message_or_error(session, team_id, message_id, user.id)
+    return envelope(_message_view(message), request.state.request_id)
+
+
+@router.get("/messages/citations")
+def message_citations(
+    request: Request,
+    team_id: str,
+    message_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, team_id, user.id)
+    message = _message_or_error(session, team_id, message_id, user.id)
+    citations = json.loads(message.citation_ids or "[]")
+    return envelope(citations, request.state.request_id)
+
+
+@router.post("/messages/cancel", status_code=202)
+def cancel_message(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    message_id = body.get("message_id", "")
+    _membership_or_error(session, team_id, user.id)
+    message = _message_or_error(session, team_id, message_id, user.id)
+    if message.status != "generating":
+        raise ApiError(409, "RESOURCE_STATE_CONFLICT", "Message is already finished.")
+    message.status = "cancelled"
+    session.commit()
+    return envelope({"message_id": message.id, "status": message.status}, request.state.request_id)
+
+
+@router.post("/messages/feedback", status_code=201)
+def submit_feedback(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    team_id = body.get("team_id", "")
+    message_id = body.get("message_id", "")
+    feedback_type = body.get("feedback_type", "")
+    if feedback_type not in {
+        "useful",
+        "not_useful",
+        "citation_error",
+        "knowledge_gap",
+    }:
+        raise ApiError(400, "INVALID_ARGUMENT", "Invalid feedback type.")
+    _membership_or_error(session, team_id, user.id)
+    _message_or_error(session, team_id, message_id, user.id)
+    feedback = Feedback(
+        team_id=team_id,
+        message_id=message_id,
+        user_id=user.id,
+        feedback_type=feedback_type,
+        comment=body.get("comment"),
+    )
+    session.add(feedback)
+    session.commit()
+    return envelope(
+        {"id": feedback.id, "message_id": message_id, "feedback_type": feedback_type},
+        request.state.request_id,
+    )

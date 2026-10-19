@@ -251,7 +251,7 @@
 | --- | --- |
 | P0 | 登录/注册、问答工作台、会话历史、知识库列表/详情/策略、文件上传、GitHub 来源、文档版本、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
 | P1 | 知识缺口、Trace 回放、评测 A/B 对比、供应商测试、找回密码 |
-| P2 | Confluence/Notion/Slack/Drive 等连接器、源系统 ACL、知识图谱、Agentic Retrieval、多租户管理 |
+| P2 | Confluence/Notion/Slack/Drive 等连接器、源系统 ACL、知识图谱、Agentic Retrieval |
 
 ## 9. 前端并行开发约定
 

@@ -95,7 +95,7 @@ def test_private_document_is_not_visible_to_another_member():
         user_id="user-b",
         team_ids=("team-a",),
         knowledge_base_ids=("kb-a",),
-        is_admin=False,
+        role=Role.MEMBER,
     )
     with pytest.raises(PermissionError):
         assert_may_view_document(

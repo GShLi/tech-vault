@@ -118,6 +118,7 @@ def _citation_chunk_ids(
 
     cited = []
     seen = set()
+    has_invalid_citation = False
     for raw_index in matches:
         index = int(raw_index) - 1
         if 0 <= index < len(chunks):
@@ -125,8 +126,10 @@ def _citation_chunk_ids(
             if chunk_id not in seen:
                 seen.add(chunk_id)
                 cited.append(chunk_id)
+        else:
+            has_invalid_citation = True
     if cited:
-        return tuple(cited), False
+        return tuple(cited), has_invalid_citation
     return tuple(chunk.chunk_id for chunk in chunks), True
 
 
@@ -179,25 +182,21 @@ def answer_stream_from_pieces(
     )
 
     async def iterate():
-        try:
-            if inspect.isasyncgen(pieces) or hasattr(pieces, "__aiter__"):
-                async for piece in pieces:
-                    text = _piece_text(piece)
-                    if not text:
-                        continue
-                    accumulator.add(text)
-                    yield text
-            else:
-                for piece in pieces:
-                    text = _piece_text(piece)
-                    if not text:
-                        continue
-                    accumulator.add(text)
-                    yield text
-            stream.result = accumulator.finish()
-        finally:
-            if stream.result is None and accumulator.has_content:
-                stream.result = accumulator.finish()
+        if inspect.isasyncgen(pieces) or hasattr(pieces, "__aiter__"):
+            async for piece in pieces:
+                text = _piece_text(piece)
+                if not text:
+                    continue
+                accumulator.add(text)
+                yield text
+        else:
+            for piece in pieces:
+                text = _piece_text(piece)
+                if not text:
+                    continue
+                accumulator.add(text)
+                yield text
+        stream.result = accumulator.finish()
 
     stream.bind(iterate())
     return stream

@@ -227,6 +227,13 @@ def parse_provider_stream_chunk(adapter_type: str, chunk_text: str) -> str:
         if not isinstance(payload, dict):
             continue
 
+        if payload.get("type") == "error" or "error" in payload:
+            raise ProviderAdapterError(
+                503,
+                "MODEL_UNAVAILABLE",
+                "Upstream model stream reported an error.",
+            )
+
         if normalized_type == "responses":
             event_type = payload.get("type")
             if event_type in {None, "response.output_text.delta"}:
@@ -329,6 +336,7 @@ class _HttpProviderAdapter:
     ) -> AnswerResult:
         selected = self._selected_chunks(chunks, max_chunks)
         prompt = _prompt(question, selected)
+        pending_error = None
         try:
             with httpx.Client(
                 timeout=60.0,
@@ -346,7 +354,9 @@ class _HttpProviderAdapter:
             normalized = self._provider_error(error)
             if normalized is error:
                 raise
-            raise normalized from error
+            pending_error = normalized
+        if pending_error is not None:
+            raise pending_error
         return answer_result_from_text(
             text,
             question=question,
@@ -366,6 +376,7 @@ class _HttpProviderAdapter:
     ):
         headers = self._headers(stream=True)
         payload = self._payload(prompt=prompt, stream=True)
+        pending_error = None
         try:
             if self._transport is not None and not self._has_async_transport():
                 with httpx.Client(
@@ -425,7 +436,9 @@ class _HttpProviderAdapter:
             normalized = self._provider_error(error)
             if normalized is error:
                 raise
-            raise normalized from error
+            pending_error = normalized
+        if pending_error is not None:
+            raise pending_error
 
     def generate_stream(
         self,

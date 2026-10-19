@@ -186,6 +186,19 @@ def test_answer_result_without_markers_and_without_chunks_still_degrades():
     assert result.degraded is True
 
 
+def test_answer_result_degrades_for_invalid_citations_alongside_valid_ones():
+    result = answer_result_from_text(
+        "Valid [c1], invalid [c99].",
+        question="What?",
+        chunks=(_chunk("chunk-1", "First"),),
+        model_id="model-1",
+        route="openai_chat_completions",
+    )
+
+    assert result.citation_chunk_ids == ("chunk-1",)
+    assert result.degraded is True
+
+
 def test_max_chunks_limits_prompt_context_and_default_citations():
     def handler(request):
         body = json.loads(request.content)
@@ -239,6 +252,33 @@ def test_stream_parsers_emit_normalized_text(adapter_type, chunk_text):
     assert parse_provider_stream_chunk(adapter_type, chunk_text) == "hello"
 
 
+@pytest.mark.parametrize(
+    ("adapter_type", "chunk_text"),
+    [
+        (
+            "responses",
+            'event: error\ndata: {"type":"error","error":'
+            '{"type":"server_error","message":"upstream failed"}}\n\n',
+        ),
+        (
+            "chat",
+            'data: {"error":{"type":"server_error","message":"upstream failed"}}\n\n',
+        ),
+        (
+            "anthropic",
+            'event: error\ndata: {"type":"error","error":'
+            '{"type":"overloaded_error","message":"upstream failed"}}\n\n',
+        ),
+    ],
+)
+def test_stream_parsers_raise_on_protocol_error_events(adapter_type, chunk_text):
+    with pytest.raises(ProviderAdapterError) as caught:
+        parse_provider_stream_chunk(adapter_type, chunk_text)
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "MODEL_UNAVAILABLE"
+
+
 def test_chat_stream_adapter_yields_text_and_sets_terminal_result():
     def handler(request):
         body = json.loads(request.content)
@@ -286,6 +326,61 @@ def test_answer_stream_helper_normalizes_sync_pieces():
     assert stream.result is not None
     assert stream.result.text == "part one part two [c1]"
     assert stream.result.citation_chunk_ids == ("chunk-1",)
+
+
+def test_answer_stream_leaves_result_unset_when_piece_source_raises():
+    def pieces():
+        yield "partial [c1]"
+        raise RuntimeError("stream interrupted")
+
+    stream = answer_stream_from_pieces(
+        pieces(),
+        question="What?",
+        chunks=(_chunk(),),
+        model_id="model-1",
+        route="anthropic_messages",
+    )
+
+    async def consume():
+        iterator = stream.__aiter__()
+        assert await iterator.__anext__() == "partial [c1]"
+        with pytest.raises(RuntimeError, match="stream interrupted"):
+            await iterator.__anext__()
+
+    asyncio.run(consume())
+
+    assert stream.result is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_request_errors_do_not_retain_request_metadata(streaming):
+    def handler(request):
+        raise httpx.ConnectError("connection failed", request=request)
+
+    adapter = OpenAIResponsesAdapter(
+        provider_id="provider-1",
+        base_url="https://gateway.example",
+        api_key="sk-super-secret",
+        model_id="gpt-test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderAdapterError) as caught:
+        if streaming:
+            asyncio.run(
+                _collect(
+                    adapter.generate_stream(
+                        question="What?",
+                        chunks=[_chunk()],
+                        max_chunks=1,
+                    )
+                )
+            )
+        else:
+            adapter.generate(question="What?", chunks=[_chunk()], max_chunks=1)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_build_provider_adapter_selects_supported_formats():

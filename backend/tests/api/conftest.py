@@ -12,7 +12,10 @@ def api_app():
     create_schema(engine)
     factory = build_session_factory(engine)
     return create_app(
-        settings=Settings(jwt_secret="test-secret-at-least-32-bytes-long"),
+        settings=Settings(
+            environment="test",
+            jwt_secret="test-secret-at-least-32-bytes-long",
+        ),
         session_factory=factory,
     )
 

@@ -8,7 +8,7 @@ _DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./data/techvault.db"
 _DEFAULT_JWT_SECRET = "dev-only-change-me"
 _DEFAULT_JWT_ALGORITHM = "HS256"
 _DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 900
-_DEFAULT_ENVIRONMENT = "development"
+_DEFAULT_ENVIRONMENT = "production"
 _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 _MIN_JWT_SECRET_BYTES = 32
 
@@ -22,6 +22,8 @@ class Settings:
     environment: str = _DEFAULT_ENVIRONMENT
 
     def __post_init__(self) -> None:
+        if self.access_token_ttl_seconds <= 0:
+            raise ValueError("access token TTL must be positive")
         if self.jwt_algorithm not in _ALLOWED_JWT_ALGORITHMS:
             raise ValueError("JWT algorithm must be HS256, HS384, or HS512")
         if not self.jwt_secret:

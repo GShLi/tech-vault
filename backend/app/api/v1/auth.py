@@ -20,6 +20,8 @@ from backend.app.db.models import Team, TeamMember, User
 
 router = APIRouter(tags=["auth"])
 
+_DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-login-timing")
+
 
 @router.post("/auth/register", status_code=201)
 def register(
@@ -54,9 +56,10 @@ def login(
 ):
     email = body.email
     user = session.scalar(select(User).where(User.email == email))
-    if user is None or not user.is_active or not verify_password(
-        body.password, user.password_hash
-    ):
+    if user is None or not user.is_active:
+        verify_password(body.password, _DUMMY_PASSWORD_HASH)
+        raise ApiError(401, "UNAUTHENTICATED", "Invalid email or password.")
+    if not verify_password(body.password, user.password_hash):
         raise ApiError(401, "UNAUTHENTICATED", "Invalid email or password.")
 
     token = create_access_token(user.id, request.app.state.settings)

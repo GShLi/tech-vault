@@ -37,6 +37,7 @@ def test_import_does_not_create_default_database(tmp_path):
 def test_internal_engine_is_stored_and_disposed_on_shutdown(tmp_path, monkeypatch):
     settings = Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'dispose.db'}",
+        environment="development",
         jwt_secret="test-secret",
     )
     app = create_app(settings=settings)

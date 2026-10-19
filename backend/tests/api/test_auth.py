@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
+import backend.app.api.v1.auth as auth_module
 from backend.app.core.ids import new_ulid
 from backend.app.core.tokens import create_access_token
 from backend.app.db.models import User
@@ -55,6 +56,40 @@ def test_duplicate_email_and_wrong_password_use_error_envelopes(api_client):
     )
     assert wrong.status_code == 401
     assert wrong.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+def test_login_uses_dummy_password_verification_for_unknown_and_inactive_users(
+    api_app, api_client, monkeypatch
+):
+    verification_calls = []
+
+    def record_verification(password, password_hash):
+        verification_calls.append((password, password_hash))
+        return False
+
+    monkeypatch.setattr(auth_module, "verify_password", record_verification)
+
+    unknown = _login(api_client, email="missing@example.com")
+
+    assert unknown.status_code == 401
+    assert verification_calls == [
+        ("password-123", auth_module._DUMMY_PASSWORD_HASH)
+    ]
+
+    assert _register(api_client).status_code == 201
+    with api_app.state.session_factory() as session:
+        user = session.scalar(select(User).where(User.email == "member@example.com"))
+        assert user is not None
+        user.is_active = False
+        session.commit()
+    verification_calls.clear()
+
+    inactive = _login(api_client)
+
+    assert inactive.status_code == 401
+    assert verification_calls == [
+        ("password-123", auth_module._DUMMY_PASSWORD_HASH)
+    ]
 
 
 def test_me_requires_a_valid_token(api_client):

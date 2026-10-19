@@ -29,7 +29,7 @@ class Settings:
         if not self.jwt_secret:
             raise ValueError("JWT secret must not be empty")
         if self.environment != "development" and (
-            self.jwt_secret == _DEFAULT_JWT_SECRET
+            self.jwt_secret.strip() == _DEFAULT_JWT_SECRET
             or len(self.jwt_secret.encode("utf-8")) < _MIN_JWT_SECRET_BYTES
         ):
             raise ValueError(

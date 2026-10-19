@@ -66,6 +66,14 @@ def test_public_default_secret_is_rejected_outside_development():
         Settings(environment="production")
 
 
+def test_padded_public_default_secret_is_rejected_outside_development():
+    with pytest.raises(ValueError, match="JWT secret"):
+        Settings(
+            environment="production",
+            jwt_secret="dev-only-change-me".ljust(32),
+        )
+
+
 def test_settings_from_env_reads_runtime_values(monkeypatch):
     monkeypatch.setenv(
         "TECHVAULT_DATABASE_URL", "sqlite+pysqlite:///./test-techvault.db"

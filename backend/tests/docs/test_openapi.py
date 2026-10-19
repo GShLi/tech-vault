@@ -100,3 +100,45 @@ def test_trace_contract_exposes_all_retrieval_stages():
         "degraded",
     }.issubset(trace)
 
+
+def test_list_envelopes_model_array_data():
+    schemas = _spec()["components"]["schemas"]
+
+    assert schemas["ListEnvelope"]["properties"]["data"]["type"] == "array"
+    assert (
+        schemas["TeamListEnvelope"]["allOf"][1]["properties"]["data"]["items"]["$ref"]
+        == "#/components/schemas/Team"
+    )
+    assert (
+        schemas["KnowledgeBaseListEnvelope"]["allOf"][1]["properties"]["data"][
+            "items"
+        ]["$ref"]
+        == "#/components/schemas/KnowledgeBase"
+    )
+
+
+def test_team_and_kb_lists_use_list_envelopes():
+    paths = _spec()["paths"]
+
+    assert (
+        paths["/teams"]["get"]["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]["$ref"]
+        == "#/components/schemas/TeamListEnvelope"
+    )
+    assert (
+        paths["/kbs"]["get"]["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]["$ref"]
+        == "#/components/schemas/KnowledgeBaseListEnvelope"
+    )
+
+
+def test_team_and_kb_schemas_expose_timestamps():
+    schemas = _spec()["components"]["schemas"]
+
+    assert {"created_at", "updated_at"}.issubset(schemas["Team"]["properties"])
+    assert {"created_at", "updated_at"}.issubset(
+        schemas["KnowledgeBase"]["properties"]
+    )
+

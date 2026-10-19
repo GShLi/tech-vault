@@ -180,7 +180,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/TeamListEnvelope'
   /teams/create:
     post:
       tags:
@@ -400,7 +400,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/KnowledgeBaseListEnvelope'
   /kbs/create:
     post:
       tags:
@@ -2623,6 +2623,35 @@ components:
           additionalProperties: true
         meta:
           $ref: '#/components/schemas/PageMeta'
+    ListEnvelope:
+      type: object
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+    TeamListEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/ListEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Team'
+    KnowledgeBaseListEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/ListEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/KnowledgeBase'
     ErrorEnvelope:
       type: object
       required:
@@ -2688,6 +2717,12 @@ components:
           $ref: '#/components/schemas/Role'
         version:
           type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     KnowledgeBase:
       type: object
       properties:
@@ -2706,6 +2741,12 @@ components:
           type: integer
         version:
           type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Document:
       type: object
       properties:

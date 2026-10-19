@@ -124,3 +124,37 @@ class KnowledgeBaseUpdateRequest(BaseModel):
 class KnowledgeBaseArchiveRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     kb_id: str = Field(min_length=1, max_length=26)
+
+
+class DocumentView(BaseModel):
+    id: str
+    knowledge_base_id: str
+    file_name: str
+    source_type: str
+    product: Optional[str]
+    version_values: List[str]
+    visibility: str
+    data_classification: str
+    doc_status: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentDetailView(DocumentView):
+    owner_user_id: str
+    current_version_id: Optional[str]
+    source_uri: Optional[str]
+    version_family: Optional[str]
+
+
+class IngestionRunView(BaseModel):
+    id: str
+    document_version_id: str
+    status: str
+    current_stage: Optional[str]
+    stage_progress_pct: int
+    error_code: Optional[str]
+    retryable: bool
+    created_at: datetime
+    updated_at: datetime

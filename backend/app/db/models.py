@@ -28,6 +28,70 @@ class User(Base):
     )
 
 
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("knowledge_bases.id"), index=True
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("users.id")
+    )
+    file_name: Mapped[str] = mapped_column(String(500))
+    source_type: Mapped[str] = mapped_column(String(20), default="upload")
+    source_uri: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    product: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    version_family: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    version_values: Mapped[str] = mapped_column(Text, default="[]")
+    visibility: Mapped[str] = mapped_column(String(16), default="team_shared")
+    data_classification: Mapped[str] = mapped_column(String(16), default="internal")
+    doc_status: Mapped[str] = mapped_column(String(16), default="building")
+    current_version_id: Mapped[Optional[str]] = mapped_column(
+        String(26), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    document_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("documents.id"), index=True
+    )
+    content_fingerprint: Mapped[str] = mapped_column(String(128))
+    file_size_bytes: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="building")
+    index_generation: Mapped[Optional[str]] = mapped_column(
+        String(26), nullable=True
+    )
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class IngestionRun(Base):
+    __tablename__ = "ingestion_runs"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    document_version_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("document_versions.id"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    current_stage: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    stage_progress_pct: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
 class Team(Base):
     __tablename__ = "teams"
 

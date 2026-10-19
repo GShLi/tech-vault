@@ -17,6 +17,7 @@ api = [
   "uvicorn[standard]>=0.30",
   "PyJWT>=2.9",
   "httpx>=0.27",
+  "python-multipart>=0.0.20",
 ]
 tasks = [
   "celery[redis]>=5.4",

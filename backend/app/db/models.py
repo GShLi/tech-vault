@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.ids import new_ulid
-from backend.app.db.base import Base
+from backend.app.db.base import Base, UTCDateTime
 
 
 def utc_now() -> datetime:
@@ -22,9 +22,9 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
 
@@ -35,9 +35,9 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(120))
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
 
@@ -52,7 +52,7 @@ class TeamMember(Base):
     )
     role: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(16), default="active")
-    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    joined_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
 class KnowledgeBase(Base):
@@ -68,8 +68,8 @@ class KnowledgeBase(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 

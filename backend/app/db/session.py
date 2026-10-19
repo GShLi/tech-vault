@@ -89,7 +89,40 @@ def _bridge_users_admin_flags(engine: Engine) -> None:
             connection.execute(text(statement))
 
 
+def _bridge_chunks_scope(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("chunks"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("chunks")}
+    definitions = {
+        "team_id": "VARCHAR(26) NOT NULL DEFAULT ''",
+        "knowledge_base_id": "VARCHAR(26) NOT NULL DEFAULT ''",
+        "owner_user_id": "VARCHAR(26) NOT NULL DEFAULT ''",
+        "visibility": "VARCHAR(16) NOT NULL DEFAULT 'team_shared'",
+        "data_classification": "VARCHAR(16) NOT NULL DEFAULT 'internal'",
+        "doc_status": "VARCHAR(16) NOT NULL DEFAULT 'active'",
+        "chunk_status": "VARCHAR(16) NOT NULL DEFAULT 'enabled'",
+        "version_values": "TEXT NOT NULL DEFAULT '[]'",
+        "logical_chunk_key": "TEXT NOT NULL DEFAULT ''",
+        "content_hash": "VARCHAR(128) NOT NULL DEFAULT ''",
+        "source_path": "VARCHAR(500) NOT NULL DEFAULT ''",
+        "index_generation": "VARCHAR(26) NOT NULL DEFAULT ''",
+    }
+    statements = [
+        "ALTER TABLE chunks ADD COLUMN {0} {1}".format(name, definition)
+        for name, definition in definitions.items()
+        if name not in columns
+    ]
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _bridge_teams_description(engine)
     _bridge_users_admin_flags(engine)
+    _bridge_chunks_scope(engine)

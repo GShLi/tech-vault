@@ -56,7 +56,6 @@ onMounted(loadTeams)
   <div>
     <div class="page-header">
       <div>
-        <h2>用户管理</h2>
         <p>创建平台用户并分配团队角色。</p>
       </div>
     </div>

@@ -9,7 +9,7 @@ from backend.app.api.deps import get_current_user, get_session
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
-from backend.app.api.storage import store_file
+from backend.app.api.storage import remove_file, store_file
 from backend.app.api.v1.schemas import DocumentDetailView, DocumentView, IngestionRunView
 from backend.app.api.v1.teams import _if_match_version, _leader_or_error, _membership_or_error
 from backend.app.core.ids import new_ulid
@@ -46,6 +46,23 @@ def _document_view(document: Document) -> dict:
     ).model_dump()
 
 
+def _kb_or_error(session: Session, team_id: str, kb_id: str) -> KnowledgeBase:
+    knowledge_base = session.get(KnowledgeBase, kb_id)
+    if knowledge_base is None or knowledge_base.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Knowledge base was not found.")
+    return knowledge_base
+
+
+def _document_or_error(session: Session, team_id: str, document_id: str) -> Document:
+    document = session.get(Document, document_id)
+    if document is None:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    knowledge_base = session.get(KnowledgeBase, document.knowledge_base_id)
+    if knowledge_base is None or knowledge_base.team_id != team_id:
+        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    return document
+
+
 @router.post("/docs/upload", status_code=202)
 def upload_document(
     request: Request,
@@ -59,6 +76,7 @@ def upload_document(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
+    _kb_or_error(session, team_id, kb_id)
 
     if file.filename is None or not file.filename.strip():
         raise ApiError(400, "INVALID_ARGUMENT", "A file name is required.")
@@ -82,6 +100,9 @@ def upload_document(
     document_version_id = str(version_id)
     content_fingerprint = "sync-" + document_id
     stored_file = store_file(file.file, file.filename, document_id)
+    if stored_file.size_bytes > _MAX_FILE_BYTES:
+        remove_file(stored_file)
+        raise ApiError(413, "PAYLOAD_TOO_LARGE", "File exceeds the 50 MB limit.")
 
     document = Document(
         id=document_id,
@@ -120,7 +141,7 @@ def upload_document(
     if ext in {".md", ".txt"}:
         from backend.app.rag.ingestion.processor import process_markdown
 
-        process_markdown(document, ingestion_run, session)
+        process_markdown(document, ingestion_run, session, request.app.state.settings)
 
     return envelope(
         {
@@ -143,6 +164,7 @@ def list_documents(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
+    _kb_or_error(session, team_id, kb_id)
     page_limit = max(1, min(limit, 100))
 
     query = select(Document).where(
@@ -182,9 +204,7 @@ def get_document(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    document = session.get(Document, document_id)
-    if document is None:
-        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    document = _document_or_error(session, team_id, document_id)
     return envelope(
         DocumentDetailView(
             id=document.id,
@@ -276,7 +296,13 @@ def get_ingestion_run(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    run = session.get(IngestionRun, run_id)
+    run = session.scalar(
+        select(IngestionRun)
+        .join(DocumentVersion, IngestionRun.document_version_id == DocumentVersion.id)
+        .join(Document, DocumentVersion.document_id == Document.id)
+        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+        .where(IngestionRun.id == run_id, KnowledgeBase.team_id == team_id)
+    )
     if run is None:
         raise ApiError(404, "NOT_FOUND", "Ingestion run was not found.")
     return envelope(
@@ -305,9 +331,7 @@ def update_document(
     team_id = body.get("team_id", "")
     document_id = body.get("document_id", "")
     _leader_or_error(session, team_id, user.id)
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    doc = _document_or_error(session, team_id, document_id)
     expected_version = _if_match_version(request)
     if doc.version != expected_version:
         raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
@@ -334,9 +358,7 @@ def delete_document(
     team_id = body.get("team_id", "")
     document_id = body.get("document_id", "")
     _leader_or_error(session, team_id, user.id)
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    doc = _document_or_error(session, team_id, document_id)
     if doc.doc_status == "deleting":
         raise ApiError(409, "RESOURCE_STATE_CONFLICT", "Document is already being deleted.")
     doc.doc_status = "deleting"
@@ -355,9 +377,7 @@ def restore_document(
     team_id = body.get("team_id", "")
     document_id = body.get("document_id", "")
     _leader_or_error(session, team_id, user.id)
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    doc = _document_or_error(session, team_id, document_id)
     doc.doc_status = "building"
     doc.version += 1
     session.commit()
@@ -373,6 +393,7 @@ def list_document_versions(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
     versions = session.scalars(
         select(DocumentVersion).where(DocumentVersion.document_id == document_id).order_by(DocumentVersion.created_at.desc()).limit(50)
     ).all()
@@ -391,6 +412,7 @@ def list_document_grants(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
     grants = session.scalars(select(DocumentGrant).where(DocumentGrant.document_id == document_id)).all()
     return envelope([{"id": g.id, "user_id": g.user_id, "granted_by": g.granted_by, "created_at": g.created_at.isoformat()} for g in grants], request.state.request_id)
 
@@ -406,9 +428,7 @@ def create_document_grant(
     document_id = body.get("document_id", "")
     grant_user_id = body.get("user_id", "")
     _leader_or_error(session, team_id, user.id)
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise ApiError(404, "NOT_FOUND", "Document was not found.")
+    _document_or_error(session, team_id, document_id)
     grant = DocumentGrant(document_id=document_id, user_id=grant_user_id, granted_by=user.id)
     session.add(grant)
     session.commit()
@@ -428,6 +448,7 @@ def revoke_document_grant(
     grant = session.get(DocumentGrant, grant_id)
     if grant is None:
         raise ApiError(404, "NOT_FOUND", "Grant was not found.")
+    _document_or_error(session, team_id, grant.document_id)
     session.delete(grant)
     session.commit()
     return envelope({"revoked": grant_id}, request.state.request_id)

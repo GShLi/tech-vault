@@ -9,8 +9,9 @@ from backend.app.api.deps import get_current_user, get_session
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
+from backend.app.api.v1.documents import _document_or_error
 from backend.app.api.v1.teams import _leader_or_error, _membership_or_error
-from backend.app.db.models import ChunkRecord, User
+from backend.app.db.models import ChunkRecord, Document, KnowledgeBase, User
 
 
 router = APIRouter(tags=["chunks"])
@@ -30,6 +31,18 @@ def _chunk_view(chunk: ChunkRecord) -> dict:
     }
 
 
+def _assert_chunks_in_team(session: Session, team_id: str, chunk_ids) -> None:
+    ids = set(chunk_ids)
+    rows = session.scalars(
+        select(ChunkRecord)
+        .join(Document, ChunkRecord.document_id == Document.id)
+        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+        .where(ChunkRecord.id.in_(tuple(ids)), KnowledgeBase.team_id == team_id)
+    ).all()
+    if len(rows) != len(ids):
+        raise ApiError(403, "PERMISSION_DENIED", "Chunk is not accessible.")
+
+
 @router.get("/chunks")
 def list_chunks(
     request: Request,
@@ -41,6 +54,7 @@ def list_chunks(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
+    _document_or_error(session, team_id, document_id)
     page_limit = max(1, min(limit, 100))
     query = select(ChunkRecord).where(ChunkRecord.document_id == document_id)
     if cursor is not None:
@@ -68,6 +82,7 @@ def get_chunk(
     chunk = session.get(ChunkRecord, chunk_id)
     if chunk is None:
         raise ApiError(404, "NOT_FOUND", "Chunk was not found.")
+    _document_or_error(session, team_id, chunk.document_id)
     return envelope(_chunk_view(chunk), request.state.request_id)
 
 
@@ -83,6 +98,7 @@ def disable_chunks(
     if not chunk_ids:
         raise ApiError(400, "INVALID_ARGUMENT", "chunk_ids is required.")
     _leader_or_error(session, team_id, user.id)
+    _assert_chunks_in_team(session, team_id, chunk_ids)
     session.execute(
         update(ChunkRecord)
         .where(ChunkRecord.id.in_(tuple(chunk_ids)))
@@ -104,6 +120,7 @@ def enable_chunks(
     if not chunk_ids:
         raise ApiError(400, "INVALID_ARGUMENT", "chunk_ids is required.")
     _leader_or_error(session, team_id, user.id)
+    _assert_chunks_in_team(session, team_id, chunk_ids)
     session.execute(
         update(ChunkRecord)
         .where(ChunkRecord.id.in_(tuple(chunk_ids)))

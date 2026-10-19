@@ -154,19 +154,34 @@ cd frontend
 npm run integration
 ```
 
-该脚本使用系统 Chrome 完成注册、创建团队、创建知识库、刷新页面和退出登录，并输出桌面端与移动端截图。
+该脚本使用系统 Chrome 以超级管理员登录，创建团队、知识库和普通成员账号，
+再验证普通成员登录后的权限，并输出桌面端与移动端截图。
 
 ### 启动 API
+
+开发时 Docker 只启动外部依赖，后端和前端直接用本地进程运行：
+
+```bash
+cd deploy
+docker compose up -d
+```
+
+该命令只启动 PostgreSQL、Redis、MinIO、Elasticsearch 和 Qdrant。
 
 ```bash
 python -m pip install -e ".[test,api]"
 export TECHVAULT_ENVIRONMENT=development
+export TECHVAULT_DATABASE_URL="postgresql+psycopg2://techvault:techvault@127.0.0.1:55433/techvault"
+export TECHVAULT_REDIS_URL="redis://127.0.0.1:56379/0"
+export TECHVAULT_ES_URL="http://127.0.0.1:59200"
+export TECHVAULT_QDRANT_URL="http://127.0.0.1:56333"
+export TECHVAULT_ENABLE_INDEXING=true
 uvicorn backend.app.main:create_app --factory --reload
 ```
 
 默认服务地址为 `http://127.0.0.1:8000`，API 前缀为 `/api/v1`，交互文档为
-`http://127.0.0.1:8000/docs`。当前 API 已覆盖健康检查、注册登录、
-团队、知识库、文档上传、Chunk 和对话基础接口；流式问答、Reranker、
+`http://127.0.0.1:8000/docs`。当前 API 已覆盖健康检查、管理员登录与开户、
+团队、知识库、文档上传、Chunk 和带引用的基础问答；Reranker、
 真实 LLM 生成和 Trace 仍待接入。
 
 生产环境必须显式设置至少 32 字节的唯一 `TECHVAULT_JWT_SECRET`，且不得使用

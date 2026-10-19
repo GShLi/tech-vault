@@ -17,11 +17,38 @@
 | `minio` | RELEASE.2024-10-13 | 9000/9001 | Object storage |
 | `embedding` | custom (profile `ml`) | 8001 | BGE-M3 + rerank |
 
-## Quick Start
+## Development: External Services Only
 
 ```bash
 cd deploy
-docker compose up -d --build
+docker compose up -d
+```
+
+This starts PostgreSQL, Redis, MinIO, Elasticsearch and Qdrant only. Run the
+application code directly for debugging:
+
+```bash
+cd ..
+TECHVAULT_ENVIRONMENT=development \
+TECHVAULT_DATABASE_URL=postgresql+psycopg2://techvault:techvault@127.0.0.1:55433/techvault \
+TECHVAULT_REDIS_URL=redis://127.0.0.1:56379/0 \
+TECHVAULT_ES_URL=http://127.0.0.1:59200 \
+TECHVAULT_QDRANT_URL=http://127.0.0.1:56333 \
+TECHVAULT_ENABLE_INDEXING=true \
+.venv/bin/uvicorn backend.app.main:create_app --factory --reload
+
+cd frontend
+export PATH="$HOME/.nvm/versions/node/v22.15.0/bin:$PATH"
+npm run dev
+```
+
+## Full Container Mode
+
+Use this only for deployment verification, not day-to-day development:
+
+```bash
+cd deploy
+docker compose --profile app up -d --build
 ```
 
 First start:
@@ -54,6 +81,12 @@ The `embedding` service downloads BGE-M3 (~2 GB) on first start:
 ```bash
 cd deploy
 docker compose --profile ml up -d --build
+```
+
+To run the embedding service together with the container app:
+
+```bash
+docker compose --profile app --profile ml up -d --build
 ```
 
 ## Useful Commands

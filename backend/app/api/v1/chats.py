@@ -2,17 +2,22 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import and_, or_, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user, get_session
 from backend.app.api.envelope import envelope, page_envelope
 from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor
-from backend.app.api.v1.schemas import ChatView, MessageView
+from backend.app.api.v1.schemas import AskRequest, ChatView, MessageView
 from backend.app.api.v1.teams import _membership_or_error, _if_match_version
 from backend.app.core.ids import new_ulid
 from backend.app.db.models import Chat, Message, User
+from backend.app.rag.domain.models import RetrievalFilters, SearchRequest
+from backend.app.rag.embedding.service import EmbeddingClient
+from backend.app.rag.retrieval.config import EngineMode
+from backend.app.rag.retrieval.factory import build_retriever
 
 
 router = APIRouter(tags=["chats"])
@@ -45,9 +50,11 @@ def _message_view(msg: Message) -> dict:
     ).model_dump()
 
 
-def _chat_owner_or_error(session: Session, chat_id: str, user_id: str) -> Chat:
+def _chat_owner_or_error(
+    session: Session, team_id: str, chat_id: str, user_id: str
+) -> Chat:
     chat = session.get(Chat, chat_id)
-    if chat is None or chat.user_id != user_id:
+    if chat is None or chat.team_id != team_id or chat.user_id != user_id:
         raise ApiError(403, "PERMISSION_DENIED", "Chat is not accessible.")
     return chat
 
@@ -106,7 +113,7 @@ def get_chat(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    chat = _chat_owner_or_error(session, chat_id, user.id)
+    chat = _chat_owner_or_error(session, team_id, chat_id, user.id)
     return envelope(_chat_view(chat), request.state.request_id)
 
 
@@ -120,8 +127,9 @@ def delete_chat(
     team_id = body.get("team_id", "")
     chat_id = body.get("chat_id", "")
     _membership_or_error(session, team_id, user.id)
-    _chat_owner_or_error(session, chat_id, user.id)
-    session.execute(select(Message).where(Message.chat_id == chat_id)).all()
+    chat = _chat_owner_or_error(session, team_id, chat_id, user.id)
+    session.execute(delete(Message).where(Message.chat_id == chat_id))
+    session.delete(chat)
     session.commit()
     return envelope({"deleted": chat_id}, request.state.request_id)
 
@@ -135,8 +143,153 @@ def list_messages(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    _chat_owner_or_error(session, chat_id, user.id)
+    _chat_owner_or_error(session, team_id, chat_id, user.id)
     messages = session.scalars(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.asc())
     ).all()
     return envelope([_message_view(m) for m in messages], request.state.request_id)
+
+
+def _compose_answer(chunks) -> str:
+    lines = ["根据知识库检索结果："]
+    for index, chunk in enumerate(chunks, start=1):
+        lines.append("[{0}] {1}".format(index, chunk.content.strip()))
+    return "\n\n".join(lines)
+
+
+@router.post("/chats/ask")
+async def ask(
+    body: AskRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _membership_or_error(session, body.team_id, user.id)
+    chat = _chat_owner_or_error(session, body.team_id, body.chat_id, user.id)
+    knowledge_base_ids = body.knowledge_base_ids or json.loads(
+        chat.knowledge_base_ids or "[]"
+    )
+    if not knowledge_base_ids:
+        raise ApiError(400, "INVALID_ARGUMENT", "Select at least one knowledge base.")
+
+    question = body.question.strip()
+    user_message = Message(
+        id=new_ulid(),
+        chat_id=chat.id,
+        role="user",
+        content=question,
+        status="completed",
+    )
+    session.add(user_message)
+
+    try:
+        embedder = EmbeddingClient(request.app.state.settings.embedding_url)
+        vector = embedder.embed([question])[0]
+        retriever = build_retriever(
+            request.app.state.settings,
+            "current",
+            EngineMode.DUAL_ENGINE,
+        )
+        result = await retriever.search(
+            SearchRequest(
+                query=question,
+                rewritten_query=None,
+                query_vector=vector,
+                filters=RetrievalFilters(
+                    team_id=body.team_id,
+                    knowledge_base_ids=tuple(knowledge_base_ids),
+                    viewer_user_id=user.id,
+                ),
+                final_top_n=5,
+            )
+        )
+    except Exception as error:
+        session.rollback()
+        raise ApiError(
+            503,
+            "RETRIEVAL_UNAVAILABLE",
+            "The retrieval stack is not available.",
+        ) from error
+
+    if result.chunks:
+        answer = _compose_answer(result.chunks)
+        citations = [
+            {
+                "citation_id": "c{0}".format(index),
+                "chunk_id": chunk.chunk_id,
+                "document_version_id": chunk.document_version_id,
+                "excerpt": chunk.content[:500],
+                "source_locator": chunk.source_locator,
+            }
+            for index, chunk in enumerate(result.chunks, start=1)
+        ]
+        status = "completed"
+        refusal_reason = None
+    else:
+        answer = "知识库中没有足够依据。"
+        citations = []
+        status = "refused"
+        refusal_reason = "INSUFFICIENT_EVIDENCE"
+
+    assistant_message = Message(
+        id=new_ulid(),
+        chat_id=chat.id,
+        role="assistant",
+        content=answer,
+        status=status,
+        trace_id=result.trace_id,
+        citation_ids=json.dumps(citations, ensure_ascii=False),
+        refusal_reason=refusal_reason,
+    )
+    session.add(assistant_message)
+    chat.version += 1
+    session.commit()
+
+    payload = {
+        "message_id": assistant_message.id,
+        "chat_id": chat.id,
+        "content": answer,
+        "citations": citations,
+        "trace_id": result.trace_id,
+        "status": status,
+        "refusal_reason": refusal_reason,
+        "degraded": result.degraded,
+    }
+    if not body.stream:
+        return envelope(payload, request.state.request_id)
+
+    events = [
+        (
+            "meta",
+            {
+                "trace_id": result.trace_id,
+                "message_id": assistant_message.id,
+                "engine_mode": "dual_engine",
+                "degraded": result.degraded,
+            },
+        ),
+        (
+            "answer",
+            {
+                "content": answer,
+                "citations": citations,
+                "status": status,
+            },
+        ),
+        (
+            "done",
+            {
+                "message_id": assistant_message.id,
+                "status": status,
+            },
+        ),
+    ]
+
+    async def stream_events():
+        for event, data in events:
+            yield "event: {0}\ndata: {1}\n\n".format(
+                event,
+                json.dumps(data, ensure_ascii=False),
+            )
+
+    return StreamingResponse(stream_events(), media_type="text/event-stream")

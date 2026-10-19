@@ -23,6 +23,7 @@ _DEFAULT_ADMIN_PASSWORD = "ChangeMe-123!"
 _DEFAULT_ADMIN_DISPLAY_NAME = "TechVault Admin"
 _DEFAULT_ALLOW_REGISTRATION = False
 _DEFAULT_ALLOW_LEGACY_TEAM_CREATION = False
+_DEFAULT_ENABLE_INDEXING = False
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -53,6 +54,7 @@ class Settings:
     admin_display_name: str = _DEFAULT_ADMIN_DISPLAY_NAME
     allow_registration: bool = _DEFAULT_ALLOW_REGISTRATION
     allow_legacy_team_creation: bool = _DEFAULT_ALLOW_LEGACY_TEAM_CREATION
+    enable_indexing: bool = _DEFAULT_ENABLE_INDEXING
 
     def __post_init__(self) -> None:
         if self.access_token_ttl_seconds <= 0:
@@ -106,5 +108,8 @@ class Settings:
             allow_legacy_team_creation=_env_bool(
                 "TECHVAULT_ALLOW_LEGACY_TEAM_CREATION",
                 _DEFAULT_ALLOW_LEGACY_TEAM_CREATION,
+            ),
+            enable_indexing=_env_bool(
+                "TECHVAULT_ENABLE_INDEXING", _DEFAULT_ENABLE_INDEXING
             ),
         )

@@ -42,7 +42,7 @@ npm run integration
 ```
 
 `npm run integration` uses the system Google Chrome through `playwright-core`
-and requires both servers to be running. It registers a fresh user, creates a
-team and knowledge base, reloads the page, and writes a screenshot to
+and requires both servers to be running. It logs in as the built-in administrator, creates a team and a
+member user, verifies the member can log in, and writes screenshots to
 `artifacts/frontend-integration.png`.
 

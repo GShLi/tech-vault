@@ -19,6 +19,7 @@ x-backend-env: &backend-env
   TECHVAULT_ADMIN_DISPLAY_NAME: TechVault Admin
   TECHVAULT_ALLOW_REGISTRATION: "false"
   TECHVAULT_ALLOW_LEGACY_TEAM_CREATION: "false"
+  TECHVAULT_ENABLE_INDEXING: "true"
 
 services:
   postgres:
@@ -129,6 +130,7 @@ services:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     container_name: techvault-backend
+    profiles: ["app"]
     environment:
       <<: *backend-env
     ports:
@@ -153,6 +155,7 @@ services:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     container_name: techvault-celery-worker
+    profiles: ["app"]
     command: ["celery", "-A", "backend.app.workers.tasks", "worker", "--loglevel=info", "--concurrency=2"]
     environment:
       <<: *backend-env
@@ -172,6 +175,7 @@ services:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     container_name: techvault-flower
+    profiles: ["app"]
     command: ["celery", "-A", "backend.app.workers.tasks", "flower", "--port=5555"]
     environment:
       <<: *backend-env
@@ -201,6 +205,7 @@ services:
       context: ..
       dockerfile: deploy/frontend.Dockerfile
     container_name: techvault-frontend
+    profiles: ["app"]
     ports:
       - "8080:80"
     depends_on:

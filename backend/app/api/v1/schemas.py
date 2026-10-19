@@ -208,6 +208,14 @@ class ChatView(BaseModel):
     updated_at: datetime
 
 
+class AskRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    chat_id: str = Field(min_length=1, max_length=26)
+    question: str = Field(min_length=1, max_length=4000)
+    knowledge_base_ids: List[str] = Field(default_factory=list)
+    stream: bool = True
+
+
 class MessageView(BaseModel):
     id: str
     chat_id: str

@@ -171,7 +171,7 @@ offset cursor 也是不透明字符串；其他接口使用基于排序时间与
 | 503 | `SERVICE_UNAVAILABLE` | 索引、模型或依赖服务不可用 |
 | 503 | `INDEX_NOT_READY` | 当前索引 generation 未激活 |
 | 503 | `INDEX_MAINTENANCE_UNAVAILABLE` | chunk 或文档索引维护失败 |
-| 503 | `MODEL_UNAVAILABLE` | 模型不可用且策略不允许回退 |
+| 503 | `MODEL_UNAVAILABLE` | 所选供应商不可用、凭据缺失或上游调用失败；不回退到抽取式生成 |
 | 503 | `RETRIEVAL_UNAVAILABLE` | 检索链路不可用 |
 | 503 | `OBJECT_STORAGE_UNAVAILABLE` | 原始文件无法写入或读取对象存储 |
 | 503 | `STORAGE_PRESIGN_UNAVAILABLE` | 对象存储下载签名不可用 |
@@ -435,6 +435,8 @@ Content-Type: application/json
   "team_id": "01JTEAM000000000000000001",
   "chat_id": "01JCHAT000000000000000001",
   "question": "Spring Boot 3.2 如何配置虚拟线程？",
+  "provider_id": "01JPROVIDER000000000000001",
+  "model_id": "gpt-5-mini",
   "filters": {
     "knowledge_base_ids": ["01JKB00000000000000000001"],
     "product": "spring-boot",
@@ -444,6 +446,13 @@ Content-Type: application/json
   "stream": true
 }
 ```
+
+`provider_id` 和 `model_id` 必填且非空。客户端从
+`GET /providers?team_id=` 返回的可用供应商及其 `model_ids` 中选择，并且只能选择
+当前有效模型策略允许的供应商和模型。缺少、空白或格式非法的选择返回
+`422 VALIDATION_FAILED`；所选供应商不存在、未启用或模型未配置时返回
+`400 INVALID_ARGUMENT`；已配置供应商凭据缺失、不可解密或上游不可用时返回
+`503 MODEL_UNAVAILABLE`。问答接口不得回退到本地抽取式生成。
 
 ### 9.2 SSE 事件
 
@@ -461,7 +470,7 @@ event: delta
 data: {"text":"Spring Boot 3.2 "}
 
 event: done
-data: {"message_id":"01JMSG000000000000000001","status":"completed","citation_ids":["c1"],"model_id":"local-extractive","route":"local_extractive_fallback","policy":"LOCAL_ONLY","policy_version":"7","classification":"internal","degraded":false,"input_tokens":1200,"output_tokens":320,"cost_micros":0,"latency_ms":2400}
+data: {"message_id":"01JMSG000000000000000001","status":"completed","citation_ids":["c1"],"model_id":"gpt-5-mini","route":"openai_responses","policy":"external_allowed","policy_version":"7","classification":"internal","degraded":false,"input_tokens":1200,"output_tokens":320,"cost_micros":12500,"latency_ms":2400}
 
 event: refused
 data: {"message_id":"01JMSG000000000000000001","status":"refused","reason_code":"INSUFFICIENT_EVIDENCE","message":"知识库中没有足够依据。"}

@@ -1848,6 +1848,7 @@ paths:
       tags:
       - chats
       summary: Ask a grounded question using JSON or SSE
+      description: Requires non-empty provider_id and model_id. An unavailable configured provider returns 503 MODEL_UNAVAILABLE; no extractive fallback is used.
       requestBody:
         required: true
         content:
@@ -4086,6 +4087,8 @@ components:
       - team_id
       - chat_id
       - question
+      - provider_id
+      - model_id
       properties:
         team_id:
           type: string
@@ -4097,6 +4100,16 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+        provider_id:
+          type: string
+          minLength: 1
+          maxLength: 26
+          description: Active provider selected from the team's allowed provider list.
+        model_id:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Model configured on the selected provider and allowed by policy.
         filters:
           $ref: '#/components/schemas/ChatAskFilters'
         knowledge_base_ids:

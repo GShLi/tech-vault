@@ -407,6 +407,44 @@ def test_chat_ask_declares_json_and_sse_responses():
     )
 
 
+def test_chat_ask_requires_provider_and_model():
+    schema = _spec()["components"]["schemas"]["ChatAskBody"]
+
+    assert "provider_id" in schema["required"]
+    assert "model_id" in schema["required"]
+    assert schema["properties"]["provider_id"]["minLength"] == 1
+    assert schema["properties"]["model_id"]["minLength"] == 1
+
+
+def test_contract_has_no_extractive_fallback():
+    contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
+
+    assert "local-extractive" not in contract
+    assert "local_extractive_fallback" not in contract
+    assert "extractive-local" not in contract
+
+
+def test_contract_documents_required_selection_and_unavailable_provider_error():
+    contract = API_CONTRACT_PATH.read_text(encoding="utf-8")
+    ask_contract = contract.split("### 9.1 问答请求", 1)[1].split("### 9.2", 1)[0]
+
+    assert "`provider_id`" in ask_contract
+    assert "`model_id`" in ask_contract
+    assert "必填且非空" in ask_contract
+    assert "422 VALIDATION_FAILED" in ask_contract
+    assert "503 MODEL_UNAVAILABLE" in ask_contract
+
+
+def test_page_map_disables_send_until_all_required_selections_exist():
+    page_map = (ROOT / "docs" / "product" / "page-map.md").read_text(encoding="utf-8")
+    chat_page = page_map.split("### 3.1 问答工作台", 1)[1].split("### 3.2", 1)[0]
+
+    assert "发送按钮" in chat_page
+    assert "禁用" in chat_page
+    assert "灰色" in chat_page
+    assert "供应商、模型、知识库和问题" in chat_page
+
+
 def test_streaming_events_have_specific_models():
     paths = _spec()["paths"]
 

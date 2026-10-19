@@ -43,7 +43,7 @@
 - Produces: `hash_password(password) -> str`, `verify_password(password, encoded) -> bool`.
 - Produces: `TokenError`, `create_access_token(user_id, settings, now=None) -> str`, `decode_access_token(token, settings) -> str`.
 
-- [ ] **Step 1: Add API dependencies**
+- [x] **Step 1: Add API dependencies**
 
 Change the `api` extra in `pyproject.toml` to:
 
@@ -64,7 +64,7 @@ Install with:
 python -m pip install -e ".[test,api]"
 ```
 
-- [ ] **Step 2: Write failing primitive tests**
+- [x] **Step 2: Write failing primitive tests**
 
 Create `backend/tests/core/test_ids.py`:
 
@@ -141,7 +141,7 @@ def test_wrong_secret_is_rejected():
         decode_access_token(token, verifier)
 ```
 
-- [ ] **Step 3: Run the tests and verify failure**
+- [x] **Step 3: Run the tests and verify failure**
 
 Run:
 
@@ -151,7 +151,7 @@ pytest backend/tests/core/test_ids.py backend/tests/core/test_passwords.py backe
 
 Expected: import failures because the modules do not exist.
 
-- [ ] **Step 4: Implement configuration**
+- [x] **Step 4: Implement configuration**
 
 Replace `backend/app/core/config.py`:
 
@@ -195,7 +195,7 @@ class Settings:
         )
 ```
 
-- [ ] **Step 5: Implement ULID generation**
+- [x] **Step 5: Implement ULID generation**
 
 Create `backend/app/core/ids.py`:
 
@@ -232,7 +232,7 @@ def is_valid_ulid(value: str) -> bool:
     )
 ```
 
-- [ ] **Step 6: Implement password hashing**
+- [x] **Step 6: Implement password hashing**
 
 Create `backend/app/core/passwords.py`:
 
@@ -292,7 +292,7 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 ```
 
-- [ ] **Step 7: Implement access tokens**
+- [x] **Step 7: Implement access tokens**
 
 Create `backend/app/core/tokens.py`:
 
@@ -341,7 +341,7 @@ def decode_access_token(token: str, settings: Settings) -> str:
     return subject
 ```
 
-- [ ] **Step 8: Run focused and full tests**
+- [x] **Step 8: Run focused and full tests**
 
 Run:
 
@@ -352,7 +352,7 @@ pytest -q
 
 Expected: focused tests pass; full suite passes.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add pyproject.toml backend/app/core backend/tests/core
@@ -373,7 +373,7 @@ git commit -m "feat: add API runtime primitives"
 - Produces: `build_engine(database_url) -> Engine`, `build_session_factory(engine)`, `create_schema(engine) -> None`.
 - Consumes: `new_ulid`, `utc_now`.
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 Create `backend/tests/db/test_models.py`:
 
@@ -470,7 +470,7 @@ def test_in_memory_session_factory_survives_across_sessions():
         assert session.execute(text("select 1")).scalar_one() == 1
 ```
 
-- [ ] **Step 2: Run the tests and verify failure**
+- [x] **Step 2: Run the tests and verify failure**
 
 Run:
 
@@ -480,7 +480,7 @@ pytest backend/tests/db -q
 
 Expected: import failures because the persistence modules do not exist.
 
-- [ ] **Step 3: Implement the declarative base and models**
+- [x] **Step 3: Implement the declarative base and models**
 
 Create `backend/app/db/base.py`:
 
@@ -571,7 +571,7 @@ class KnowledgeBase(Base):
     )
 ```
 
-- [ ] **Step 4: Implement engine and session helpers**
+- [x] **Step 4: Implement engine and session helpers**
 
 Create `backend/app/db/session.py`:
 
@@ -623,7 +623,7 @@ def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
 ```
 
-- [ ] **Step 5: Run focused and full tests**
+- [x] **Step 5: Run focused and full tests**
 
 Run:
 
@@ -634,7 +634,7 @@ pytest -q
 
 Expected: persistence tests pass and the full suite remains green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/db backend/tests/db
@@ -659,7 +659,7 @@ git commit -m "feat: add SQLAlchemy persistence foundation"
 - Produces: `ApiError`, `envelope(data, request_id)`, `page_envelope(items, request_id, next_cursor=None)`.
 - Produces: `GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/version`.
 
-- [ ] **Step 1: Write failing API foundation tests**
+- [x] **Step 1: Write failing API foundation tests**
 
 Create `backend/tests/api/conftest.py`:
 
@@ -721,7 +721,7 @@ def test_ready_and_version_are_public(api_client):
     assert version.json()["data"]["version"]
 ```
 
-- [ ] **Step 2: Run the tests and verify failure**
+- [x] **Step 2: Run the tests and verify failure**
 
 Run:
 
@@ -731,7 +731,7 @@ pytest backend/tests/api/test_health.py -q
 
 Expected: import failure because the API app does not exist.
 
-- [ ] **Step 3: Implement the response envelope and errors**
+- [x] **Step 3: Implement the response envelope and errors**
 
 Create `backend/app/api/envelope.py`:
 
@@ -836,7 +836,7 @@ async def validation_error_handler(
     )
 ```
 
-- [ ] **Step 4: Implement request IDs and health routes**
+- [x] **Step 4: Implement request IDs and health routes**
 
 Create `backend/app/api/middleware.py`:
 
@@ -939,7 +939,7 @@ def create_app(
 app = create_app()
 ```
 
-- [ ] **Step 5: Run focused and full tests**
+- [x] **Step 5: Run focused and full tests**
 
 Run:
 
@@ -950,7 +950,7 @@ pytest -q
 
 Expected: health tests pass and the full suite remains green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/api backend/app/main.py backend/tests/api
@@ -971,7 +971,7 @@ git commit -m "feat: add FastAPI runtime and health endpoints"
 - Produces: `get_session`, `get_current_user`.
 - Produces: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`.
 
-- [ ] **Step 1: Write failing auth tests**
+- [x] **Step 1: Write failing auth tests**
 
 Create `backend/tests/api/test_auth.py`:
 
@@ -1029,7 +1029,7 @@ def test_me_requires_a_valid_token(api_client):
     assert invalid.status_code == 401
 ```
 
-- [ ] **Step 2: Run the tests and verify failure**
+- [x] **Step 2: Run the tests and verify failure**
 
 Run:
 
@@ -1039,7 +1039,7 @@ pytest backend/tests/api/test_auth.py -q
 
 Expected: 404 responses because the auth routes do not exist.
 
-- [ ] **Step 3: Implement request schemas**
+- [x] **Step 3: Implement request schemas**
 
 Create `backend/app/api/v1/schemas.py`:
 
@@ -1083,7 +1083,7 @@ class MeView(BaseModel):
     memberships: List[MembershipView]
 ```
 
-- [ ] **Step 4: Implement session and bearer dependencies**
+- [x] **Step 4: Implement session and bearer dependencies**
 
 Create `backend/app/api/deps.py`:
 
@@ -1129,7 +1129,7 @@ def get_current_user(
     return user
 ```
 
-- [ ] **Step 5: Implement auth routes**
+- [x] **Step 5: Implement auth routes**
 
 Create `backend/app/api/v1/auth.py`:
 
@@ -1239,7 +1239,7 @@ def me(
     )
 ```
 
-- [ ] **Step 6: Wire the auth router**
+- [x] **Step 6: Wire the auth router**
 
 Update `backend/app/api/v1/router.py`:
 
@@ -1255,7 +1255,7 @@ api_router.include_router(health_router)
 api_router.include_router(auth_router)
 ```
 
-- [ ] **Step 7: Run focused and full tests**
+- [x] **Step 7: Run focused and full tests**
 
 Run:
 
@@ -1266,7 +1266,7 @@ pytest -q
 
 Expected: auth tests pass and the full suite remains green.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/app/api backend/tests/api/test_auth.py
@@ -1290,7 +1290,7 @@ git commit -m "feat: add authentication API"
 - Produces: team and KB list/create/detail/update/archive endpoints.
 - Produces: `_membership_or_error`, `_leader_or_error`, `_if_match_version`.
 
-- [ ] **Step 1: Write failing team and KB tests**
+- [x] **Step 1: Write failing team and KB tests**
 
 Create `backend/tests/api/test_teams.py`:
 
@@ -1491,7 +1491,7 @@ def test_kb_update_requires_leader_and_if_match(api_client):
     assert forbidden.status_code == 403
 ```
 
-- [ ] **Step 2: Run the tests and verify failure**
+- [x] **Step 2: Run the tests and verify failure**
 
 Run:
 
@@ -1501,7 +1501,7 @@ pytest backend/tests/api/test_teams.py backend/tests/api/test_kbs.py -q
 
 Expected: 404 responses because the routes do not exist.
 
-- [ ] **Step 3: Add request/response schemas**
+- [x] **Step 3: Add request/response schemas**
 
 Append to `backend/app/api/v1/schemas.py`:
 
@@ -1536,7 +1536,7 @@ class KnowledgeBaseArchiveRequest(BaseModel):
     kb_id: str = Field(min_length=1, max_length=26)
 ```
 
-- [ ] **Step 4: Implement team routes**
+- [x] **Step 4: Implement team routes**
 
 Create `backend/app/api/v1/teams.py`:
 
@@ -1674,7 +1674,7 @@ def update_team(
     return envelope(_team_view(team), request.state.request_id)
 ```
 
-- [ ] **Step 5: Implement knowledge-base routes**
+- [x] **Step 5: Implement knowledge-base routes**
 
 Create `backend/app/api/v1/kbs.py`:
 
@@ -1818,7 +1818,7 @@ def archive_kb(
     return envelope(_kb_view(kb), request.state.request_id)
 ```
 
-- [ ] **Step 6: Wire team and KB routers**
+- [x] **Step 6: Wire team and KB routers**
 
 Update `backend/app/api/v1/router.py`:
 
@@ -1838,7 +1838,7 @@ api_router.include_router(teams_router)
 api_router.include_router(kbs_router)
 ```
 
-- [ ] **Step 7: Run focused and full tests**
+- [x] **Step 7: Run focused and full tests**
 
 Run:
 
@@ -1849,7 +1849,7 @@ pytest -q
 
 Expected: team and KB tests pass and the full suite remains green.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/app/api backend/tests/api
@@ -1866,7 +1866,7 @@ git commit -m "feat: add team and knowledge base APIs"
 - Consumes: `create_app`.
 - Produces: an executable P0 API contract check and the local run command.
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 Create `backend/tests/api/test_contract_paths.py`:
 
@@ -1896,7 +1896,7 @@ def test_implemented_p0_paths_are_exposed_without_path_parameters(api_client):
     assert all("{" not in path for path in paths)
 ```
 
-- [ ] **Step 2: Run the test and verify failure**
+- [x] **Step 2: Run the test and verify failure**
 
 Run:
 
@@ -1906,7 +1906,7 @@ pytest backend/tests/api/test_contract_paths.py -q
 
 Expected: PASS when Tasks 1-5 are complete; this is the executable contract gate for the new surface.
 
-- [ ] **Step 3: Document the runnable API**
+- [x] **Step 3: Document the runnable API**
 
 Add to `README.md` after the local test commands:
 
@@ -1926,7 +1926,7 @@ uvicorn backend.app.main:create_app --factory --reload
 `data/techvault.db`，可通过 `TECHVAULT_DATABASE_URL` 覆盖。
 ```
 
-- [ ] **Step 4: Run full verification**
+- [x] **Step 4: Run full verification**
 
 Run:
 
@@ -1937,7 +1937,7 @@ python -m compileall -q backend
 
 Expected: full suite passes and compileall exits successfully.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/tests/api/test_contract_paths.py README.md

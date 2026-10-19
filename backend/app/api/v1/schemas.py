@@ -273,18 +273,20 @@ class AskRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     chat_id: str = Field(min_length=1, max_length=26)
     question: str = Field(min_length=1, max_length=4000)
+    provider_id: str = Field(min_length=1, max_length=26)
+    model_id: str = Field(min_length=1, max_length=120)
     filters: AskFilters = Field(default_factory=AskFilters)
     # Kept for older clients; nested filters are the canonical contract.
     knowledge_base_ids: List[str] = Field(default_factory=list)
     model_policy: str = "inherit"
     stream: bool = True
 
-    @field_validator("question")
+    @field_validator("question", "provider_id", "model_id")
     @classmethod
-    def validate_question(cls, value: str) -> str:
+    def validate_required_text(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
-            raise ValueError("question must not be empty")
+            raise ValueError("value must not be empty")
         return normalized
 
     @field_validator("knowledge_base_ids")

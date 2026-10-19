@@ -110,6 +110,8 @@ def test_archived_kb_is_not_available_to_document_source_or_chat_paths(
                 "team_id": team_id,
                 "chat_id": chat["id"],
                 "question": "Can archived content be recalled?",
+                "provider_id": "provider-scope-test",
+                "model_id": "model-scope-test",
                 "stream": False,
             },
             headers=admin,

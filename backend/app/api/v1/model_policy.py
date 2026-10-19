@@ -153,6 +153,7 @@ def _provider_view(provider: ModelProvider, *, include_endpoint: bool = True) ->
         "provider_type": provider.provider_type,
         "status": provider.status,
         "api_key_masked": provider.api_key_masked,
+        "has_api_key": bool(provider.api_key_encrypted.strip()),
         "api_key_updated_at": (
             provider.api_key_updated_at.isoformat()
             if provider.api_key_updated_at is not None

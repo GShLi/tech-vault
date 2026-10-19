@@ -24,6 +24,7 @@ from backend.app.api.v1.kb_access import (
 from backend.app.api.v1.teams import _membership_or_error, _if_match_version
 from backend.app.core.llm_policy import normalize_classification, resolve_model_policy
 from backend.app.core.ids import new_ulid
+from backend.app.core.secrets import decrypt_secret
 from backend.app.db.models import (
     Chat,
     ChunkRecord,
@@ -37,6 +38,7 @@ from backend.app.db.models import (
     TraceRecord,
     User,
 )
+from backend.app.modules.providers.resolution import ResolvedProvider, resolve_provider
 from backend.app.rag.domain.models import (
     DataClassification,
     ModelPolicyDecision,
@@ -50,6 +52,10 @@ from backend.app.rag.llm_gateway import (
     LlmGateway,
     ModelUnavailableError,
     PolicyDeniedError,
+)
+from backend.app.rag.llm_gateway.providers import (
+    ProviderAdapterError,
+    build_provider_adapter,
 )
 from backend.app.rag.retrieval.config import EngineMode
 from backend.app.rag.retrieval.factory import build_retriever
@@ -414,10 +420,40 @@ def _classification_for_chunks(
 def _build_gateway(
     request: Request,
     decision: ModelPolicyDecision,
+    resolved_provider: ResolvedProvider,
 ) -> LlmGateway:
+    try:
+        api_key = decrypt_secret(
+            resolved_provider.encrypted_api_key,
+            request.app.state.settings,
+        )
+    except Exception as error:
+        raise ApiError(
+            503,
+            "MODEL_UNAVAILABLE",
+            "Provider credentials are unavailable.",
+        ) from error
+    try:
+        answer_provider = build_provider_adapter(
+            provider_type=resolved_provider.provider_type,
+            provider_id=resolved_provider.provider_id,
+            base_url=resolved_provider.base_url,
+            api_key=api_key,
+            model_id=resolved_provider.model_id,
+        )
+    except ProviderAdapterError as error:
+        if error.code == "INVALID_ARGUMENT":
+            raise ApiError(400, "INVALID_ARGUMENT", str(error)) from error
+        raise ApiError(
+            503,
+            "MODEL_UNAVAILABLE",
+            "Provider is unavailable.",
+        ) from error
     audits: List[GatewayAudit] = []
     return LlmGateway(
         decision=decision,
+        external_answer_provider=answer_provider,
+        external_api_key=api_key,
         local_embed_provider=EmbeddingClient(request.app.state.settings.embedding_url),
         local_rerank_provider=RerankerClient(request.app.state.settings.rerank_url),
         audit_sink=audits.append,
@@ -499,7 +535,8 @@ def _stream_answer_response(
     question: str,
     history: Sequence[dict],
     knowledge_base_ids: Sequence[str],
-    model_policy: str,
+    decision: ModelPolicyDecision,
+    resolved_provider: ResolvedProvider,
     product: Optional[str],
     version_values: Sequence[str],
     generation_id: str,
@@ -642,7 +679,12 @@ def _stream_answer_response(
             trace.model = json.dumps(
                 {
                     "status": terminal_status,
-                    "model_id": answer.model_id if answer is not None else None,
+                    "provider_id": resolved_provider.provider_id,
+                    "model_id": (
+                        answer.model_id
+                        if answer is not None
+                        else resolved_provider.model_id
+                    ),
                     "route": answer.route if answer is not None else None,
                     "external": bool(
                         answer is not None
@@ -703,7 +745,7 @@ def _stream_answer_response(
         result = None
         rewrite = None
         answer = None
-        policy = None
+        policy = decision
         gateway = None
         classification = DataClassification.INTERNAL
         stage_latency: dict[str, float] = {}
@@ -729,16 +771,7 @@ def _stream_answer_response(
 
             await ensure_active()
             started = time.perf_counter()
-            with session_factory() as stream_session:
-                policy = _policy_decision(
-                    stream_session,
-                    team_id,
-                    knowledge_base_ids,
-                    user_id,
-                    model_policy,
-                    DataClassification.INTERNAL,
-                )
-            gateway = _build_gateway(request, policy)
+            gateway = _build_gateway(request, decision, resolved_provider)
             stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
 
             await ensure_active()
@@ -1036,6 +1069,7 @@ async def ask(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, body.team_id, user.id)
+    stage_latency: dict[str, float] = {}
     chat = _chat_owner_or_error(session, body.team_id, body.chat_id, user.id)
     knowledge_base_ids = body.selected_knowledge_base_ids() or json.loads(
         chat.knowledge_base_ids or "[]"
@@ -1049,6 +1083,24 @@ async def ask(
             knowledge_base_id,
             user.id,
         )
+    started = time.perf_counter()
+    policy = _policy_decision(
+        session,
+        body.team_id,
+        knowledge_base_ids,
+        user.id,
+        body.model_policy,
+        DataClassification.INTERNAL,
+    )
+    resolved_provider = resolve_provider(
+        session,
+        body.team_id,
+        body.provider_id,
+        body.model_id,
+        policy,
+        request.app.state.settings,
+    )
+    stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
 
     question = body.question
     history = _recent_chat_history(session, chat.id)
@@ -1080,8 +1132,6 @@ async def ask(
     session.add(user_message)
 
     failure_trace_id = str(uuid.uuid4())
-    stage_latency: dict[str, float] = {}
-
     def persist_failure_trace(
         error_code: str,
         *,
@@ -1185,7 +1235,8 @@ async def ask(
                 model=json.dumps(
                     {
                         "status": "failed",
-                        "model_id": None,
+                        "provider_id": resolved_provider.provider_id,
+                        "model_id": resolved_provider.model_id,
                         "route": None,
                         "external": False,
                         "policy": policy.reason_code if policy is not None else None,
@@ -1229,7 +1280,8 @@ async def ask(
             question=question,
             history=history,
             knowledge_base_ids=knowledge_base_ids,
-            model_policy=body.model_policy,
+            decision=policy,
+            resolved_provider=resolved_provider,
             product=body.filters.product,
             version_values=body.filters.version_values,
             generation_id=generation.id,
@@ -1238,24 +1290,13 @@ async def ask(
             message_id=assistant_message.id,
         )
 
-    policy = None
     gateway = None
     rewrite = None
     result = None
     classification = DataClassification.INTERNAL
 
     try:
-        started = time.perf_counter()
-        policy = _policy_decision(
-            session,
-            body.team_id,
-            knowledge_base_ids,
-            user.id,
-            body.model_policy,
-            DataClassification.INTERNAL,
-        )
-        gateway = _build_gateway(request, policy)
-        stage_latency["policy_ms"] = (time.perf_counter() - started) * 1000.0
+        gateway = _build_gateway(request, policy, resolved_provider)
 
         started = time.perf_counter()
         rewrite = await asyncio.to_thread(
@@ -1474,6 +1515,7 @@ async def ask(
             degraded=result.degraded,
             model=json.dumps(
                 {
+                    "provider_id": resolved_provider.provider_id,
                     "model_id": answer.model_id,
                     "route": answer.route,
                     "external": any(

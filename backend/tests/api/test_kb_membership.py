@@ -173,6 +173,8 @@ def test_knowledge_base_membership_scopes_lists_documents_and_retrieval(
             "team_id": team["id"],
             "chat_id": bob_chat["id"],
             "question": "Scoped content?",
+                "provider_id": "provider-scope-test",
+                "model_id": "model-scope-test",
             "stream": False,
         },
         headers=bob_headers,

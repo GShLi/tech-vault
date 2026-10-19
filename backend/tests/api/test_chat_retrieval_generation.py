@@ -15,6 +15,7 @@ from backend.app.db.models import (
     Document,
     IndexGenerationRecord,
     Message,
+    ModelProvider,
     TraceRecord,
     User,
 )
@@ -42,7 +43,51 @@ def _setup_chat(api_client, admin_headers):
         json={"team_id": team["id"], "knowledge_base_ids": [kb["id"]]},
         headers=admin_headers,
     ).json()["data"]
+    provider = api_client.post(
+        "/api/v1/providers/create",
+        json={
+            "team_id": team["id"],
+            "name": "Chat Test Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "http://provider.test/v1",
+            "api_key": "sk-chat-test-secret",
+            "model_ids": ["model-test"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    api_client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider["id"]],
+            "max_data_classification": "internal",
+        },
+        headers=admin_headers,
+    )
+    kb_policy = api_client.get(
+        "/api/v1/kbs/policy",
+        params={"team_id": team["id"], "kb_id": kb["id"]},
+        headers=admin_headers,
+    ).json()["data"]
+    api_client.post(
+        "/api/v1/kbs/policy/update",
+        json={
+            "team_id": team["id"],
+            "kb_id": kb["id"],
+            "mode": "external_allowed",
+        },
+        headers={**admin_headers, "If-Match": str(kb_policy["version"])},
+    )
+    chat["provider_id"] = provider["id"]
+    chat["model_id"] = "model-test"
     return team, chat
+
+
+def _selection(chat):
+    return {
+        "provider_id": chat["provider_id"],
+        "model_id": chat["model_id"],
+    }
 
 
 def _add_generation(api_app, team_id):
@@ -88,12 +133,18 @@ def _direct_stream_request(
     with api_app.state.session_factory() as session:
         user = session.scalar(select(User).where(User.email == "admin@techvault.local"))
         assert user is not None
+        provider = session.scalar(
+            select(ModelProvider).where(ModelProvider.team_id == team_id)
+        )
+        assert provider is not None
         response = asyncio.run(
             chats_module.ask(
                 AskRequest(
                     team_id=team_id,
                     chat_id=chat_id,
                     question=question,
+                    provider_id=provider.id,
+                    model_id="model-test",
                     stream=True,
                 ),
                 _stream_request(api_app, disconnected=disconnected),
@@ -156,10 +207,12 @@ class _FakeAnswerProvider:
 def _install_answer_provider(monkeypatch, provider=None):
     provider = provider or _FakeAnswerProvider()
 
-    def build_gateway(request, decision):
+    def build_gateway(request, decision, resolved_provider):
+        provider.provider_id = resolved_provider.provider_id
         return chats_module.LlmGateway(
             decision=decision,
             external_answer_provider=provider,
+            external_api_key="test-key",
             local_embed_provider=chats_module.EmbeddingClient(
                 request.app.state.settings.embedding_url
             ),
@@ -362,6 +415,7 @@ def test_chat_ask_uses_team_active_generation_and_backend_engine_mode(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "What is RAG?",
+            **_selection(chat),
             "knowledge_base_ids": [],
             "stream": False,
         },
@@ -382,6 +436,7 @@ def test_chat_ask_fails_closed_without_active_generation(api_client, admin_heade
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "What is RAG?",
+            **_selection(chat),
             "stream": False,
         },
         headers=admin_headers,
@@ -436,6 +491,7 @@ def test_chat_ask_streams_citations_delta_and_done(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "How do virtual threads work?",
+            **_selection(chat),
             "stream": True,
         },
         headers=admin_headers,
@@ -513,6 +569,7 @@ def test_chat_ask_hydrates_citation_locator_from_persisted_chunk(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "How do virtual threads work?",
+            **_selection(chat),
             "stream": True,
         },
         headers=admin_headers,
@@ -540,6 +597,7 @@ def test_chat_ask_streams_refused_as_terminal_event(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "Unknown topic",
+            **_selection(chat),
             "stream": True,
         },
         headers=admin_headers,
@@ -577,18 +635,19 @@ def test_chat_ask_accepts_nested_filters_and_retrieves_with_rewritten_query(
 
     monkeypatch.setattr(chats_module.EmbeddingClient, "embed", lambda self, texts: [[0.1]])
     monkeypatch.setattr(chats_module, "build_retriever", lambda *args: Retriever())
+    _install_answer_provider(monkeypatch)
     response = api_client.post(
         "/api/v1/chats/ask",
         json={
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "它和 2.x 有什么区别？",
+            **_selection(chat),
             "filters": {
                 "knowledge_base_ids": chat["knowledge_base_ids"],
                 "product": "spring-boot",
                 "version_values": ["3.2"],
             },
-            "model_policy": "local_only",
             "stream": True,
         },
         headers=admin_headers,
@@ -636,6 +695,7 @@ def test_message_history_returns_citation_objects_without_validation_error(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "What is the evidence?",
+            **_selection(chat),
             "stream": False,
         },
         headers=admin_headers,
@@ -681,6 +741,7 @@ def test_chat_answer_uses_top_eight_context_chunks_from_injected_provider(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "Collect evidence",
+            **_selection(chat),
             "stream": True,
         },
         headers=admin_headers,
@@ -998,6 +1059,7 @@ def test_non_stream_retrieval_failure_persists_failed_trace(
             "team_id": team["id"],
             "chat_id": chat["id"],
             "question": "Trigger a retrieval failure",
+            **_selection(chat),
             "stream": False,
         },
         headers=admin_headers,

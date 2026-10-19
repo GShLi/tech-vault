@@ -5,7 +5,7 @@ import re
 import time
 import uuid
 from collections import Counter
-from typing import Dict, Iterable, List, Sequence, Set
+from typing import Dict, Iterable, List, Sequence
 
 from backend.app.rag.domain.models import (
     Chunk,
@@ -17,6 +17,7 @@ from backend.app.rag.domain.models import (
     SearchResult,
     Visibility,
 )
+from backend.app.rag.fusion.rrf import reciprocal_rank_fusion
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_.:/#-]+|[\u4e00-\u9fff]+")
@@ -88,26 +89,43 @@ class InMemoryRetriever:
         query = request.rewritten_query or request.query
         visible = [chunk for chunk in self._chunks if self._is_visible(chunk, request.filters)]
 
-        ranked = []
-        for chunk in visible:
-            lexical = self._lexical_score(query, chunk.content)
-            dense = _cosine(request.query_vector, self._embedding.get(chunk.chunk_id, ()))
-            score = 0.65 * lexical + 0.35 * dense
-            if score > 0:
-                ranked.append((score, chunk))
-        ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
+        bm25_scored = [
+            (self._lexical_score(query, chunk.content), chunk.chunk_id)
+            for chunk in visible
+        ]
+        bm25_ids = [
+            chunk_id
+            for _, chunk_id in sorted(
+                (item for item in bm25_scored if item[0] > 0.0),
+                key=lambda item: (-item[0], item[1]),
+            )[: request.bm25_top_k]
+        ]
 
+        dense_scored = [
+            (_cosine(request.query_vector, self._embedding.get(chunk.chunk_id, ())), chunk.chunk_id)
+            for chunk in visible
+        ]
+        dense_ids = [
+            chunk_id
+            for _, chunk_id in sorted(
+                (item for item in dense_scored if item[0] > 0.0),
+                key=lambda item: (-item[0], item[1]),
+            )[: request.dense_top_k]
+        ]
+
+        by_id = {chunk.chunk_id: chunk for chunk in visible}
+        fused = reciprocal_rank_fusion(bm25_ids, dense_ids, k=request.rrf_k)
         result_chunks = [
             RetrievedChunk(
-                chunk_id=chunk.chunk_id,
-                document_version_id=chunk.document_version_id,
-                content=chunk.content,
-                fused_rank=index,
-                bm25_rank=index if self._lexical_score(query, chunk.content) > 0 else None,
-                dense_rank=index if self._embedding.get(chunk.chunk_id) else None,
-                source_locator=dict(chunk.source_locator),
+                chunk_id=candidate.chunk_id,
+                document_version_id=by_id[candidate.chunk_id].document_version_id,
+                content=by_id[candidate.chunk_id].content,
+                fused_rank=candidate.fused_rank,
+                bm25_rank=candidate.bm25_rank,
+                dense_rank=candidate.dense_rank,
+                source_locator=dict(by_id[candidate.chunk_id].source_locator),
             )
-            for index, (_, chunk) in enumerate(ranked[: request.final_top_n], start=1)
+            for candidate in fused[: request.final_top_n]
         ]
 
         elapsed_ms = (time.perf_counter() - started) * 1000.0

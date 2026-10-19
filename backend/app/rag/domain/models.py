@@ -84,7 +84,6 @@ class SearchRequest:
     rrf_k: int = 60
     rerank_input_size: int = 50
     final_top_n: int = 10
-    engine_mode: str = "dual_engine"
 
 
 @dataclass(frozen=True)

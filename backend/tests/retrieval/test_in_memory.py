@@ -74,3 +74,43 @@ def test_in_memory_retriever_honors_explicit_document_grant():
 
     assert [chunk.chunk_id for chunk in result.chunks] == ["private-1"]
 
+
+def test_in_memory_retriever_preserves_source_ranks_for_rrf():
+    lexical_first = _chunk(
+        "lexical-first",
+        "user-a",
+        Visibility.TEAM_SHARED,
+        "virtual threads",
+    )
+    dense_first = _chunk(
+        "dense-first",
+        "user-a",
+        Visibility.TEAM_SHARED,
+        "virtual other",
+    )
+    retriever = InMemoryRetriever(
+        chunks=[lexical_first, dense_first],
+        embedding={
+            "lexical-first": [0.0, 1.0],
+            "dense-first": [1.0, 0.0],
+        },
+    )
+    request = SearchRequest(
+        query="virtual threads",
+        rewritten_query=None,
+        query_vector=[1.0, 0.0],
+        filters=RetrievalFilters(
+            team_id="team-a",
+            knowledge_base_ids=("kb-a",),
+            viewer_user_id="user-a",
+        ),
+    )
+
+    result = asyncio.run(retriever.search(request))
+    dense_first_result = next(
+        chunk for chunk in result.chunks if chunk.chunk_id == "dense-first"
+    )
+
+    assert dense_first_result.bm25_rank == 2
+    assert dense_first_result.dense_rank == 1
+

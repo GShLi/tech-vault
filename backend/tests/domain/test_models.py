@@ -17,5 +17,5 @@ def test_search_request_defaults_are_stable():
     assert request.dense_top_k == 50
     assert request.rrf_k == 60
     assert request.final_top_n == 10
-    assert request.engine_mode == "dual_engine"
+    assert "engine_mode" not in SearchRequest.__dataclass_fields__
 

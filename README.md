@@ -65,6 +65,7 @@ tech-vault/
 │   │   ├── rag/                  # RAG 核心接口与适配器
 │   │   │   ├── domain/
 │   │   │   ├── chunking/
+│   │   │   ├── ingestion/
 │   │   │   ├── fusion/
 │   │   │   ├── indexing/
 │   │   │   ├── retrieval/
@@ -75,7 +76,7 @@ tech-vault/
 │   │   │   ├── answer/
 │   │   │   ├── llm_gateway/
 │   │   │   ├── evaluation/
-│   │   │   └── trace/
+│   │   │   └── observability/
 │   │   └── workers/              # Celery 任务
 │   └── tests/                    # 单元和集成测试
 ├── frontend/                     # Vue3 应用，页面骨架待接入
@@ -123,7 +124,7 @@ pytest
 当前基线测试：
 
 ```text
-64 passed
+74 passed
 ```
 
 后续安装 API 依赖时使用：

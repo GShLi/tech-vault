@@ -1,6 +1,7 @@
+from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -21,13 +22,27 @@ def create_app(
     session_factory=None,
 ) -> FastAPI:
     effective_settings = settings or Settings.from_env()
-    app = FastAPI(title="TechVault API", version="0.1.0")
-    app.state.settings = effective_settings
-
+    engine = None
     if session_factory is None:
         engine = build_engine(effective_settings.database_url)
-        create_schema(engine)
+        try:
+            create_schema(engine)
+        except Exception:
+            engine.dispose()
+            raise
         session_factory = build_session_factory(engine)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            if engine is not None:
+                engine.dispose()
+
+    app = FastAPI(title="TechVault API", version="0.1.0", lifespan=lifespan)
+    app.state.settings = effective_settings
+    app.state.engine = engine
     app.state.session_factory = session_factory
 
     app.add_middleware(RequestIdMiddleware)
@@ -36,6 +51,3 @@ def create_app(
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     return app
-
-
-app = create_app()

@@ -7,6 +7,17 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
+_HTTP_ERROR_CODES = {
+    401: "UNAUTHENTICATED",
+    403: "PERMISSION_DENIED",
+    404: "NOT_FOUND",
+    409: "RESOURCE_STATE_CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    429: "RATE_LIMITED",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+
 class ApiError(Exception):
     def __init__(
         self,
@@ -33,24 +44,38 @@ async def api_error_handler(request: Request, error: ApiError) -> JSONResponse:
             "error": {
                 "code": error.code,
                 "message": error.message,
-                "details": error.details,
+                "details": jsonable_encoder(error.details),
                 "request_id": _request_id(request),
             }
         },
     )
 
 
+def _http_error_code(status_code: int) -> str:
+    if status_code in _HTTP_ERROR_CODES:
+        return _HTTP_ERROR_CODES[status_code]
+    if status_code >= 500:
+        return "INTERNAL_ERROR"
+    return "INVALID_ARGUMENT"
+
+
+def _http_error_message(detail: Any) -> str:
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        return detail["message"]
+    return str(detail)
+
+
 async def http_error_handler(
     request: Request, error: StarletteHTTPException
 ) -> JSONResponse:
-    code = "NOT_FOUND" if error.status_code == 404 else "INVALID_ARGUMENT"
+    details = jsonable_encoder(error.detail) if isinstance(error.detail, dict) else {}
     return JSONResponse(
         status_code=error.status_code,
         content={
             "error": {
-                "code": code,
-                "message": str(error.detail),
-                "details": {},
+                "code": _http_error_code(error.status_code),
+                "message": _http_error_message(error.detail),
+                "details": details,
                 "request_id": _request_id(request),
             }
         },

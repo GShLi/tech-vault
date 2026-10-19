@@ -2,7 +2,7 @@
 
 面向研发团队的私有技术知识库与 RAG 问答系统。它支持文件与 GitHub 文档接入、团队共享与私有资料隔离、结构感知分块、混合检索、重排、带引用回答、拒答和检索链路追踪。
 
-项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、注册登录、团队和知识库 API；文档接入、对话、检索适配器、Celery 和前端界面仍待后续迭代接入。
+项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、注册登录、团队和知识库 API，以及对应的 Vue3 登录、团队选择和知识库管理页面；文档接入、对话、检索适配器、Celery 和其余前端页面仍待后续迭代接入。
 
 完整设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)。
 
@@ -94,6 +94,7 @@ tech-vault/
 - FastAPI 应用工厂，以及健康检查、就绪检查和版本接口
 - 注册、登录和当前用户认证 API
 - 团队与知识库 API
+- Vue3 登录/注册、团队选择、知识库管理页面与真实 API 联调
 - SQLAlchemy 核心持久化
 - 共享 RAG 领域对象和 `Retriever` / `IndexWriter` 端口
 - 默认拒绝的文档授权和检索过滤
@@ -114,7 +115,7 @@ tech-vault/
 - PDF、DOCX、GitHub 解析链路
 - MinIO、Redis 和 Celery Worker
 - BGE-M3、bge-reranker-v2-m3 和真实 LLM
-- Vue3 管理界面和问答界面
+- 文档上传、Chunk 管理、检索调试、评测和完整问答工作台页面
 - 生产级鉴权、审计、监控和备份
 
 ## 本地开发
@@ -134,6 +135,24 @@ pytest -q
 ```text
 193 passed
 ```
+
+前端测试与构建：
+
+```bash
+cd frontend
+export PATH="$HOME/.nvm/versions/node/v22.15.0/bin:$PATH"
+npm test
+npm run build
+```
+
+前后端真实联调：
+
+```bash
+cd frontend
+npm run integration
+```
+
+该脚本使用系统 Chrome 完成注册、创建团队、创建知识库、刷新页面和退出登录，并输出桌面端与移动端截图。
 
 ### 启动 API
 

@@ -8,6 +8,7 @@ from typing import Iterable, List
 import httpx
 
 from backend.app.rag.domain.models import Chunk, ValidationResult
+from backend.app.rag.indexing.synonyms import SYNONYM_RULES, SYNONYM_VERSION
 
 
 def _index_name(generation_id: str) -> str:
@@ -43,8 +44,27 @@ class ElasticsearchIndexWriter:
             pass
 
         body = {
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+            "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "analysis": {
+                    "filter": {
+                        "tech_synonyms": {
+                            "type": "synonym_graph",
+                            "synonyms": SYNONYM_RULES,
+                        }
+                    },
+                    "analyzer": {
+                        "tech_search": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": ["lowercase", "tech_synonyms"],
+                        }
+                    },
+                },
+            },
             "mappings": {
+                "_meta": {"synonym_version": SYNONYM_VERSION},
                 "properties": {
                     "chunk_id": {"type": "keyword"},
                     "document_id": {"type": "keyword"},
@@ -64,6 +84,7 @@ class ElasticsearchIndexWriter:
                     "content": {
                         "type": "text",
                         "analyzer": "standard",
+                        "search_analyzer": "tech_search",
                         "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                     },
                     "content_vector": {

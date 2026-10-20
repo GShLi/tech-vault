@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 
+import httpx
 import pytest
 
 from backend.app.rag.indexing.elasticsearch import (
@@ -28,6 +29,47 @@ def test_elasticsearch_index_name_lowercases_ulid_generation_ids():
         index_name_for_generation("01M5A1TMFHTAMADZY2B8M0RFCX")
         == "techvault-chunks-01m5a1tmfhtamadzy2b8m0rfcx"
     )
+
+
+def test_elasticsearch_index_uses_search_time_java_jdk_synonyms(monkeypatch):
+    writer = ElasticsearchIndexWriter("http://elasticsearch")
+    calls = []
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "HEAD":
+            request_value = httpx.Request("HEAD", "http://elasticsearch/" + path)
+            response = httpx.Response(404, request=request_value)
+            raise httpx.HTTPStatusError(
+                "not found",
+                request=request_value,
+                response=response,
+            )
+        return None
+
+    monkeypatch.setattr(writer, "_request", request)
+
+    asyncio.run(writer._ensure_index("generation-synonyms"))
+
+    body = calls[-1][2]["json"]
+    assert body["settings"]["analysis"]["filter"]["tech_synonyms"]["type"] == (
+        "synonym_graph"
+    )
+    assert "java 11, java11, jdk 11, jdk11" in body["settings"]["analysis"][
+        "filter"
+    ]["tech_synonyms"]["synonyms"]
+    assert (
+        body["settings"]["analysis"]["analyzer"]["tech_search"][
+            "tokenizer"
+        ]
+        == "standard"
+    )
+    assert body["mappings"]["properties"]["content"]["analyzer"] == "standard"
+    assert (
+        body["mappings"]["properties"]["content"]["search_analyzer"]
+        == "tech_search"
+    )
+    assert body["mappings"]["_meta"]["synonym_version"]
 
 
 def test_qdrant_point_id_is_a_deterministic_uuid():

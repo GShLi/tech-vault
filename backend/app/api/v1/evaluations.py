@@ -125,6 +125,37 @@ class EvaluationRunStartRequest(BaseModel):
         return value
 
 
+def _build_evaluation_answer_provider(settings, resolved_provider):
+    try:
+        api_key = decrypt_secret(
+            resolved_provider.encrypted_api_key,
+            settings,
+        )
+    except Exception:
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Provider credentials are unavailable.",
+        ) from None
+    if not api_key.strip():
+        raise ApiError(
+            409,
+            "RESOURCE_STATE_CONFLICT",
+            "Provider credentials are unavailable.",
+        )
+    try:
+        answer_provider = build_provider_adapter(
+            provider_type=resolved_provider.provider_type,
+            provider_id=resolved_provider.provider_id,
+            base_url=resolved_provider.base_url,
+            api_key=api_key,
+            model_id=resolved_provider.model_id,
+        )
+    except ProviderAdapterError as error:
+        raise ApiError(error.status_code, error.code, str(error)) from error
+    return answer_provider, api_key
+
+
 @router.get("/evals/datasets")
 def list_datasets(
     request: Request,
@@ -239,6 +270,10 @@ def start_run(
         body.provider_id,
         body.model_id,
         policy,
+    )
+    _build_evaluation_answer_provider(
+        request.app.state.settings,
+        resolved_provider,
     )
 
     baseline_metrics = {}
@@ -526,33 +561,10 @@ def _persist_evaluation_failure(
 
 
 def _build_evaluation_gateway(settings, policy, resolved_provider):
-    try:
-        api_key = decrypt_secret(
-            resolved_provider.encrypted_api_key,
-            settings,
-        )
-    except Exception:
-        raise ApiError(
-            409,
-            "RESOURCE_STATE_CONFLICT",
-            "Provider credentials are unavailable.",
-        ) from None
-    if not api_key.strip():
-        raise ApiError(
-            409,
-            "RESOURCE_STATE_CONFLICT",
-            "Provider credentials are unavailable.",
-        )
-    try:
-        answer_provider = build_provider_adapter(
-            provider_type=resolved_provider.provider_type,
-            provider_id=resolved_provider.provider_id,
-            base_url=resolved_provider.base_url,
-            api_key=api_key,
-            model_id=resolved_provider.model_id,
-        )
-    except ProviderAdapterError as error:
-        raise ApiError(error.status_code, error.code, str(error)) from error
+    answer_provider, api_key = _build_evaluation_answer_provider(
+        settings,
+        resolved_provider,
+    )
     audits: list[GatewayAudit] = []
     return (
         LlmGateway(

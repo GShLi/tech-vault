@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from backend.app.api.v1 import evaluations as evaluations_module
 from backend.app.core.config import Settings
+from backend.app.core.secrets import encrypt_secret
 from backend.app.db.models import (
     EvaluationCase,
     EvaluationDataset,
@@ -208,6 +209,39 @@ def _celery_app():
         session_factory=factory,
     )
     return app, factory
+
+
+def _seed_deferred_evaluation(client, factory, headers):
+    team = client.post(
+        "/api/v1/teams/create",
+        json={"name": "Deferred Evaluation Team"},
+        headers=headers,
+    ).json()["data"]
+    dataset = client.post(
+        "/api/v1/evals/datasets/create",
+        json={"team_id": team["id"], "name": "Deferred Golden Set"},
+        headers=headers,
+    ).json()["data"]
+    provider = _create_evaluation_provider(
+        client,
+        headers,
+        team["id"],
+    )
+    with factory() as session:
+        session.add(
+            EvaluationCase(
+                dataset_id=dataset["id"],
+                query_id="q1",
+                query_type="concept",
+                query="What is RAG?",
+                relevant_chunk_ids='["chunk-1"]',
+                relevance='{"chunk-1":1}',
+            )
+        )
+        db_dataset = session.get(EvaluationDataset, dataset["id"])
+        db_dataset.case_count = 1
+        session.commit()
+    return team, dataset, provider
 
 
 def test_start_run_persists_real_evaluation_result(
@@ -517,43 +551,109 @@ def test_start_run_uses_selected_provider_and_persists_model_call(
         assert "sk-evaluation-secret" not in model_call.request_id
 
 
-def test_start_run_fails_when_provider_credentials_cannot_be_decrypted(
-    api_client, api_app, admin_headers
+def test_start_run_rejects_invalid_provider_url_before_deferred_dispatch(
+    monkeypatch,
 ):
-    team, dataset = _create_dataset(api_client, api_app, admin_headers)
-    provider = _create_evaluation_provider(
-        api_client, admin_headers, team["id"]
-    )
-    _add_active_generation(api_app, team["id"])
-    with api_app.state.session_factory() as session:
-        stored = session.get(ModelProvider, provider["id"])
-        assert stored is not None
-        stored.api_key_encrypted = "not-a-valid-fernet-token"
-        session.commit()
-
-    response = api_client.post(
-        "/api/v1/evals/runs/start",
-        json={
-            "team_id": team["id"],
-            "dataset_id": dataset["id"],
-            "provider_id": provider["id"],
-            "model_id": "model-a",
-        },
-        headers=admin_headers,
+    app, factory = _celery_app()
+    calls = []
+    monkeypatch.setattr(
+        dispatch_module.run_evaluation,
+        "apply_async",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(id="evaluation-task-1"),
     )
 
-    assert response.status_code == 202
-    payload = response.json()["data"]
-    assert payload["status"] == "failed"
-    report = api_client.get(
-        "/api/v1/evals/runs/report",
-        params={"team_id": team["id"], "run_id": payload["id"]},
-        headers=admin_headers,
-    ).json()["data"]
-    assert report["provider_id"] == provider["id"]
-    assert report["model_id"] == "model-a"
-    assert report["report"]["error_code"] == "RESOURCE_STATE_CONFLICT"
-    assert report["report"]["error"] == "Provider credentials are unavailable."
+    with TestClient(app) as client:
+        headers = login_headers(client, "admin@techvault.local", "ChangeMe-123!")
+        team, dataset, provider = _seed_deferred_evaluation(
+            client,
+            factory,
+            headers,
+        )
+        with factory() as session:
+            stored = session.get(ModelProvider, provider["id"])
+            assert stored is not None
+            stored.base_url = "not-a-url"
+            session.commit()
+
+        response = client.post(
+            "/api/v1/evals/runs/start",
+            json={
+                "team_id": team["id"],
+                "dataset_id": dataset["id"],
+                "provider_id": provider["id"],
+                "model_id": "model-a",
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert response.json()["error"]["message"] == (
+        "Base URL must be an absolute HTTP or HTTPS URL."
+    )
+    assert calls == []
+    with factory() as session:
+        assert session.scalars(select(EvaluationRun)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("encrypted_key", "case_id"),
+    [
+        ("not-a-valid-fernet-token", "malformed"),
+        ("", "empty"),
+    ],
+)
+def test_start_run_rejects_unusable_provider_credentials_before_deferred_dispatch(
+    monkeypatch,
+    encrypted_key,
+    case_id,
+):
+    app, factory = _celery_app()
+    calls = []
+    monkeypatch.setattr(
+        dispatch_module.run_evaluation,
+        "apply_async",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(id="evaluation-task-1"),
+    )
+
+    with TestClient(app) as client:
+        headers = login_headers(client, "admin@techvault.local", "ChangeMe-123!")
+        team, dataset, provider = _seed_deferred_evaluation(
+            client,
+            factory,
+            headers,
+        )
+        with factory() as session:
+            stored = session.get(ModelProvider, provider["id"])
+            assert stored is not None
+            stored.api_key_encrypted = (
+                encrypted_key
+                if case_id == "malformed"
+                else encrypt_secret("", app.state.settings)
+            )
+            session.commit()
+
+        response = client.post(
+            "/api/v1/evals/runs/start",
+            json={
+                "team_id": team["id"],
+                "dataset_id": dataset["id"],
+                "provider_id": provider["id"],
+                "model_id": "model-a",
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RESOURCE_STATE_CONFLICT"
+    assert response.json()["error"]["message"] == (
+        "Provider credentials are unavailable."
+    )
+    assert calls == []
+    with factory() as session:
+        assert session.scalars(select(EvaluationRun)).all() == []
 
 
 def test_start_run_celery_mode_queues_shared_dispatch(monkeypatch):

@@ -517,7 +517,8 @@ class LlmGateway:
                 latency_ms=result.latency_ms,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
-                degraded=result.fallback_reason is not None,
+                degraded=result.fallback_reason
+                not in {None, "local_only", "provider_rewrite_unsupported"},
             )
         )
         return result

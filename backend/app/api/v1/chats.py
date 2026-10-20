@@ -17,6 +17,7 @@ from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor, paginate_scalars
 from backend.app.api.v1.schemas import AskRequest, ChatView, MessageView
 from backend.app.api.v1.documents import _granted_document_ids
+from backend.app.api.v1.kbs import readable_document_facets
 from backend.app.api.v1.kb_access import (
     knowledge_base_member_ids,
     knowledge_base_or_error,
@@ -556,6 +557,7 @@ def _stream_answer_response(
     explicit_document_grants: Sequence[str],
     message_id: str,
     policy_latency_ms: float,
+    facet_catalog: dict,
 ) -> StreamingResponse:
     session_factory = request.app.state.session_factory
 
@@ -803,6 +805,9 @@ def _stream_answer_response(
                 history=history,
                 product=product,
                 version_values=version_values,
+                allowed_products=tuple(facet_catalog["products"]),
+                allowed_versions=tuple(facet_catalog["versions"]),
+                allow_chat_history=decision.allow_chat_history,
                 classification=DataClassification.INTERNAL,
             )
             stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
@@ -828,6 +833,10 @@ def _stream_answer_response(
 
             await ensure_active()
             started = time.perf_counter()
+            applied_product = rewrite.applied_filters.get("product")
+            applied_versions = tuple(
+                rewrite.applied_filters.get("version_values") or ()
+            )
             try:
                 retriever = build_retriever(
                     request.app.state.settings,
@@ -843,8 +852,8 @@ def _stream_answer_response(
                             team_id=team_id,
                             knowledge_base_ids=tuple(knowledge_base_ids),
                             viewer_user_id=user_id,
-                            product=product,
-                            version_values=tuple(version_values),
+                            product=applied_product,
+                            version_values=applied_versions,
                             explicit_document_grants=tuple(explicit_document_grants),
                         ),
                         final_top_n=10,
@@ -1171,6 +1180,12 @@ async def ask(
     explicit_document_grants = _granted_document_ids(
         session, body.team_id, user.id
     )
+    facet_catalog = readable_document_facets(
+        session,
+        body.team_id,
+        user,
+        tuple(knowledge_base_ids),
+    )
     user_message = Message(
         id=new_ulid(),
         chat_id=chat.id,
@@ -1338,6 +1353,7 @@ async def ask(
             explicit_document_grants=explicit_document_grants,
             message_id=assistant_message.id,
             policy_latency_ms=stage_latency["policy_ms"],
+            facet_catalog=facet_catalog,
         )
 
     gateway = None
@@ -1355,6 +1371,9 @@ async def ask(
             history=history,
             product=body.filters.product,
             version_values=body.filters.version_values,
+            allowed_products=tuple(facet_catalog["products"]),
+            allowed_versions=tuple(facet_catalog["versions"]),
+            allow_chat_history=policy.allow_chat_history,
             classification=DataClassification.INTERNAL,
         )
         stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
@@ -1370,6 +1389,10 @@ async def ask(
             raise RuntimeError("embedding provider returned no vectors")
 
         started = time.perf_counter()
+        applied_product = rewrite.applied_filters.get("product")
+        applied_versions = tuple(
+            rewrite.applied_filters.get("version_values") or ()
+        )
         try:
             retriever = build_retriever(
                 request.app.state.settings,
@@ -1385,8 +1408,8 @@ async def ask(
                         team_id=body.team_id,
                         knowledge_base_ids=tuple(knowledge_base_ids),
                         viewer_user_id=user.id,
-                        product=body.filters.product,
-                        version_values=tuple(body.filters.version_values),
+                        product=applied_product,
+                        version_values=applied_versions,
                         explicit_document_grants=explicit_document_grants,
                     ),
                     final_top_n=10,

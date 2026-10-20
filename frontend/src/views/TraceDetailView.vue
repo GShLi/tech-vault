@@ -54,6 +54,25 @@ const stages = computed(() => {
 const totalStageLatency = computed(() =>
   traceTotalDuration(trace.value?.stage_latency_ms ?? {}),
 )
+const rewrite = computed(() => trace.value?.rewrite ?? null)
+const rewriteSourceLabel = computed(() => {
+  const value = rewrite.value
+  if (!value) return ''
+  if (value.fallback_reason || value.route === 'local_rules') return '规则回退'
+  if (value.structured_mode === 'json_schema') return 'LLM 结构化'
+  if (value.structured_mode === 'tool_use') return 'LLM 工具调用'
+  return 'LLM JSON'
+})
+const rewriteFilters = computed(() => {
+  const filters = rewrite.value?.applied_filters ?? {}
+  const product = typeof filters.product === 'string' ? filters.product : ''
+  const versions = Array.isArray(filters.version_values)
+    ? filters.version_values.filter(
+        (value): value is string => typeof value === 'string',
+      )
+    : []
+  return [product, ...versions].filter(Boolean)
+})
 const feedbackLabels: Record<string, string> = {
   useful: '有帮助',
   not_useful: '无帮助',
@@ -231,6 +250,37 @@ onBeforeUnmount(() => {
           <div><dt>消息</dt><dd>{{ shortId(trace.message_id) }}</dd></div>
           <div><dt>错误码</dt><dd>{{ trace.error_code || '—' }}</dd></div>
         </dl>
+        <div v-if="rewrite" class="rewrite-summary" data-testid="trace-rewrite">
+          <div class="rewrite-summary-head">
+            <strong>QueryRewrite</strong>
+            <span class="rewrite-source">{{ rewriteSourceLabel }}</span>
+          </div>
+          <div class="rewrite-query-flow">
+            <span>{{ rewrite.original_query || '—' }}</span>
+            <span class="rewrite-arrow">→</span>
+            <span>{{ rewrite.rewritten_query || '—' }}</span>
+          </div>
+          <div v-if="rewriteFilters.length" class="rewrite-filter-list">
+            <span
+              v-for="filter in rewriteFilters"
+              :key="filter"
+              class="rewrite-filter"
+            >
+              {{ filter }}
+            </span>
+          </div>
+          <p class="muted-text">
+            {{ rewrite.model_id || '未知模型' }}
+            · {{ formatTraceDuration(rewrite.latency_ms ?? 0) }}
+            · {{ rewrite.input_tokens ?? 0 }} / {{ rewrite.output_tokens ?? 0 }} tokens
+          </p>
+          <p v-if="rewrite.fallback_reason" class="muted-text">
+            回退原因：{{ rewrite.fallback_reason }}
+          </p>
+          <p v-if="rewrite.validation_error" class="muted-text">
+            校验信息：{{ rewrite.validation_error }}
+          </p>
+        </div>
         <div class="stage-chart" data-testid="trace-stage-chart">
           <div class="stage-chart-heading">
             <div>

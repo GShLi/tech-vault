@@ -451,6 +451,7 @@ class TraceRecord(Base):
     engine_mode: Mapped[str] = mapped_column(String(24), default="dual_engine")
     original_query: Mapped[str] = mapped_column(Text)
     rewritten_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rewrite: Mapped[str] = mapped_column(Text, default="{}")
     filters: Mapped[str] = mapped_column(Text, default="{}")
     bm25_candidates: Mapped[str] = mapped_column(Text, default="[]")
     dense_candidates: Mapped[str] = mapped_column(Text, default="[]")

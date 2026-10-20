@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Sequence
 
 import json
 
@@ -66,6 +66,45 @@ def _document_counts(session: Session, kb_ids: list[str]) -> dict[str, int]:
         .group_by(Document.knowledge_base_id)
     ).all()
     return {kb_id: int(count) for kb_id, count in rows}
+
+
+def readable_document_facets(
+    session: Session,
+    team_id: str,
+    user: User,
+    knowledge_base_ids: Optional[Sequence[str]] = None,
+) -> dict:
+    query = (
+        select(Document, KnowledgeBase)
+        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+        .where(
+            KnowledgeBase.team_id == team_id,
+            Document.doc_status != "deleted",
+            KnowledgeBase.id.in_(
+                knowledge_base_member_ids(session, team_id, user.id)
+            ),
+            _readable_documents_filter(session, team_id, user),
+        )
+    )
+    if knowledge_base_ids:
+        query = query.where(
+            KnowledgeBase.id.in_(list(knowledge_base_ids))
+        )
+    rows = session.execute(query).all()
+    return {
+        "products": sorted(
+            {doc.product for doc, _ in rows if doc.product}
+        ),
+        "versions": sorted(
+            {
+                value
+                for doc, _ in rows
+                for value in json.loads(doc.version_values or "[]")
+            }
+        ),
+        "sources": sorted({doc.source_type for doc, _ in rows}),
+        "knowledge_base_ids": sorted({kb.id for _, kb in rows}),
+    }
 
 
 def _kb_view(kb: KnowledgeBase, document_count: int):
@@ -507,33 +546,7 @@ def list_facets(
     session: Session = Depends(get_session),
 ):
     _membership_or_error(session, team_id, user.id)
-    rows = session.execute(
-        select(Document, KnowledgeBase)
-        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
-        .where(
-            KnowledgeBase.team_id == team_id,
-            Document.doc_status != "deleted",
-            KnowledgeBase.id.in_(
-                knowledge_base_member_ids(session, team_id, user.id)
-            ),
-            _readable_documents_filter(session, team_id, user),
-        )
-    ).all()
-    products = sorted({doc.product for doc, _ in rows if doc.product})
-    versions = sorted(
-        {
-            value
-            for doc, _ in rows
-            for value in json.loads(doc.version_values or "[]")
-        }
-    )
-    sources = sorted({doc.source_type for doc, _ in rows})
     return envelope(
-        {
-            "products": products,
-            "versions": versions,
-            "sources": sources,
-            "knowledge_base_ids": sorted({kb.id for _, kb in rows}),
-        },
+        readable_document_facets(session, team_id, user),
         request.state.request_id,
     )

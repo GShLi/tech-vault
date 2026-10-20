@@ -1646,6 +1646,62 @@ tbody tr:last-child td {
   margin-bottom: 12px;
 }
 
+.rewrite-summary {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.rewrite-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rewrite-source {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e6f4f1;
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+
+.rewrite-query-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rewrite-arrow {
+  color: var(--muted);
+}
+
+.rewrite-filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.rewrite-filter {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #eef2f5;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.rewrite-summary p {
+  margin: 8px 0 0;
+}
+
 .chunk-field-list {
   margin: 0;
 }

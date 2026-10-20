@@ -598,3 +598,247 @@ def test_build_provider_adapter_rejects_invalid_base_url(base_url):
     assert caught.value.status_code == 400
     assert caught.value.code == "INVALID_ARGUMENT"
     assert str(caught.value) == "Base URL must be an absolute HTTP or HTTPS URL."
+
+
+def test_chat_completions_rewrite_uses_json_schema():
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["name"] == "query_rewrite"
+        assert body["response_format"]["json_schema"]["strict"] is True
+        assert body["messages"][0]["role"] == "system"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "rewritten_query": (
+                                        "Spring Boot 3.2 如何开启虚拟线程？"
+                                    ),
+                                    "filters": {
+                                        "product": "spring-boot",
+                                        "version_values": ["3.2"],
+                                    },
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 18},
+            },
+        )
+
+    adapter = OpenAIChatCompletionsAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(
+        question="它怎么开启？",
+        history=(
+            {"role": "user", "content": "Spring Boot 3.2 虚拟线程"},
+        ),
+        product=None,
+        version_values=(),
+        allowed_products=("spring-boot",),
+        allowed_versions=("3.2",),
+    )
+
+    assert result.structured_mode == "json_schema"
+    assert result.rewritten_query == "Spring Boot 3.2 如何开启虚拟线程？"
+    assert result.extracted_filters == {
+        "product": "spring-boot",
+        "version_values": ["3.2"],
+    }
+    assert result.input_tokens == 120
+    assert result.output_tokens == 18
+    assert len(calls) == 1
+
+
+def test_chat_completions_rewrite_downgrades_to_json_object_once():
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "param": "response_format",
+                        "message": (
+                            "response_format json_schema is unsupported"
+                        ),
+                    }
+                },
+            )
+        assert body["response_format"] == {"type": "json_object"}
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "rewritten_query": "原问题",
+                                    "filters": {
+                                        "product": None,
+                                        "version_values": [],
+                                    },
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    adapter = OpenAIChatCompletionsAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(
+        question="原问题",
+        allowed_products=(),
+        allowed_versions=(),
+    )
+
+    assert result.structured_mode == "json_object"
+    assert len(calls) == 2
+
+
+def test_chat_completions_rewrite_rejects_invalid_json():
+    adapter = OpenAIChatCompletionsAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "not json"}}]},
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderAdapterError) as error:
+        adapter.rewrite(question="q")
+
+    assert error.value.code == "MODEL_RESPONSE_INVALID"
+
+
+def test_responses_rewrite_uses_text_format_and_downgrades():
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            assert body["text"]["format"]["type"] == "json_schema"
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "param": "text.format",
+                        "message": "json_schema unsupported",
+                    }
+                },
+            )
+        assert body["text"]["format"] == {"type": "json_object"}
+        return httpx.Response(
+            200,
+            json={
+                "output_text": json.dumps(
+                    {
+                        "rewritten_query": "Virtual threads",
+                        "filters": {
+                            "product": None,
+                            "version_values": [],
+                        },
+                    }
+                ),
+                "usage": {"input_tokens": 30, "output_tokens": 8},
+            },
+        )
+
+    adapter = OpenAIResponsesAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(question="Virtual threads")
+
+    assert result.structured_mode == "json_object"
+    assert result.input_tokens == 30
+    assert result.output_tokens == 8
+    assert len(calls) == 2
+
+
+def test_anthropic_rewrite_uses_forced_tool_use():
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["tool_choice"] == {
+            "type": "tool",
+            "name": "submit_query_rewrite",
+        }
+        assert body["tools"][0]["input_schema"]["properties"]["filters"]
+        return httpx.Response(
+            200,
+            json={
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "submit_query_rewrite",
+                        "input": {
+                            "rewritten_query": (
+                                "Elasticsearch 8.13 默认分片数"
+                            ),
+                            "filters": {
+                                "product": "elasticsearch",
+                                "version_values": ["8.13"],
+                            },
+                        },
+                    }
+                ],
+                "usage": {"input_tokens": 44, "output_tokens": 12},
+            },
+        )
+
+    adapter = AnthropicMessagesAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(
+        question="它默认几个分片？",
+        history=(
+            {"role": "user", "content": "Elasticsearch 8.13"},
+        ),
+        allowed_products=("elasticsearch",),
+        allowed_versions=("8.13",),
+    )
+
+    assert result.structured_mode == "tool_use"
+    assert result.extracted_filters["product"] == "elasticsearch"
+    assert result.output_tokens == 12

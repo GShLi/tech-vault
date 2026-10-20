@@ -68,9 +68,11 @@ class InMemoryRetriever:
         if chunk.visibility != Visibility.TEAM_SHARED:
             return False
 
-        if filters.product and chunk.product and chunk.product != filters.product:
+        if filters.product and chunk.product != filters.product:
             return False
-        if filters.version_values and chunk.version_values:
+        if filters.version_values:
+            if not chunk.version_values:
+                return False
             if not set(filters.version_values).intersection(chunk.version_values):
                 return False
         return True

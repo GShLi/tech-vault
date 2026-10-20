@@ -17,6 +17,7 @@ from backend.app.api.errors import ApiError
 from backend.app.api.pagination import decode_cursor, encode_cursor, paginate_scalars
 from backend.app.api.v1.schemas import AskRequest, ChatView, MessageView
 from backend.app.api.v1.documents import _granted_document_ids
+from backend.app.api.v1.kbs import readable_document_facets
 from backend.app.api.v1.kb_access import (
     knowledge_base_member_ids,
     knowledge_base_or_error,
@@ -279,6 +280,48 @@ def _candidate_rows(chunks) -> list:
         }
         for chunk in chunks
     ]
+
+
+def _rewrite_trace_payload(rewrite: Optional[Any]) -> dict:
+    if rewrite is None:
+        return {}
+    return {
+        "original_query": rewrite.original_query,
+        "rewritten_query": rewrite.rewritten_query,
+        "changed": rewrite.changed,
+        "route": rewrite.route,
+        "provider_id": rewrite.provider_id,
+        "model_id": rewrite.model_id,
+        "structured_mode": rewrite.structured_mode,
+        "extracted_filters": rewrite.extracted_filters,
+        "applied_filters": rewrite.applied_filters,
+        "dropped_filters": rewrite.dropped_filters,
+        "fallback_reason": rewrite.fallback_reason,
+        "validation_error": rewrite.validation_error,
+        "latency_ms": rewrite.latency_ms,
+        "input_tokens": rewrite.input_tokens,
+        "output_tokens": rewrite.output_tokens,
+    }
+
+
+def _rewrite_json(rewrite: Optional[Any]) -> str:
+    return json.dumps(
+        _rewrite_trace_payload(rewrite),
+        ensure_ascii=False,
+    )
+
+
+def _applied_filter_values(
+    rewrite: Optional[Any],
+    fallback_product: Optional[str],
+    fallback_versions: Sequence[str],
+) -> tuple[Optional[str], tuple[str, ...]]:
+    filters = rewrite.applied_filters if rewrite is not None else {}
+    product = filters.get("product", fallback_product)
+    versions = tuple(
+        filters.get("version_values", list(fallback_versions)) or ()
+    )
+    return product, versions
 
 
 def _recent_chat_history(session: Session, chat_id: str) -> List[dict]:
@@ -556,6 +599,7 @@ def _stream_answer_response(
     explicit_document_grants: Sequence[str],
     message_id: str,
     policy_latency_ms: float,
+    facet_catalog: dict,
 ) -> StreamingResponse:
     session_factory = request.app.state.session_factory
 
@@ -648,13 +692,19 @@ def _stream_answer_response(
             trace.rewritten_query = (
                 rewrite.rewritten_query if rewrite is not None else None
             )
+            trace.rewrite = _rewrite_json(rewrite)
+            trace_product, trace_versions = _applied_filter_values(
+                rewrite,
+                product,
+                version_values,
+            )
             trace.filters = json.dumps(
                 {
                     "team_id": team_id,
                     "knowledge_base_ids": list(knowledge_base_ids),
                     "viewer_user_id": user_id,
-                    "product": product,
-                    "version_values": list(version_values),
+                    "product": trace_product,
+                    "version_values": list(trace_versions),
                     "explicit_document_grant_count": len(explicit_document_grants),
                 }
             )
@@ -803,15 +853,28 @@ def _stream_answer_response(
                 history=history,
                 product=product,
                 version_values=version_values,
+                allowed_products=tuple(facet_catalog["products"]),
+                allowed_versions=tuple(facet_catalog["versions"]),
+                allow_chat_history=decision.allow_chat_history,
                 classification=DataClassification.INTERNAL,
             )
             stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
-            if rewrite.changed:
+            extracted_product = rewrite.extracted_filters.get("product")
+            extracted_versions = (
+                rewrite.extracted_filters.get("version_values") or []
+            )
+            if rewrite.changed or extracted_product or extracted_versions:
                 yield sse(
                     "rewrite",
                     {
                         "original": rewrite.original_query,
                         "rewritten": rewrite.rewritten_query,
+                        "changed": rewrite.changed,
+                        "route": rewrite.route,
+                        "model_id": rewrite.model_id,
+                        "structured_mode": rewrite.structured_mode,
+                        "applied_filters": rewrite.applied_filters,
+                        "fallback_reason": rewrite.fallback_reason,
                     },
                 )
 
@@ -828,6 +891,10 @@ def _stream_answer_response(
 
             await ensure_active()
             started = time.perf_counter()
+            applied_product = rewrite.applied_filters.get("product")
+            applied_versions = tuple(
+                rewrite.applied_filters.get("version_values") or ()
+            )
             try:
                 retriever = build_retriever(
                     request.app.state.settings,
@@ -843,8 +910,8 @@ def _stream_answer_response(
                             team_id=team_id,
                             knowledge_base_ids=tuple(knowledge_base_ids),
                             viewer_user_id=user_id,
-                            product=product,
-                            version_values=tuple(version_values),
+                            product=applied_product,
+                            version_values=applied_versions,
                             explicit_document_grants=tuple(explicit_document_grants),
                         ),
                         final_top_n=10,
@@ -1171,6 +1238,12 @@ async def ask(
     explicit_document_grants = _granted_document_ids(
         session, body.team_id, user.id
     )
+    facet_catalog = readable_document_facets(
+        session,
+        body.team_id,
+        user,
+        tuple(knowledge_base_ids),
+    )
     user_message = Message(
         id=new_ulid(),
         chat_id=chat.id,
@@ -1222,6 +1295,11 @@ async def ask(
                     for audit in gateway_instance.audits
                 }
             )
+        failure_product, failure_versions = _applied_filter_values(
+            rewrite,
+            body.filters.product,
+            body.filters.version_values,
+        )
         session.add(
             TraceRecord(
                 team_id=body.team_id,
@@ -1233,13 +1311,14 @@ async def ask(
                 rewritten_query=(
                     rewrite.rewritten_query if rewrite is not None else None
                 ),
+                rewrite=_rewrite_json(rewrite),
                 filters=json.dumps(
                     {
                         "team_id": body.team_id,
                         "knowledge_base_ids": knowledge_base_ids,
                         "viewer_user_id": user.id,
-                        "product": body.filters.product,
-                        "version_values": body.filters.version_values,
+                        "product": failure_product,
+                        "version_values": list(failure_versions),
                         "explicit_document_grant_count": len(explicit_document_grants),
                     }
                 ),
@@ -1338,6 +1417,7 @@ async def ask(
             explicit_document_grants=explicit_document_grants,
             message_id=assistant_message.id,
             policy_latency_ms=stage_latency["policy_ms"],
+            facet_catalog=facet_catalog,
         )
 
     gateway = None
@@ -1355,6 +1435,9 @@ async def ask(
             history=history,
             product=body.filters.product,
             version_values=body.filters.version_values,
+            allowed_products=tuple(facet_catalog["products"]),
+            allowed_versions=tuple(facet_catalog["versions"]),
+            allow_chat_history=policy.allow_chat_history,
             classification=DataClassification.INTERNAL,
         )
         stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
@@ -1370,6 +1453,10 @@ async def ask(
             raise RuntimeError("embedding provider returned no vectors")
 
         started = time.perf_counter()
+        applied_product = rewrite.applied_filters.get("product")
+        applied_versions = tuple(
+            rewrite.applied_filters.get("version_values") or ()
+        )
         try:
             retriever = build_retriever(
                 request.app.state.settings,
@@ -1385,8 +1472,8 @@ async def ask(
                         team_id=body.team_id,
                         knowledge_base_ids=tuple(knowledge_base_ids),
                         viewer_user_id=user.id,
-                        product=body.filters.product,
-                        version_values=tuple(body.filters.version_values),
+                        product=applied_product,
+                        version_values=applied_versions,
                         explicit_document_grants=explicit_document_grants,
                     ),
                     final_top_n=10,
@@ -1534,6 +1621,11 @@ async def ask(
         refusal_reason=refusal_reason,
     )
     session.add(assistant_message)
+    trace_product, trace_versions = _applied_filter_values(
+        rewrite,
+        body.filters.product,
+        body.filters.version_values,
+    )
     session.add(
         TraceRecord(
             team_id=body.team_id,
@@ -1543,13 +1635,14 @@ async def ask(
             engine_mode=engine_mode.value,
             original_query=question,
             rewritten_query=rewrite.rewritten_query,
+            rewrite=_rewrite_json(rewrite),
             filters=json.dumps(
                 {
                     "team_id": body.team_id,
                     "knowledge_base_ids": knowledge_base_ids,
                     "viewer_user_id": user.id,
-                    "product": body.filters.product,
-                    "version_values": body.filters.version_values,
+                    "product": trace_product,
+                    "version_values": list(trace_versions),
                     "explicit_document_grant_count": len(explicit_document_grants),
                 }
             ),
@@ -1625,6 +1718,12 @@ async def ask(
         "rewrite": {
             "original": rewrite.original_query,
             "rewritten": rewrite.rewritten_query,
+            "changed": rewrite.changed,
+            "route": rewrite.route,
+            "model_id": rewrite.model_id,
+            "structured_mode": rewrite.structured_mode,
+            "applied_filters": rewrite.applied_filters,
+            "fallback_reason": rewrite.fallback_reason,
         },
         "model": {
             "model_id": answer.model_id,

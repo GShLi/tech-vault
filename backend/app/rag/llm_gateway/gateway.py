@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from backend.app.core.llm_policy import assert_external_call_allowed
@@ -14,7 +14,9 @@ from backend.app.rag.domain.models import (
     ModelPolicyDecision,
     RetrievedChunk,
 )
+from backend.app.rag.llm_gateway.contracts import RewriteResult
 from backend.app.rag.llm_gateway.providers import ProviderAdapterError
+from backend.app.rag.llm_gateway.self_query import apply_self_query_filters
 
 
 class PolicyDeniedError(PermissionError):
@@ -60,16 +62,6 @@ async def _iterate_provider_stream(value: Any):
 def _completed_text_slices(text: str, size: int = 96):
     for start in range(0, len(text), size):
         yield text[start : start + size]
-
-
-@dataclass(frozen=True)
-class RewriteResult:
-    original_query: str
-    rewritten_query: str
-    changed: bool
-    route: str
-    model_id: str
-    context_used: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -406,63 +398,127 @@ class LlmGateway:
         history: Sequence[Any] = (),
         product: Optional[str] = None,
         version_values: Sequence[str] = (),
+        allowed_products: Sequence[str] = (),
+        allowed_versions: Sequence[str] = (),
+        allow_chat_history: bool = False,
         classification: DataClassification = DataClassification.INTERNAL,
     ) -> RewriteResult:
         started = time.perf_counter()
         redacted_count = 0
-        route = "local_rules"
         result = deterministic_rewrite(
             question=question,
             history=history,
             product=product,
             version_values=version_values,
         )
-        if not self._has_external_route(self._answer_provider):
-            self._require_local_fallback("query rewrite")
+        result = replace(
+            result,
+            applied_filters={
+                "product": product,
+                "version_values": list(version_values),
+            },
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
+        fallback_reason = None
+        validation_error = None
+
         if self._has_external_route(self._answer_provider) and self._decision.allow_external:
+            allow_history = bool(
+                allow_chat_history and self._decision.allow_chat_history
+            )
             try:
                 assert_external_call_allowed(self._decision, classification)
                 scan = scan_and_redact(question)
                 redacted_count = scan.redacted_count
+                safe_history = []
+                if allow_history:
+                    for item in history:
+                        content = _message_value(item, "content")
+                        if not content:
+                            continue
+                        content_scan = scan_and_redact(content)
+                        redacted_count += content_scan.redacted_count
+                        safe_history.append(
+                            {
+                                "role": _message_value(item, "role")
+                                or "user",
+                                "content": content_scan.text,
+                            }
+                        )
                 external_rewrite = getattr(self._answer_provider, "rewrite", None)
                 if external_rewrite is None:
-                    if self._decision.fallback_mode == "reject":
-                        raise ModelUnavailableError(
-                            "External Query Rewrite is unavailable."
-                        )
-                    redacted_count = 0
+                    fallback_reason = "provider_rewrite_unsupported"
                 else:
                     candidate = external_rewrite(
                         question=scan.text,
-                        history=tuple(
-                            scan_and_redact(_message_value(item, "content")).text
-                            for item in history
-                        ),
+                        history=tuple(safe_history),
                         product=product,
                         version_values=tuple(version_values),
+                        allowed_products=tuple(allowed_products),
+                        allowed_versions=tuple(allowed_versions),
                     )
-                    if isinstance(candidate, RewriteResult):
-                        result = candidate
-                        route = "external"
-            except Exception as error:
-                self._external_failure_policy(error)
+                    if not isinstance(candidate, RewriteResult):
+                        fallback_reason = "provider_rewrite_invalid"
+                    else:
+                        application = apply_self_query_filters(
+                            extracted_filters=candidate.extracted_filters,
+                            explicit_product=product,
+                            explicit_versions=version_values,
+                            allowed_products=allowed_products,
+                            allowed_versions=allowed_versions,
+                        )
+                        result = replace(
+                            candidate,
+                            applied_filters=application.applied_filters,
+                            dropped_filters=application.dropped_filters,
+                            latency_ms=int(
+                                (time.perf_counter() - started) * 1000
+                            ),
+                        )
+            except PermissionError:
+                fallback_reason = "policy_denied"
+            except ProviderAdapterError as error:
+                if error.code == "MODEL_RESPONSE_INVALID":
+                    fallback_reason = "invalid_response"
+                else:
+                    fallback_reason = "provider_error"
+                validation_error = error.upstream_code or error.code.lower()
+            except ModelUnavailableError:
+                fallback_reason = "provider_error"
+        else:
+            fallback_reason = (
+                "local_only"
+                if not self._decision.allow_external
+                else "provider_unavailable"
+            )
+
+        if fallback_reason is not None:
+            result = replace(
+                result,
+                fallback_reason=fallback_reason,
+                validation_error=validation_error,
+            )
 
         self._audit(
             GatewayAudit(
                 purpose="query_rewrite",
                 route=result.route,
                 model_id=result.model_id,
-                provider_id=(
-                    self._provider_id(self._answer_provider)
-                    if route == "external"
-                    else None
-                ),
-                external=route == "external",
+                provider_id=result.provider_id,
+                external=result.route != "local_rules",
                 classification=classification.value,
                 policy_version=self._decision.policy_version,
-                reason_code=result.context_used and "history_context" or "no_rewrite",
+                reason_code=(
+                    result.fallback_reason
+                    or result.structured_mode
+                    or "no_rewrite"
+                ),
                 redacted_count=redacted_count,
-                latency_ms=int((time.perf_counter() - started) * 1000.0),
+                latency_ms=result.latency_ms,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                degraded=result.fallback_reason
+                not in {None, "local_only", "provider_rewrite_unsupported"},
             )
         )
         return result

@@ -188,6 +188,7 @@ def _trace_view(
         "engine_mode": trace.engine_mode,
         "original_query": trace.original_query,
         "rewritten_query": trace.rewritten_query,
+        "rewrite": _json_value(trace.rewrite, {}),
         "filters": json.loads(trace.filters or "{}"),
         "bm25_candidates": json.loads(trace.bm25_candidates or "[]"),
         "dense_candidates": json.loads(trace.dense_candidates or "[]"),

@@ -472,7 +472,7 @@ event: meta
 data: {"message_id":"01JMSG000000000000000001","trace_id":"","engine_mode":"dual_engine","status":"generating"}
 
 event: rewrite
-data: {"original":"它和 2.x 有什么区别？","rewritten":"Spring Boot 3.x 自动配置与 2.x 有什么区别？"}
+data: {"original":"它怎么开启？","rewritten":"Spring Boot 3.2 如何开启虚拟线程？","changed":true,"route":"openai_chat_completions","model_id":"gpt-5-mini","structured_mode":"json_schema","applied_filters":{"product":"spring-boot","version_values":["3.2"]},"fallback_reason":null}
 
 event: citation
 data: {"citation_id":"c1","chunk_id":"01JCHUNK00000000000000001","document_id":"01JDOC0000000000000000001","document_version_id":"01JDV00000000000000000001","document_name":"spring-boot-reference.pdf","page_no":12,"heading_path":["Spring Boot","Auto-configuration"],"source_url":"/api/v1/docs/download?team_id=...&document_id=...","excerpt":"Virtual threads are ..."}
@@ -491,7 +491,9 @@ data: {"code":"RESOURCE_STATE_CONFLICT","message":"Provider credentials are unav
 ```
 
 `meta.trace_id` 在流开始时为空，检索完成后由消息详情和 Trace 接口提供最终值。
-`rewrite` 仅在重写文本与输入不同时发送，`citation` 与 `delta` 可以多次出现。
+`rewrite` 在重写文本变化或抽取到有效过滤条件时发送；`citation` 与 `delta` 可以
+多次出现。LLM 改写优先使用结构化输出，失败时可回退本地规则，并在
+`fallback_reason` 中返回稳定原因码。
 `done`、`refused`、`error` 三者是互斥的终止事件，不得在同一连接中继续发送其他
 业务事件。
 
@@ -522,6 +524,8 @@ data: {"code":"RESOURCE_STATE_CONFLICT","message":"Provider credentials are unav
 Trace 详情至少返回：
 
 - Query Rewrite 前后文本。
+- Query Rewrite 来源、provider/model、结构化模式、提取/应用/丢弃的过滤条件、
+  token、耗时和回退原因。
 - 实际过滤条件。
 - BM25 和 Dense 候选及排名。
 - RRF 和 Rerank 排名。
@@ -542,6 +546,32 @@ Trace 列表和详情都返回 `feedback` 数组。反馈通过
   }
 ]
 ```
+
+Trace 详情和导出快照还返回 `rewrite` 对象。旧 Trace 返回空对象 `{}`：
+
+```json
+{
+  "original_query": "它怎么开启？",
+  "rewritten_query": "Spring Boot 3.2 如何开启虚拟线程？",
+  "changed": true,
+  "route": "openai_chat_completions",
+  "provider_id": "01JPROVIDER000000000000001",
+  "model_id": "gpt-5-mini",
+  "structured_mode": "json_schema",
+  "extracted_filters": {"product": "spring-boot", "version_values": ["3.2"]},
+  "applied_filters": {"product": "spring-boot", "version_values": ["3.2"]},
+  "dropped_filters": [],
+  "fallback_reason": null,
+  "validation_error": null,
+  "latency_ms": 820,
+  "input_tokens": 450,
+  "output_tokens": 24
+}
+```
+
+Self-Query 只允许抽取 `product` 和 `version_values`，并在召回阶段作为硬过滤执行。
+过滤后没有候选时按 `INSUFFICIENT_EVIDENCE` 拒答，不放宽或重试过滤条件。未知的
+facet 值会被丢弃并记录在 `dropped_filters`；用户显式选择的值优先于 LLM 抽取。
 
 Trace 列表不返回 Chunk 正文。`GET /traces/detail` 和
 `GET /traces/export` 额外返回 `chunk_details`，以 `chunk_id` 为键，包含文档名、

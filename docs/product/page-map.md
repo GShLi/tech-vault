@@ -82,6 +82,8 @@
 - 无检索结果时显示“知识库中没有足够依据”，不显示伪造答案。服务端以
   `refused` 终止事件和 `reason_code=INSUFFICIENT_EVIDENCE` 表示受控拒答，界面
   不应把它展示成系统错误。
+- LLM Self-Query 抽取的 `product`/`version_values` 是硬过滤条件；过滤后零结果时
+  直接展示证据不足，不使用未过滤结果补救。
 - 引用只展示模型通过有效 `[cN]` 标记明确指向的 Chunk。模型回答没有有效引用
   标记时，按证据不足处理并清空引用，不得展示本轮全部检索片段。
 - `citation_id` 保留模型原始 `[cN]` 标签；回答正文中的有效标记可点击，点击后滚动
@@ -196,12 +198,16 @@
 | 路由 | `/traces`、`/traces/:traceId` |
 | 主要用户 | `leader`、研发 |
 | 页面目标 | 查看 Query Rewrite、过滤条件、候选、RRF、Rerank、最终上下文和模型信息 |
-| 主要组件 | Trace 列表、阶段时间线、候选表格、引用映射、降级标记、用户反馈摘要 |
+| 主要组件 | Trace 列表、QueryRewrite 摘要、阶段时间线、候选表格、引用映射、降级标记、用户反馈摘要 |
 | 依赖 API | `GET /traces?team_id=`、`GET /traces/detail?team_id=&trace_id=` |
 
 候选表格直接显示 Chunk 原文摘要，内容区域具备按钮语义和悬浮反馈，点击后在抽屉中
 按“字段名 + 内容”查看完整明细，并可复制原始 JSON。无权限查看的私有 Chunk 只显示
 受限提示，不展示正文；已被删除的 Chunk 显示记录不存在。
+
+QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（LLM 结构化、LLM JSON、
+规则回退）、应用的 product/version 过滤条件、provider/model、耗时、token 和回退
+原因。旧 Trace 没有改写元数据时不显示该区块。
 
 ### 5.4 知识缺口
 

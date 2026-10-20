@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
@@ -17,6 +18,15 @@ from backend.app.rag.answer.service import (
     answer_stream_from_pieces,
 )
 from backend.app.rag.domain.models import RetrievedChunk
+from backend.app.rag.llm_gateway.contracts import RewriteResult
+from backend.app.rag.llm_gateway.rewrite_contract import (
+    QUERY_REWRITE_SCHEMA,
+    ParsedRewrite,
+    RewriteValidationError,
+    build_rewrite_prompt,
+    parse_rewrite_payload,
+    parse_rewrite_text,
+)
 
 
 SUPPORTED_PROVIDER_TYPES = frozenset(
@@ -43,10 +53,22 @@ _OPERATIONS = {
 class ProviderAdapterError(RuntimeError):
     """A safe, normalized upstream failure that never contains credentials."""
 
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        http_status: Optional[int] = None,
+        upstream_code: Optional[str] = None,
+        upstream_param: Optional[str] = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+        self.http_status = http_status
+        self.upstream_code = upstream_code
+        self.upstream_param = upstream_param
 
 
 class LlmProviderAdapter(Protocol):
@@ -70,6 +92,18 @@ class LlmProviderAdapter(Protocol):
         chunks: Sequence[RetrievedChunk],
         max_chunks: int = 8,
     ) -> AnswerStream:
+        ...
+
+    def rewrite(
+        self,
+        *,
+        question: str,
+        history: Sequence[Any] = (),
+        product: Optional[str] = None,
+        version_values: Sequence[str] = (),
+        allowed_products: Sequence[str] = (),
+        allowed_versions: Sequence[str] = (),
+    ) -> RewriteResult:
         ...
 
 
@@ -166,15 +200,77 @@ def _raise_for_response(response: httpx.Response) -> None:
             502,
             "MODEL_AUTH_FAILED",
             "Upstream rejected the provider API Key.",
+            http_status=response.status_code,
         )
     if response.status_code >= 400:
+        upstream_code, upstream_param = _error_details(response)
         raise ProviderAdapterError(
             503,
             "MODEL_UNAVAILABLE",
             "Upstream model request failed with HTTP {0}.".format(
                 response.status_code
             ),
+            http_status=response.status_code,
+            upstream_code=upstream_code,
+            upstream_param=upstream_param,
         )
+
+
+def _error_details(response: httpx.Response):
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        error = payload
+    code = error.get("code") or error.get("type")
+    param = error.get("param")
+    message = str(error.get("message") or "").lower()
+    if param is None:
+        for marker in (
+            "response_format",
+            "json_schema",
+            "json_object",
+            "text.format",
+            "tool_choice",
+            "tools",
+        ):
+            if marker in message:
+                param = marker
+                break
+    return (
+        str(code) if code is not None else None,
+        str(param) if param is not None else None,
+    )
+
+
+def is_structured_output_unsupported(error: ProviderAdapterError) -> bool:
+    if error.http_status not in {400, 422}:
+        return False
+    marker_text = " ".join(
+        value
+        for value in (
+            error.upstream_code,
+            error.upstream_param,
+            str(error),
+        )
+        if value
+    ).lower()
+    return any(
+        marker in marker_text
+        for marker in (
+            "response_format",
+            "json_schema",
+            "json_object",
+            "text.format",
+            "tool_choice",
+            "unsupported",
+            "unknown parameter",
+        )
+    )
 
 
 def _stream_json_candidates(chunk_text: str) -> List[str]:
@@ -371,6 +467,124 @@ class _HttpProviderAdapter:
             "Upstream returned an invalid response.",
         )
 
+    def _post_json(
+        self,
+        payload: Dict[str, Any],
+        *,
+        timeout: float,
+    ) -> Dict[str, Any]:
+        try:
+            with httpx.Client(
+                timeout=timeout,
+                transport=self._transport,
+                trust_env=False,
+            ) as client:
+                response = client.post(
+                    self._url,
+                    headers=self._headers(stream=False),
+                    json=payload,
+                )
+            _raise_for_response(response)
+            return _safe_json(response)
+        except Exception as error:
+            normalized = self._provider_error(error)
+            if normalized is error:
+                raise
+            raise normalized
+
+    def rewrite(
+        self,
+        *,
+        question: str,
+        history: Sequence[Any] = (),
+        product: Optional[str] = None,
+        version_values: Sequence[str] = (),
+        allowed_products: Sequence[str] = (),
+        allowed_versions: Sequence[str] = (),
+    ) -> RewriteResult:
+        started = time.perf_counter()
+        history = tuple(history)
+        allowed_products = tuple(allowed_products)
+        allowed_versions = tuple(allowed_versions)
+        system_prompt, user_prompt = build_rewrite_prompt(
+            question=question,
+            history=history,
+            product=product,
+            version_values=version_values,
+            allowed_products=allowed_products,
+            allowed_versions=allowed_versions,
+        )
+        unsupported_error = None
+        for index, (mode, payload) in enumerate(
+            self._rewrite_attempts(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        ):
+            try:
+                response_payload = self._post_json(payload, timeout=10.0)
+                parsed = self._parse_rewrite_response(mode, response_payload)
+                input_tokens, output_tokens = self._rewrite_usage(
+                    response_payload
+                )
+                return RewriteResult(
+                    original_query=question,
+                    rewritten_query=parsed.rewritten_query,
+                    changed=parsed.rewritten_query != question.strip(),
+                    route=self.route,
+                    model_id=self.model_id,
+                    provider_id=self.provider_id,
+                    structured_mode=mode,
+                    extracted_filters=parsed.extracted_filters,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    latency_ms=int(
+                        (time.perf_counter() - started) * 1000
+                    ),
+                    context_used={
+                        "history_messages": len(history),
+                        "product": product,
+                        "version_values": list(version_values),
+                        "allowed_products": len(allowed_products),
+                        "allowed_versions": len(allowed_versions),
+                    },
+                )
+            except RewriteValidationError as error:
+                raise ProviderAdapterError(
+                    502,
+                    "MODEL_RESPONSE_INVALID",
+                    "Rewrite response was invalid.",
+                    upstream_code=error.code,
+                ) from error
+            except ProviderAdapterError as error:
+                if index == 0 and is_structured_output_unsupported(error):
+                    unsupported_error = error
+                    continue
+                raise
+        raise unsupported_error or ProviderAdapterError(
+            502,
+            "MODEL_RESPONSE_INVALID",
+            "Rewrite response was invalid.",
+        )
+
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        raise NotImplementedError
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        return 0, 0
+
     def generate(
         self,
         *,
@@ -519,6 +733,51 @@ class OpenAIChatCompletionsAdapter(_HttpProviderAdapter):
     route = "openai_chat_completions"
     _stream_type = "chat"
 
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        strict = {
+            "model": self.model_id,
+            "messages": messages,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "query_rewrite",
+                    "strict": True,
+                    "schema": QUERY_REWRITE_SCHEMA,
+                },
+            },
+        }
+        weak = {
+            "model": self.model_id,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        return [("json_schema", strict), ("json_object", weak)]
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        return parse_rewrite_text(self._response_text(payload))
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        return (
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+        )
+
     def _headers(self, *, stream: bool) -> Dict[str, str]:
         headers = super()._headers(stream=stream)
         headers["Authorization"] = "Bearer {0}".format(self._api_key)
@@ -553,6 +812,48 @@ class OpenAIChatCompletionsAdapter(_HttpProviderAdapter):
 class OpenAIResponsesAdapter(_HttpProviderAdapter):
     route = "openai_responses"
     _stream_type = "responses"
+
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        prompt = "{0}\n\n{1}".format(system_prompt, user_prompt)
+        strict = {
+            "model": self.model_id,
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "query_rewrite",
+                    "strict": True,
+                    "schema": QUERY_REWRITE_SCHEMA,
+                }
+            },
+        }
+        weak = {
+            "model": self.model_id,
+            "input": prompt,
+            "text": {"format": {"type": "json_object"}},
+        }
+        return [("json_schema", strict), ("json_object", weak)]
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        return parse_rewrite_text(self._response_text(payload))
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        return (
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
 
     def _headers(self, *, stream: bool) -> Dict[str, str]:
         headers = super()._headers(stream=stream)
@@ -609,6 +910,65 @@ class OpenAIResponsesAdapter(_HttpProviderAdapter):
 class AnthropicMessagesAdapter(_HttpProviderAdapter):
     route = "anthropic_messages"
     _stream_type = "anthropic"
+
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        prompt = "{0}\n\n{1}".format(system_prompt, user_prompt)
+        strict = {
+            "model": self.model_id,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": [
+                {
+                    "name": "submit_query_rewrite",
+                    "description": (
+                        "Submit the rewritten query and metadata filters."
+                    ),
+                    "input_schema": QUERY_REWRITE_SCHEMA,
+                }
+            ],
+            "tool_choice": {
+                "type": "tool",
+                "name": "submit_query_rewrite",
+            },
+        }
+        weak = {
+            "model": self.model_id,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        return [("tool_use", strict), ("prompt_json", weak)]
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        if mode == "tool_use":
+            content = payload.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_use"
+                        and block.get("name") == "submit_query_rewrite"
+                    ):
+                        return parse_rewrite_payload(block.get("input"))
+            raise RewriteValidationError("missing_tool_use")
+        return parse_rewrite_text(self._response_text(payload))
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        return (
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
 
     def _headers(self, *, stream: bool) -> Dict[str, str]:
         headers = super()._headers(stream=stream)

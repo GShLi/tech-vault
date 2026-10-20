@@ -54,7 +54,9 @@ class _FakeProviderServer:
                         }
                     )
 
-                if self.path.endswith("/responses"):
+                if self._is_rewrite_request(payload):
+                    body = self._rewrite_body(payload)
+                elif self.path.endswith("/responses"):
                     body = self._responses_body(payload)
                 elif self.path.endswith("/messages"):
                     body = self._anthropic_body(payload)
@@ -72,6 +74,48 @@ class _FakeProviderServer:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            @staticmethod
+            def _is_rewrite_request(payload) -> bool:
+                return bool(
+                    payload.get("response_format")
+                    or payload.get("text", {}).get("format")
+                    or payload.get("tools")
+                )
+
+            def _rewrite_body(self, payload) -> bytes:
+                rewrite = {
+                    "rewritten_query": "What are virtual threads?",
+                    "filters": {
+                        "product": None,
+                        "version_values": [],
+                    },
+                }
+                if self.path.endswith("/responses"):
+                    response = {
+                        "output_text": json.dumps(rewrite),
+                    }
+                elif self.path.endswith("/messages"):
+                    response = {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "submit_query_rewrite",
+                                "input": rewrite,
+                            }
+                        ]
+                    }
+                else:
+                    response = {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(rewrite),
+                                }
+                            }
+                        ]
+                    }
+                return json.dumps(response).encode()
 
             def _chat_body(self, payload) -> bytes:
                 if payload.get("stream"):
@@ -532,8 +576,25 @@ def test_chat_uses_selected_fake_provider(
     assert model["external"] is True
     assert "sk-e2e" not in response.text
 
-    assert len(fake_provider.requests) == 1
-    provider_request = fake_provider.requests[0]
+    assert len(fake_provider.requests) == 2
+    rewrite_request, provider_request = fake_provider.requests
+    assert rewrite_request["path"] == expected_path
+    assert rewrite_request["payload"]["model"] == "fake-model"
+    if provider_type == "openai_chat_completions":
+        assert (
+            rewrite_request["payload"]["response_format"]["type"]
+            == "json_schema"
+        )
+    elif provider_type == "openai_responses":
+        assert (
+            rewrite_request["payload"]["text"]["format"]["type"]
+            == "json_schema"
+        )
+    else:
+        assert (
+            rewrite_request["payload"]["tool_choice"]["name"]
+            == "submit_query_rewrite"
+        )
     assert provider_request["path"] == expected_path
     if provider_type == "anthropic_messages":
         assert provider_request["headers"]["x-api-key"] == "sk-e2e"

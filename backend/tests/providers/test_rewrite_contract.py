@@ -1,11 +1,17 @@
 import pytest
 
 from backend.app.rag.llm_gateway.rewrite_contract import (
+    REWRITE_SYSTEM_PROMPT,
     RewriteValidationError,
     build_rewrite_prompt,
     parse_rewrite_payload,
     parse_rewrite_text,
 )
+
+
+def test_rewrite_prompt_resolves_primary_entity_before_secondary_aliases():
+    assert "primary entity" in REWRITE_SYSTEM_PROMPT
+    assert "Secondary aliases" in REWRITE_SYSTEM_PROMPT
 
 
 def test_parse_rewrite_payload_normalizes_query_and_filters():

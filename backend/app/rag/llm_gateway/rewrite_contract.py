@@ -40,6 +40,9 @@ REWRITE_SYSTEM_PROMPT = """You rewrite the latest user question into one self-co
 Rules:
 - Use conversation history only to resolve references and omitted context.
 - Resolve pronouns only when exactly one clear antecedent exists; otherwise keep the original question unchanged.
+- Resolve a pronoun to the primary entity established by the latest user-assistant exchange.
+- Prefer the subject of the latest user question; if the assistant answer resolves that subject to a primary name, use that primary name.
+- Secondary aliases, alternate spellings, or contradictory examples mentioned in the assistant answer are not competing antecedents unless the user explicitly asks about them.
 - Preserve the user's language, intent, entities, versions, code identifiers, error messages, and constraints.
 - Add product/version filters only when they are explicit in the question or unambiguous from the recent conversation.
 - Never invent facts, products, versions, or requirements.

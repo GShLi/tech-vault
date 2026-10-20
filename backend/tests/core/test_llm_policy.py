@@ -739,3 +739,108 @@ def test_external_required_restricted_data_returns_policy_denial():
             ),
             classification=DataClassification.RESTRICTED,
         )
+
+
+def test_gateway_uses_llm_rewrite_and_applies_self_query_filters():
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway
+    from backend.app.rag.llm_gateway.contracts import RewriteResult
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "openai_chat_completions"
+
+        def __init__(self):
+            self.history = None
+
+        def rewrite(self, **kwargs):
+            self.history = kwargs["history"]
+            return RewriteResult(
+                original_query=kwargs["question"],
+                rewritten_query="Spring Boot 3.2 如何开启虚拟线程？",
+                changed=True,
+                route=self.route,
+                model_id=self.model_id,
+                provider_id=self.provider_id,
+                structured_mode="json_schema",
+                extracted_filters={
+                    "product": "spring-boot",
+                    "version_values": ["3.2"],
+                },
+            )
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.INTERNAL,
+            allowed_provider_ids=("provider-a",),
+            allowed_model_ids=("model-a",),
+            allow_chat_history=True,
+        ),
+        external_answer_provider=provider,
+        external_api_key="test-key",
+    )
+    result = gateway.rewrite(
+        question="它怎么开启？",
+        history=(
+            {"role": "user", "content": "Spring Boot 3.2 虚拟线程"},
+        ),
+        allowed_products=("spring-boot",),
+        allowed_versions=("3.2",),
+        allow_chat_history=True,
+    )
+
+    assert result.route == "openai_chat_completions"
+    assert result.applied_filters == {
+        "product": "spring-boot",
+        "version_values": ["3.2"],
+    }
+    assert provider.history[0]["role"] == "user"
+
+
+def test_gateway_does_not_send_history_when_policy_disallows_it():
+    from backend.app.core.llm_policy import resolve_model_policy
+    from backend.app.rag.llm_gateway import LlmGateway
+    from backend.app.rag.llm_gateway.contracts import RewriteResult
+
+    class Provider:
+        provider_id = "provider-a"
+        model_id = "model-a"
+        route = "openai_chat_completions"
+
+        def __init__(self):
+            self.history = ("sentinel",)
+
+        def rewrite(self, **kwargs):
+            self.history = kwargs["history"]
+            return RewriteResult(
+                original_query=kwargs["question"],
+                rewritten_query=kwargs["question"],
+                changed=False,
+                route=self.route,
+                model_id=self.model_id,
+                provider_id=self.provider_id,
+                structured_mode="json_object",
+            )
+
+    provider = Provider()
+    gateway = LlmGateway(
+        decision=resolve_model_policy(
+            deployment_mode="external_allowed",
+            requested_classification=DataClassification.INTERNAL,
+            allowed_provider_ids=("provider-a",),
+            allowed_model_ids=("model-a",),
+            allow_chat_history=False,
+        ),
+        external_answer_provider=provider,
+        external_api_key="test-key",
+    )
+    gateway.rewrite(
+        question="独立问题",
+        history=({"role": "user", "content": "secret history"},),
+        allow_chat_history=False,
+    )
+
+    assert provider.history == ()

@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from backend.app.core.llm_policy import assert_external_call_allowed
@@ -14,6 +14,7 @@ from backend.app.rag.domain.models import (
     ModelPolicyDecision,
     RetrievedChunk,
 )
+from backend.app.rag.llm_gateway.contracts import RewriteResult
 from backend.app.rag.llm_gateway.providers import ProviderAdapterError
 
 
@@ -60,16 +61,6 @@ async def _iterate_provider_stream(value: Any):
 def _completed_text_slices(text: str, size: int = 96):
     for start in range(0, len(text), size):
         yield text[start : start + size]
-
-
-@dataclass(frozen=True)
-class RewriteResult:
-    original_query: str
-    rewritten_query: str
-    changed: bool
-    route: str
-    model_id: str
-    context_used: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ from backend.app.rag.llm_gateway.rewrite_contract import (
     ParsedRewrite,
     RewriteValidationError,
     build_rewrite_prompt,
+    parse_rewrite_payload,
     parse_rewrite_text,
 )
 
@@ -812,6 +813,48 @@ class OpenAIResponsesAdapter(_HttpProviderAdapter):
     route = "openai_responses"
     _stream_type = "responses"
 
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        prompt = "{0}\n\n{1}".format(system_prompt, user_prompt)
+        strict = {
+            "model": self.model_id,
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "query_rewrite",
+                    "strict": True,
+                    "schema": QUERY_REWRITE_SCHEMA,
+                }
+            },
+        }
+        weak = {
+            "model": self.model_id,
+            "input": prompt,
+            "text": {"format": {"type": "json_object"}},
+        }
+        return [("json_schema", strict), ("json_object", weak)]
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        return parse_rewrite_text(self._response_text(payload))
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        return (
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
+
     def _headers(self, *, stream: bool) -> Dict[str, str]:
         headers = super()._headers(stream=stream)
         headers["Authorization"] = "Bearer {0}".format(self._api_key)
@@ -867,6 +910,65 @@ class OpenAIResponsesAdapter(_HttpProviderAdapter):
 class AnthropicMessagesAdapter(_HttpProviderAdapter):
     route = "anthropic_messages"
     _stream_type = "anthropic"
+
+    def _rewrite_attempts(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        prompt = "{0}\n\n{1}".format(system_prompt, user_prompt)
+        strict = {
+            "model": self.model_id,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": [
+                {
+                    "name": "submit_query_rewrite",
+                    "description": (
+                        "Submit the rewritten query and metadata filters."
+                    ),
+                    "input_schema": QUERY_REWRITE_SCHEMA,
+                }
+            ],
+            "tool_choice": {
+                "type": "tool",
+                "name": "submit_query_rewrite",
+            },
+        }
+        weak = {
+            "model": self.model_id,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        return [("tool_use", strict), ("prompt_json", weak)]
+
+    def _parse_rewrite_response(
+        self,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> ParsedRewrite:
+        if mode == "tool_use":
+            content = payload.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_use"
+                        and block.get("name") == "submit_query_rewrite"
+                    ):
+                        return parse_rewrite_payload(block.get("input"))
+            raise RewriteValidationError("missing_tool_use")
+        return parse_rewrite_text(self._response_text(payload))
+
+    def _rewrite_usage(self, payload: Dict[str, Any]) -> tuple[int, int]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        return (
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
 
     def _headers(self, *, stream: bool) -> Dict[str, str]:
         headers = super()._headers(stream=stream)

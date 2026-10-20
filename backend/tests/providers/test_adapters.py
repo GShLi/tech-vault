@@ -741,3 +741,104 @@ def test_chat_completions_rewrite_rejects_invalid_json():
         adapter.rewrite(question="q")
 
     assert error.value.code == "MODEL_RESPONSE_INVALID"
+
+
+def test_responses_rewrite_uses_text_format_and_downgrades():
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            assert body["text"]["format"]["type"] == "json_schema"
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "param": "text.format",
+                        "message": "json_schema unsupported",
+                    }
+                },
+            )
+        assert body["text"]["format"] == {"type": "json_object"}
+        return httpx.Response(
+            200,
+            json={
+                "output_text": json.dumps(
+                    {
+                        "rewritten_query": "Virtual threads",
+                        "filters": {
+                            "product": None,
+                            "version_values": [],
+                        },
+                    }
+                ),
+                "usage": {"input_tokens": 30, "output_tokens": 8},
+            },
+        )
+
+    adapter = OpenAIResponsesAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(question="Virtual threads")
+
+    assert result.structured_mode == "json_object"
+    assert result.input_tokens == 30
+    assert result.output_tokens == 8
+    assert len(calls) == 2
+
+
+def test_anthropic_rewrite_uses_forced_tool_use():
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["tool_choice"] == {
+            "type": "tool",
+            "name": "submit_query_rewrite",
+        }
+        assert body["tools"][0]["input_schema"]["properties"]["filters"]
+        return httpx.Response(
+            200,
+            json={
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "submit_query_rewrite",
+                        "input": {
+                            "rewritten_query": (
+                                "Elasticsearch 8.13 默认分片数"
+                            ),
+                            "filters": {
+                                "product": "elasticsearch",
+                                "version_values": ["8.13"],
+                            },
+                        },
+                    }
+                ],
+                "usage": {"input_tokens": 44, "output_tokens": 12},
+            },
+        )
+
+    adapter = AnthropicMessagesAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = adapter.rewrite(
+        question="它默认几个分片？",
+        history=(
+            {"role": "user", "content": "Elasticsearch 8.13"},
+        ),
+        allowed_products=("elasticsearch",),
+        allowed_versions=("8.13",),
+    )
+
+    assert result.structured_mode == "tool_use"
+    assert result.extracted_filters["product"] == "elasticsearch"
+    assert result.output_tokens == 12

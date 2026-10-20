@@ -1297,3 +1297,68 @@ def test_non_stream_retrieval_failure_persists_failed_trace(
         assert latencies["rewrite_ms"] >= 0
         assert latencies["embedding_ms"] >= 0
         assert latencies["retrieval_ms"] >= 0
+
+
+def test_chat_ask_rewrite_event_includes_self_query_metadata(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    result = SearchResult([], {}, False, "trace-rewrite-event")
+
+    class Provider:
+        provider_id = chat["provider_id"]
+        model_id = "model-test"
+        route = "openai_chat_completions"
+
+        def rewrite(self, **kwargs):
+            from backend.app.rag.llm_gateway.contracts import RewriteResult
+
+            return RewriteResult(
+                original_query=kwargs["question"],
+                rewritten_query="Spring Boot 虚拟线程",
+                changed=True,
+                route=self.route,
+                model_id=self.model_id,
+                provider_id=self.provider_id,
+                structured_mode="json_schema",
+                extracted_filters={
+                    "product": None,
+                    "version_values": [],
+                },
+            )
+
+        def generate(self, *, question, chunks, max_chunks):
+            return AnswerResult(
+                text="No evidence.",
+                status="refused",
+                citation_chunk_ids=(),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+                refusal_reason="INSUFFICIENT_EVIDENCE",
+            )
+
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        result,
+        Provider(),
+    )
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "它是什么？",
+            **_selection(chat),
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert "event: rewrite" in response.text
+    assert '"route": "openai_chat_completions"' in response.text
+    assert '"structured_mode": "json_schema"' in response.text
+    assert '"applied_filters"' in response.text

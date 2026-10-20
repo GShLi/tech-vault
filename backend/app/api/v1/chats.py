@@ -859,12 +859,22 @@ def _stream_answer_response(
                 classification=DataClassification.INTERNAL,
             )
             stage_latency["rewrite_ms"] = (time.perf_counter() - started) * 1000.0
-            if rewrite.changed:
+            extracted_product = rewrite.extracted_filters.get("product")
+            extracted_versions = (
+                rewrite.extracted_filters.get("version_values") or []
+            )
+            if rewrite.changed or extracted_product or extracted_versions:
                 yield sse(
                     "rewrite",
                     {
                         "original": rewrite.original_query,
                         "rewritten": rewrite.rewritten_query,
+                        "changed": rewrite.changed,
+                        "route": rewrite.route,
+                        "model_id": rewrite.model_id,
+                        "structured_mode": rewrite.structured_mode,
+                        "applied_filters": rewrite.applied_filters,
+                        "fallback_reason": rewrite.fallback_reason,
                     },
                 )
 
@@ -1708,6 +1718,12 @@ async def ask(
         "rewrite": {
             "original": rewrite.original_query,
             "rewritten": rewrite.rewritten_query,
+            "changed": rewrite.changed,
+            "route": rewrite.route,
+            "model_id": rewrite.model_id,
+            "structured_mode": rewrite.structured_mode,
+            "applied_filters": rewrite.applied_filters,
+            "fallback_reason": rewrite.fallback_reason,
         },
         "model": {
             "model_id": answer.model_id,

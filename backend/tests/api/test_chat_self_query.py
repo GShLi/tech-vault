@@ -176,8 +176,15 @@ def test_chat_applies_llm_self_query_filters_to_retrieval(
     assert response.status_code == 200, response.text
     assert captured["filters"].product == "spring-boot"
     assert captured["filters"].version_values == ("3.2",)
-    assert response.json()["data"]["status"] == "refused"
-    trace_id = response.json()["data"]["trace_id"]
+    answer = response.json()["data"]
+    assert answer["status"] == "refused"
+    assert answer["rewrite"]["route"] == "openai_chat_completions"
+    assert answer["rewrite"]["structured_mode"] == "json_schema"
+    assert answer["rewrite"]["applied_filters"] == {
+        "product": "spring-boot",
+        "version_values": ["3.2"],
+    }
+    trace_id = answer["trace_id"]
     with api_app.state.session_factory() as session:
         trace = session.query(TraceRecord).filter_by(trace_id=trace_id).one()
         rewrite_trace = json.loads(trace.rewrite)

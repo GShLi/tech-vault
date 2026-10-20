@@ -706,6 +706,137 @@ describe('ChatPage', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('opens, scrolls to, and briefly highlights a matching inline citation', async () => {
+    apiMocks.listMessages.mockResolvedValueOnce(
+      messagePage([
+        userMessage,
+        {
+          ...assistantMessage,
+          content: '启用参数即可 [c7]。',
+          citation_ids: [
+            {
+              citation_id: 'c7',
+              chunk_id: 'chunk-7',
+              document_name: '线程配置.md',
+              excerpt: '设置 spring.threads.virtual.enabled=true 可启用虚拟线程。',
+              source_url: '/api/v1/docs/download?document_id=doc-7',
+            },
+          ],
+        } as MessageView,
+      ]),
+    )
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+
+    const { wrapper } = await mountPage()
+    const inlineCitation = wrapper.get('[data-testid="inline-citation-c7"]')
+    const detailsSelector = '[data-testid="citation-details-c7"]'
+
+    expect(inlineCitation.element.tagName).toBe('BUTTON')
+    expect(wrapper.find(detailsSelector).exists()).toBe(false)
+
+    vi.useFakeTimers()
+    await inlineCitation.trigger('click')
+    await flushPromises()
+
+    const entry = wrapper.get('[data-testid="citation-entry-c7"]')
+    expect(wrapper.get(detailsSelector).text()).toContain(
+      '设置 spring.threads.virtual.enabled=true 可启用虚拟线程。',
+    )
+    expect(entry.classes()).toContain('citation-item-highlighted')
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'center',
+    })
+
+    await vi.advanceTimersByTimeAsync(1600)
+    await flushPromises()
+
+    expect(entry.classes()).not.toContain('citation-item-highlighted')
+    vi.useRealTimers()
+  })
+
+  it('toggles citation details from the citation entry button', async () => {
+    apiMocks.listMessages.mockResolvedValueOnce(
+      messagePage([
+        userMessage,
+        {
+          ...assistantMessage,
+          content: '启用参数即可 [c7]。',
+          citation_ids: [
+            {
+              citation_id: 'c7',
+              chunk_id: 'chunk-7',
+              document_name: '线程配置.md',
+              excerpt: '按需展开的引用正文。',
+              source_url: '/api/v1/docs/download?document_id=doc-7',
+            },
+          ],
+        } as MessageView,
+      ]),
+    )
+
+    const { wrapper } = await mountPage()
+    const entry = wrapper.get('[data-testid="citation-entry-c7"]')
+    const detailsSelector = '[data-testid="citation-details-c7"]'
+
+    expect(entry.element.tagName).toBe('BUTTON')
+    expect(entry.attributes('type')).toBe('button')
+    expect(wrapper.find(detailsSelector).exists()).toBe(false)
+
+    await entry.trigger('click')
+    expect(wrapper.get(detailsSelector).text()).toContain('按需展开的引用正文。')
+    expect(
+      wrapper.get(`${detailsSelector} a`).attributes('href'),
+    ).toBe('/api/v1/docs/download?document_id=doc-7')
+
+    await entry.trigger('click')
+    expect(wrapper.find(detailsSelector).exists()).toBe(false)
+  })
+
+  it('renders unmatched citation markers as non-clickable safe text', async () => {
+    apiMocks.listMessages.mockResolvedValueOnce(
+      messagePage([
+        userMessage,
+        {
+          ...assistantMessage,
+          content: '<script>alert(1)</script> 已知 [c7]，缺失 [c9]。',
+          citation_ids: [
+            {
+              citation_id: 'c7',
+              chunk_id: 'chunk-7',
+              document_name: '线程配置.md',
+              excerpt: '已知引用正文。',
+            },
+          ],
+        } as MessageView,
+      ]),
+    )
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+
+    const { wrapper } = await mountPage()
+    const unavailable = wrapper.get(
+      '[data-testid="inline-citation-unavailable-c9"]',
+    )
+
+    expect(unavailable.element.tagName).toBe('SPAN')
+    expect(unavailable.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('.message-row.assistant .message-content script').exists()).toBe(false)
+    expect(wrapper.get('.message-row.assistant .message-content').text()).toContain(
+      '<script>alert(1)</script>',
+    )
+
+    await unavailable.trigger('click')
+    await flushPromises()
+
+    expect(
+      scrollIntoView.mock.calls.some(
+        ([options]) =>
+          typeof options === 'object' && options?.behavior === 'smooth',
+      ),
+    ).toBe(false)
+    expect(wrapper.find('[data-testid="citation-details-c9"]').exists()).toBe(false)
+  })
+
   it('loads the next message page with the returned cursor', async () => {
     apiMocks.listMessages
       .mockResolvedValueOnce(messagePage([userMessage], 'message-cursor-1'))

@@ -482,17 +482,29 @@ def _persist_model_calls(
         )
 
 
-def _citation_rows(chunks: Sequence[Any]) -> List[dict]:
-    return [
-        {
-            "citation_id": "c{0}".format(index),
-            "chunk_id": chunk.chunk_id,
-            "document_version_id": chunk.document_version_id,
-            "excerpt": chunk.content[:500],
-            "source_locator": chunk.source_locator,
-        }
-        for index, chunk in enumerate(chunks, start=1)
-    ]
+def _citation_rows(
+    chunks: Sequence[Any],
+    context_chunks: Sequence[Any],
+) -> List[dict]:
+    source_indexes = {
+        chunk.chunk_id: index
+        for index, chunk in enumerate(context_chunks, start=1)
+    }
+    rows = []
+    for chunk in chunks:
+        source_index = source_indexes.get(chunk.chunk_id)
+        if source_index is None:
+            continue
+        rows.append(
+            {
+                "citation_id": "c{0}".format(source_index),
+                "chunk_id": chunk.chunk_id,
+                "document_version_id": chunk.document_version_id,
+                "excerpt": chunk.content[:500],
+                "source_locator": chunk.source_locator,
+            }
+        )
+    return rows
 
 
 def _hydrate_source_locators(session: Session, chunks: Sequence[Any]) -> List[Any]:
@@ -935,7 +947,7 @@ def _stream_answer_response(
                         refusal_reason="INSUFFICIENT_EVIDENCE",
                     )
                     sent_text = answer.text
-            citations = _citation_rows(citation_chunks)
+            citations = _citation_rows(citation_chunks, context_chunks)
 
             result = replace(
                 result,
@@ -994,6 +1006,7 @@ def _stream_answer_response(
                         "page_no": locator.get("page_no"),
                         "heading_path": locator.get("heading_path", []),
                         "source_url": locator.get("source_url", ""),
+                        "excerpt": citation["excerpt"],
                     },
                 )
             terminal = True
@@ -1427,7 +1440,7 @@ async def ask(
                     citation_chunk_ids=(),
                     refusal_reason="INSUFFICIENT_EVIDENCE",
                 )
-        citations = _citation_rows(citation_chunks)
+        citations = _citation_rows(citation_chunks, context_chunks)
         gateway_latency = {
             "gateway_{0}_ms".format(audit.purpose): float(audit.latency_ms)
             for audit in gateway.audits

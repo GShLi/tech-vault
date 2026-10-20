@@ -529,13 +529,82 @@ def test_chat_ask_streams_citations_delta_and_done(
     assert citation_index < done_index
     assert response.text.count("event: citation") == 1
     assert '"chunk_id": "chunk-2"' in response.text
-    assert '"citation_id": "c1"' in response.text
+    assert '"citation_id": "c2"' in response.text
+    assert '"excerpt": "Virtual threads reduce thread cost."' in response.text
     assert "event: delta" in response.text
     assert '"text": "Provider answer [c2]"' in response.text
     assert '"model_id": "model-test"' in response.text
     assert "event: done" in response.text
-    assert '"citation_ids": ["c1"]' in response.text
+    assert '"citation_ids": ["c2"]' in response.text
     assert "event: answer" not in response.text
+
+
+def test_chat_ask_non_stream_preserves_citation_source_index(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    result = SearchResult(
+        chunks=[
+            RetrievedChunk(
+                chunk_id="chunk-{0}".format(index),
+                document_version_id="version-{0}".format(index),
+                content="Evidence {0}".format(index),
+                fused_rank=index,
+                source_locator={"file_name": "evidence-{0}.md".format(index)},
+            )
+            for index in range(1, 8)
+        ],
+        stage_latency={},
+        degraded=False,
+        trace_id="trace-non-stream-c7",
+    )
+
+    class SeventhCitationProvider:
+        model_id = "model-test"
+        route = "local_model"
+
+        def generate(self, *, question, chunks, max_chunks):
+            return AnswerResult(
+                text="Provider answer [c7]",
+                status="completed",
+                citation_chunk_ids=("chunk-7",),
+                model_id=self.model_id,
+                route=self.route,
+                degraded=False,
+            )
+
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        result,
+        SeventhCitationProvider(),
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Use the seventh source",
+            **_selection(chat),
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["content"] == "Provider answer [c7]"
+    assert data["citations"] == [
+        {
+            "citation_id": "c7",
+            "chunk_id": "chunk-7",
+            "document_version_id": "version-7",
+            "excerpt": "Evidence 7",
+            "source_locator": {"file_name": "evidence-7.md"},
+        }
+    ]
 
 
 def test_chat_ask_non_stream_without_citations_refuses_with_model_text(

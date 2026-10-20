@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
   BookOpen,
+  ChevronDown,
   MessageSquare,
   Plus,
   Quote,
@@ -62,6 +63,15 @@ interface FeedbackState {
   selected?: FeedbackType
 }
 
+type MessageSegment =
+  | { type: 'text'; text: string }
+  | {
+      type: 'citation'
+      text: string
+      citationId: string
+      matched: boolean
+    }
+
 const feedbackOptions: Array<{
   type: FeedbackType
   label: string
@@ -117,7 +127,12 @@ const messageNextCursor = ref<string | null>(null)
 const messageHasMore = ref(false)
 const feedbackByMessage = ref<Record<string, FeedbackState>>({})
 const askContextByMessageId = ref<Record<string, AskContext>>({})
+const expandedCitations = ref<Record<string, boolean>>({})
+const highlightedCitations = ref<Record<string, boolean>>({})
+const citationEntryElements = new Map<string, HTMLElement>()
+const citationHighlightTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let providerOptionsRequestGeneration = 0
+const citationHighlightDurationMs = 1500
 
 const apiBaseUrl = computed(() =>
   (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, ''),
@@ -222,6 +237,7 @@ function resetConversationState(): void {
   citationsByMessage.value = {}
   feedbackByMessage.value = {}
   askContextByMessageId.value = {}
+  resetCitationInteractionState()
   degraded.value = false
   engineMode.value = ''
   traceId.value = ''
@@ -371,6 +387,7 @@ async function initialize(): Promise<void> {
 
 async function selectChat(chat: ChatView, syncRoute = true): Promise<void> {
   if (sending.value) return
+  resetCitationInteractionState()
   currentChat.value = chat
   selectedKbIds.value = [...chat.knowledge_base_ids]
   if (!selectedKbIds.value.length && knowledgeBases.value.length) {
@@ -899,6 +916,143 @@ function mergeCitations(assistant: MessageView, citations: CitationView[]): void
   citations.forEach((citation) => appendCitation(assistant, citation))
 }
 
+function citationId(citation: CitationView): string {
+  return citation.citation_id ?? citation.chunk_id ?? ''
+}
+
+function citationStateKey(message: MessageView, citation: CitationView): string {
+  return `${message.id}:${citationId(citation)}`
+}
+
+function citationDomId(message: MessageView, citation: CitationView): string {
+  return `citation-${message.id}-${citationId(citation)}`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    '-',
+  )
+}
+
+function citationForToken(
+  message: MessageView,
+  tokenCitationId: string,
+): CitationView | undefined {
+  const normalized = tokenCitationId.toLowerCase()
+  return citationsFor(message).find(
+    (citation) => citation.citation_id?.toLowerCase() === normalized,
+  )
+}
+
+function messageSegments(message: MessageView): MessageSegment[] {
+  if (message.role !== 'assistant') return [{ type: 'text', text: message.content }]
+  const citationIds = new Set(
+    citationsFor(message)
+      .map((citation) => citation.citation_id?.toLowerCase())
+      .filter((value): value is string => Boolean(value)),
+  )
+  const segments: MessageSegment[] = []
+  let lastIndex = 0
+  for (const match of message.content.matchAll(/\[(c\d+)\]/gi)) {
+    const index = match.index ?? 0
+    if (index > lastIndex) {
+      segments.push({
+        type: 'text',
+        text: message.content.slice(lastIndex, index),
+      })
+    }
+    const tokenCitationId = match[1].toLowerCase()
+    segments.push({
+      type: 'citation',
+      text: match[0],
+      citationId: tokenCitationId,
+      matched: citationIds.has(tokenCitationId),
+    })
+    lastIndex = index + match[0].length
+  }
+  if (lastIndex < message.content.length) {
+    segments.push({ type: 'text', text: message.content.slice(lastIndex) })
+  }
+  return segments
+}
+
+function registerCitationEntry(key: string, element: unknown): void {
+  if (element instanceof HTMLElement) {
+    citationEntryElements.set(key, element)
+    return
+  }
+  citationEntryElements.delete(key)
+}
+
+function isCitationExpanded(
+  message: MessageView,
+  citation: CitationView,
+): boolean {
+  return Boolean(expandedCitations.value[citationStateKey(message, citation)])
+}
+
+function isCitationHighlighted(
+  message: MessageView,
+  citation: CitationView,
+): boolean {
+  return Boolean(highlightedCitations.value[citationStateKey(message, citation)])
+}
+
+function toggleCitation(
+  message: MessageView,
+  citation: CitationView,
+): void {
+  const key = citationStateKey(message, citation)
+  expandedCitations.value = {
+    ...expandedCitations.value,
+    [key]: !expandedCitations.value[key],
+  }
+}
+
+function highlightCitation(key: string): void {
+  const currentTimer = citationHighlightTimers.get(key)
+  if (currentTimer) clearTimeout(currentTimer)
+  highlightedCitations.value = {
+    ...highlightedCitations.value,
+    [key]: true,
+  }
+  const timer = setTimeout(() => {
+    const next = { ...highlightedCitations.value }
+    delete next[key]
+    highlightedCitations.value = next
+    citationHighlightTimers.delete(key)
+  }, citationHighlightDurationMs)
+  citationHighlightTimers.set(key, timer)
+}
+
+async function activateCitation(
+  message: MessageView,
+  tokenCitationId: string,
+): Promise<void> {
+  const citation = citationForToken(message, tokenCitationId)
+  if (!citation) return
+  const key = citationStateKey(message, citation)
+  expandedCitations.value = {
+    ...expandedCitations.value,
+    [key]: true,
+  }
+  await nextTick()
+  const entry = citationEntryElements.get(key)
+  if (!entry) return
+  entry.scrollIntoView({
+    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth',
+    block: 'center',
+  })
+  highlightCitation(key)
+}
+
+function resetCitationInteractionState(): void {
+  citationHighlightTimers.forEach((timer) => clearTimeout(timer))
+  citationHighlightTimers.clear()
+  citationEntryElements.clear()
+  expandedCitations.value = {}
+  highlightedCitations.value = {}
+}
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -1015,6 +1169,7 @@ function isGenerating(message: MessageView): boolean {
 }
 
 onMounted(initialize)
+onBeforeUnmount(resetCitationInteractionState)
 
 watch(selectedProviderId, () => {
   selectedModelId.value = ''
@@ -1304,6 +1459,33 @@ watch(
                 <span class="typing-dot" />
                 <span>正在检索</span>
               </div>
+              <div v-else-if="message.role === 'assistant'" class="message-content">
+                <template
+                  v-for="(segment, segmentIndex) in messageSegments(message)"
+                  :key="`${message.id}-segment-${segmentIndex}`"
+                >
+                  <span v-if="segment.type === 'text'">{{ segment.text }}</span>
+                  <button
+                    v-else-if="segment.matched"
+                    class="citation-token"
+                    type="button"
+                    :data-testid="`inline-citation-${segment.citationId}`"
+                    :aria-label="`查看引用 ${segment.text}`"
+                    @click="activateCitation(message, segment.citationId)"
+                  >
+                    {{ segment.text }}
+                  </button>
+                  <span
+                    v-else
+                    class="citation-token citation-token-unavailable"
+                    :data-testid="`inline-citation-unavailable-${segment.citationId}`"
+                    aria-disabled="true"
+                    title="引用不可用"
+                  >
+                    {{ segment.text }}
+                  </span>
+                </template>
+              </div>
               <div v-else class="message-content">{{ message.content }}</div>
 
               <div v-if="message.status === 'refused'" class="refusal-note">
@@ -1326,20 +1508,46 @@ watch(
                   v-for="citation in citationsFor(message)"
                   :key="citation.citation_id ?? citation.chunk_id"
                   class="citation-item"
+                  :ref="(element) => registerCitationEntry(citationStateKey(message, citation), element)"
                 >
-                  <div class="citation-title">
-                    <strong>{{ citationHeading(citation) }}</strong>
-                    <span v-if="citationContext(citation)">{{ citationContext(citation) }}</span>
-                  </div>
-                  <p v-if="citation.excerpt">{{ citation.excerpt }}</p>
-                  <a
-                    v-if="citation.source_url"
-                    :href="citation.source_url"
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    class="citation-entry"
+                    :class="{
+                      'citation-item-highlighted': isCitationHighlighted(message, citation),
+                    }"
+                    type="button"
+                    :data-testid="`citation-entry-${citationId(citation)}`"
+                    :aria-expanded="isCitationExpanded(message, citation)"
+                    :aria-controls="citationDomId(message, citation)"
+                    @click="toggleCitation(message, citation)"
                   >
-                    查看来源
-                  </a>
+                    <span class="citation-title">
+                      <strong>{{ citationHeading(citation) }}</strong>
+                      <span v-if="citationContext(citation)">{{ citationContext(citation) }}</span>
+                    </span>
+                    <span class="citation-reference">{{ citationId(citation) }}</span>
+                    <ChevronDown
+                      :size="14"
+                      class="citation-chevron"
+                      :class="{ expanded: isCitationExpanded(message, citation) }"
+                    />
+                  </button>
+                  <div
+                    v-if="isCitationExpanded(message, citation)"
+                    :id="citationDomId(message, citation)"
+                    class="citation-details"
+                    :data-testid="`citation-details-${citationId(citation)}`"
+                  >
+                    <p v-if="citation.excerpt">{{ citation.excerpt }}</p>
+                    <a
+                      v-if="citation.source_url"
+                      :href="citation.source_url"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      查看来源
+                    </a>
+                  </div>
                 </article>
               </div>
 
@@ -1825,6 +2033,46 @@ watch(
   white-space: pre-wrap;
 }
 
+.citation-token {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: baseline;
+  justify-content: center;
+  margin: 0 1px;
+  padding: 0 4px;
+  border: 1px solid #a7d8d0;
+  border-radius: 4px;
+  background: #effaf7;
+  color: #0f766e;
+  font-family: inherit;
+  font-size: 0.82em;
+  font-weight: 700;
+  line-height: 1.35;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.citation-token:hover {
+  border-color: #5fb9aa;
+  background: #dcf5ef;
+}
+
+.citation-token:focus-visible,
+.citation-entry:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.citation-token-unavailable {
+  border-color: #d7dde5;
+  background: #f6f7f9;
+  color: #8792a2;
+  cursor: not-allowed;
+}
+
 .answer-loading {
   display: flex;
   align-items: center;
@@ -1902,14 +2150,37 @@ watch(
 }
 
 .citation-item {
-  display: grid;
-  gap: 4px;
   border-left: 2px solid #b8ddd7;
   padding-left: 10px;
+  border-radius: 0 6px 6px 0;
+}
+
+.citation-item-highlighted {
+  animation: citation-pulse 1.5s ease-out;
+}
+
+.citation-entry {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.citation-entry:hover {
+  background: #f3f8f7;
 }
 
 .citation-title {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 7px;
@@ -1918,18 +2189,67 @@ watch(
 .citation-title strong {
   color: #334155;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .citation-title span,
-.citation-item p,
-.citation-item a {
+.citation-reference,
+.citation-details p,
+.citation-details a {
   color: var(--muted);
   font-size: 11px;
 }
 
-.citation-item p {
+.citation-reference {
+  color: #0f766e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.citation-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.citation-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.citation-details {
+  display: grid;
+  gap: 7px;
+  margin: 2px 4px 5px;
+  border-top: 1px solid #dce9e6;
+  padding: 8px 7px 3px;
+}
+
+.citation-details p {
   margin: 0;
   line-height: 1.55;
+}
+
+.citation-details a {
+  width: fit-content;
+  color: #0f766e;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@keyframes citation-pulse {
+  0% {
+    background: #d9f4ee;
+    box-shadow: 0 0 0 2px rgb(15 118 110 / 18%);
+  }
+  72% {
+    background: #eef9f6;
+    box-shadow: 0 0 0 1px rgb(15 118 110 / 8%);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
 }
 
 .feedback-bar {
@@ -2125,6 +2445,19 @@ watch(
   .chat-filter-row {
     display: grid;
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .citation-token,
+  .citation-chevron {
+    transition: none;
+  }
+
+  .citation-item-highlighted {
+    animation: none;
+    background: #e8f7f3;
+    box-shadow: inset 0 0 0 1px rgb(15 118 110 / 18%);
   }
 }
 </style>

@@ -461,6 +461,9 @@ Content-Type: application/json
 回答引用只能来自模型输出中明确且有效的 `[cN]` 标记。模型未输出引用标记、
 只输出无效标记或明确表示知识库证据不足时，必须返回空引用并将消息标记为
 `refused`/`INSUFFICIENT_EVIDENCE`，不得把本轮检索到的全部 Chunk 自动作为引用。
+`citation_id` 必须保留 `context_chunks` 顺序对应的原始 `[cN]` 标签；例如模型引用
+第 7 个上下文 Chunk 时返回 `citation_id=c7`，不得按实际引用数量重编号为 `c1`。
+流式与非流式响应必须返回一致的 `citation_id`。
 
 ### 9.2 SSE 事件
 
@@ -472,7 +475,7 @@ event: rewrite
 data: {"original":"它和 2.x 有什么区别？","rewritten":"Spring Boot 3.x 自动配置与 2.x 有什么区别？"}
 
 event: citation
-data: {"citation_id":"c1","chunk_id":"01JCHUNK00000000000000001","document_id":"01JDOC0000000000000000001","document_version_id":"01JDV00000000000000000001","document_name":"spring-boot-reference.pdf","page_no":12,"heading_path":["Spring Boot","Auto-configuration"],"source_url":"/api/v1/docs/download?team_id=...&document_id=..."}
+data: {"citation_id":"c1","chunk_id":"01JCHUNK00000000000000001","document_id":"01JDOC0000000000000000001","document_version_id":"01JDV00000000000000000001","document_name":"spring-boot-reference.pdf","page_no":12,"heading_path":["Spring Boot","Auto-configuration"],"source_url":"/api/v1/docs/download?team_id=...&document_id=...","excerpt":"Virtual threads are ..."}
 
 event: delta
 data: {"text":"Spring Boot 3.2 "}
@@ -760,6 +763,8 @@ URI、bucket、签名参数或内部存储键。任何 Document 列表、详情�
 ```
 
 ### 15.5 Citation
+
+`citation_id` 与回答正文中的原始 `[cN]` 标记一一对应，用于定位并展开该引用详情。
 
 ```json
 {

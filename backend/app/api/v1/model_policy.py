@@ -401,22 +401,6 @@ def update_policy(
             "DEPLOYMENT_POLICY_LIMIT",
             "Document metadata cannot exceed the deployment policy.",
         )
-    if policy is not None and requested_chat_history and not policy.allow_chat_history:
-        raise ApiError(
-            409,
-            "TEAM_POLICY_LIMIT",
-            "Team policy updates can only tighten the existing policy.",
-        )
-    if (
-        policy is not None
-        and requested_document_metadata
-        and not policy.allow_document_metadata
-    ):
-        raise ApiError(
-            409,
-            "TEAM_POLICY_LIMIT",
-            "Team policy updates can only tighten the existing policy.",
-        )
     if policy is None:
         policy = ModelPolicyRecord(
             team_id=team_id,

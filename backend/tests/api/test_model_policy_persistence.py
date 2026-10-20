@@ -167,6 +167,52 @@ def test_team_can_add_deployment_allowed_provider_to_empty_policy(
     assert selected.json()["data"]["allowed_provider_ids"] == [provider["id"]]
 
 
+def test_team_can_enable_system_allowed_context_permissions(
+    api_client, admin_headers
+):
+    deployment = api_client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "max_data_classification": "internal",
+            "allow_chat_history": True,
+            "allow_document_metadata": True,
+        },
+        headers=admin_headers,
+    )
+    assert deployment.status_code == 200, deployment.text
+
+    team = _create_team(api_client, admin_headers)
+    created = api_client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team["id"],
+            "mode": "external_allowed",
+            "max_data_classification": "internal",
+            "allow_chat_history": False,
+            "allow_document_metadata": False,
+        },
+        headers=admin_headers,
+    )
+    assert created.status_code == 200, created.text
+
+    enabled = api_client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team["id"],
+            "mode": "external_allowed",
+            "max_data_classification": "internal",
+            "allow_chat_history": True,
+            "allow_document_metadata": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["data"]["allow_chat_history"] is True
+    assert enabled.json()["data"]["allow_document_metadata"] is True
+
+
 def test_confidential_input_is_normalized_to_canonical_restricted(
     api_client, admin_headers
 ):

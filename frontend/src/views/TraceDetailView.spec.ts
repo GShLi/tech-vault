@@ -53,6 +53,39 @@ const trace: TraceView = {
   created_at: '2026-10-20T08:00:00Z',
 }
 
+const chunkTrace: TraceView = {
+  ...trace,
+  bm25_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.91 }],
+  dense_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.88 }],
+  rrf_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.93 }],
+  rerank_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.97 }],
+  final_context: [{ chunk_id: 'chunk-7', rank: 1, score: 0.97 }],
+  chunk_details: {
+    'chunk-7': {
+      id: 'chunk-7',
+      document_id: 'doc-7',
+      document_name: 'virtual-threads.md',
+      knowledge_base_id: 'kb-7',
+      knowledge_base_name: 'Java KB',
+      content: 'Virtual threads are lightweight Java threads.',
+      heading_path: ['Virtual Threads', 'Scheduling'],
+      source_locator: { page_no: 3 },
+      chunk_status: 'enabled',
+      doc_status: 'active',
+      visibility: 'team_shared',
+      data_classification: 'internal',
+      index_generation: 'generation-1',
+      version: 2,
+      version_values: ['3.2'],
+      logical_chunk_key: 'logical-chunk-7',
+      content_hash: 'hash-7',
+      source_path: 'virtual-threads.md',
+      created_at: '2026-10-20T08:00:00Z',
+      updated_at: '2026-10-20T08:00:00Z',
+    },
+  },
+}
+
 function makePinia() {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -94,7 +127,14 @@ async function mountPage() {
   const wrapper = mount(TraceDetailView, {
     global: {
       plugins: [makePinia(), router],
-      stubs: { ASpin: { template: '<span />' } },
+      stubs: {
+        ASpin: { template: '<span />' },
+        ADrawer: {
+          props: ['visible'],
+          template:
+            '<div v-if="visible" data-testid="chunk-detail-drawer"><slot /></div>',
+        },
+      },
     },
   })
   await flushPromises()
@@ -131,5 +171,69 @@ describe('TraceDetailView', () => {
     expect(row.attributes('title')).toContain('gateway_embedding_ms')
     expect(row.attributes('title')).toContain('调用 Embedding 模型生成查询向量')
     expect(row.attributes('title')).toContain('38.6635420000232 ms')
+  })
+
+  it('shows clickable chunk content and copies raw JSON from the detail drawer', async () => {
+    apiMocks.getTrace.mockResolvedValueOnce(chunkTrace)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    const wrapper = await mountPage()
+    const trigger = wrapper.get('[data-testid="trace-chunk-chunk-7"]')
+
+    expect(trigger.element.tagName).toBe('BUTTON')
+    expect(trigger.attributes('title')).toBe('点击查看 Chunk 详情')
+    expect(trigger.text()).toContain(
+      'Virtual threads are lightweight Java threads.',
+    )
+
+    await trigger.trigger('click')
+
+    const drawer = wrapper.get('[data-testid="chunk-detail-drawer"]')
+    expect(drawer.text()).toContain('文档名称')
+    expect(drawer.text()).toContain('virtual-threads.md')
+    expect(drawer.text()).toContain('知识库')
+    expect(drawer.text()).toContain('Java KB')
+    expect(drawer.text()).toContain('标题路径')
+    expect(drawer.text()).toContain('Virtual Threads / Scheduling')
+    expect(drawer.text()).toContain(
+      'Virtual threads are lightweight Java threads.',
+    )
+
+    await wrapper.get('[data-testid="copy-chunk-json"]').trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '"content": "Virtual threads are lightweight Java threads."',
+      ),
+    )
+    expect(wrapper.get('[data-testid="copy-chunk-json"]').text()).toContain(
+      '已复制',
+    )
+  })
+
+  it('marks restricted chunk content without exposing the document body', async () => {
+    apiMocks.getTrace.mockResolvedValueOnce({
+      ...chunkTrace,
+      chunk_details: {
+        'chunk-7': { id: 'chunk-7', restricted: true },
+      },
+    })
+
+    const wrapper = await mountPage()
+    const trigger = wrapper.get('[data-testid="trace-chunk-chunk-7"]')
+    expect(trigger.text()).toContain('无权查看该 Chunk 内容')
+
+    await trigger.trigger('click')
+    const drawer = wrapper.get('[data-testid="chunk-detail-drawer"]')
+    expect(drawer.text()).toContain('该 Chunk 属于私有文档，当前账号无权查看详情')
+    expect(drawer.text()).not.toContain(
+      'Virtual threads are lightweight Java threads.',
+    )
+    expect(wrapper.find('[data-testid="copy-chunk-json"]').exists()).toBe(false)
   })
 })

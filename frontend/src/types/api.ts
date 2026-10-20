@@ -335,7 +335,32 @@ export interface TraceView {
   error_code: string | null
   model: JsonRecord
   feedback: TraceFeedback[]
+  chunk_details?: Record<string, TraceChunkDetail>
   created_at: string
+}
+
+export interface TraceChunkDetail {
+  id: string
+  restricted?: boolean
+  document_id?: string
+  document_name?: string | null
+  knowledge_base_id?: string
+  knowledge_base_name?: string | null
+  content?: string
+  heading_path?: string[]
+  source_locator?: JsonRecord
+  chunk_status?: string
+  doc_status?: string
+  visibility?: string
+  data_classification?: string
+  index_generation?: string
+  version?: number
+  version_values?: string[]
+  logical_chunk_key?: string
+  content_hash?: string
+  source_path?: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface TraceFeedback {

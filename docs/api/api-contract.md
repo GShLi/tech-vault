@@ -543,6 +543,31 @@ Trace 列表和详情都返回 `feedback` 数组。反馈通过
 ]
 ```
 
+Trace 列表不返回 Chunk 正文。`GET /traces/detail` 和
+`GET /traces/export` 额外返回 `chunk_details`，以 `chunk_id` 为键，包含文档名、
+知识库名、完整内容、标题路径、来源定位和版本信息。查看者必须具备对应知识库和
+文档的读取权限；无权查看的私有文档只返回受限标记，不返回正文：
+
+```json
+{
+  "chunk_details": {
+    "01JCHUNK00000000000000001": {
+      "id": "01JCHUNK00000000000000001",
+      "document_name": "spring-boot-reference.pdf",
+      "knowledge_base_name": "Java 知识库",
+      "content": "Virtual threads are ...",
+      "heading_path": ["Spring Boot", "Virtual Threads"],
+      "source_locator": {"page_no": 12},
+      "version": 3
+    },
+    "01JCHUNK00000000000000002": {
+      "id": "01JCHUNK00000000000000002",
+      "restricted": true
+    }
+  }
+}
+```
+
 只有聊天所有者、团队 `leader` 或平台 `admin` 可以读取对应 Trace。删除会话时
 反馈和消息被删除，Trace 会与原会话、消息解除关联后保留。
 

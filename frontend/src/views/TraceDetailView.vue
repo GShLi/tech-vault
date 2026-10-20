@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Braces, Download, Layers3, Search } from 'lucide-vue-next'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Braces,
+  Copy,
+  Download,
+  Layers3,
+  PanelRightOpen,
+  Search,
+} from 'lucide-vue-next'
 
 import { api, ApiRequestError } from '@/api/client'
 import StatusPill from '@/components/StatusPill.vue'
 import { useTeamStore } from '@/stores/team'
-import type { JsonRecord, TraceView } from '@/types/api'
+import type { JsonRecord, TraceChunkDetail, TraceView } from '@/types/api'
 import { formatDate, shortId } from '@/utils/format'
 import {
   formatTraceDuration,
@@ -19,6 +28,10 @@ const team = useTeamStore()
 const trace = ref<TraceView | null>(null)
 const loading = ref(false)
 const error = ref<ApiRequestError | null>(null)
+const drawerVisible = ref(false)
+const selectedChunkId = ref<string | null>(null)
+const copied = ref(false)
+let copyTimer: number | undefined
 
 const stages = computed(() => {
   const entries = Object.entries(trace.value?.stage_latency_ms ?? {}).filter(
@@ -48,6 +61,67 @@ const feedbackLabels: Record<string, string> = {
   knowledge_gap: '知识缺口',
 }
 
+const selectedChunk = computed<TraceChunkDetail | null>(() => {
+  const chunkId = selectedChunkId.value
+  if (!chunkId) return null
+  return trace.value?.chunk_details?.[chunkId] ?? null
+})
+
+const chunkFields = computed(() => {
+  const chunk = selectedChunk.value
+  if (!chunk || chunk.restricted) return []
+  return [
+    { label: 'Chunk ID', value: chunk.id, block: false },
+    { label: '文档名称', value: chunk.document_name || '—', block: false },
+    { label: '文档 ID', value: chunk.document_id || '—', block: false },
+    { label: '知识库', value: chunk.knowledge_base_name || '—', block: false },
+    { label: '知识库 ID', value: chunk.knowledge_base_id || '—', block: false },
+    { label: '状态', value: chunk.chunk_status || '—', block: false },
+    { label: '文档状态', value: chunk.doc_status || '—', block: false },
+    { label: '可见性', value: chunk.visibility || '—', block: false },
+    { label: '数据分级', value: chunk.data_classification || '—', block: false },
+    { label: '索引代次', value: chunk.index_generation || '—', block: false },
+    {
+      label: '版本',
+      value: chunk.version != null ? String(chunk.version) : '—',
+      block: false,
+    },
+    {
+      label: '版本值',
+      value: (chunk.version_values ?? []).join(', ') || '—',
+      block: false,
+    },
+    {
+      label: '标题路径',
+      value: (chunk.heading_path ?? []).join(' / ') || '—',
+      block: false,
+    },
+    {
+      label: '来源定位',
+      value: JSON.stringify(chunk.source_locator ?? {}, null, 2),
+      block: true,
+    },
+    { label: '来源路径', value: chunk.source_path || '—', block: false },
+    {
+      label: '逻辑 Chunk Key',
+      value: chunk.logical_chunk_key || '—',
+      block: false,
+    },
+    { label: '内容哈希', value: chunk.content_hash || '—', block: false },
+    {
+      label: '创建时间',
+      value: chunk.created_at ? formatDate(chunk.created_at) : '—',
+      block: false,
+    },
+    {
+      label: '更新时间',
+      value: chunk.updated_at ? formatDate(chunk.updated_at) : '—',
+      block: false,
+    },
+    { label: '内容', value: chunk.content || '—', block: true },
+  ]
+})
+
 function rowId(row: JsonRecord): string {
   return String(row.chunk_id ?? row.document_version_id ?? row.id ?? '—')
 }
@@ -55,6 +129,50 @@ function rowId(row: JsonRecord): string {
 function rowScore(row: JsonRecord): string {
   const value = row.rerank_score ?? row.rrf_score ?? row.score ?? row.similarity
   return typeof value === 'number' ? value.toFixed(4) : String(value ?? '—')
+}
+
+function chunkDetail(row: JsonRecord): TraceChunkDetail | null {
+  const chunkId = typeof row.chunk_id === 'string' ? row.chunk_id : ''
+  if (!chunkId) return null
+  return trace.value?.chunk_details?.[chunkId] ?? null
+}
+
+function chunkPreview(row: JsonRecord): string {
+  const chunk = chunkDetail(row)
+  if (!chunk) return 'Chunk 记录已不存在'
+  if (chunk.restricted) return '无权查看该 Chunk 内容'
+  return chunk.content?.trim() || 'Chunk 内容为空'
+}
+
+function openChunk(row: JsonRecord): void {
+  const chunkId = typeof row.chunk_id === 'string' ? row.chunk_id : ''
+  if (!chunkId) return
+  selectedChunkId.value = chunkId
+  copied.value = false
+  drawerVisible.value = true
+}
+
+async function copyChunkJson(): Promise<void> {
+  if (!selectedChunk.value) return
+  const text = JSON.stringify(selectedChunk.value, null, 2)
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
+  copied.value = true
+  if (copyTimer) window.clearTimeout(copyTimer)
+  copyTimer = window.setTimeout(() => {
+    copied.value = false
+  }, 1600)
 }
 
 async function load(): Promise<void> {
@@ -84,6 +202,9 @@ function exportSnapshot(): void {
 
 onMounted(load)
 watch(() => route.params.traceId, load)
+onBeforeUnmount(() => {
+  if (copyTimer) window.clearTimeout(copyTimer)
+})
 </script>
 
 <template>
@@ -164,12 +285,77 @@ watch(() => route.params.traceId, load)
         { title: 'Rerank 结果', rows: trace.rerank_candidates },
         { title: '最终上下文', rows: trace.final_context },
       ]" :key="group.title" class="panel detail-panel">
-        <div class="section-heading"><h3>{{ group.title }}</h3><span class="muted-text">{{ group.rows.length }} 条</span></div>
+        <div class="section-heading">
+          <h3>{{ group.title }}</h3>
+          <span class="muted-text">{{ group.rows.length }} 条 · 点击 Chunk 内容查看详情</span>
+        </div>
         <div v-if="group.rows.length" class="table-wrap">
-          <table><thead><tr><th>Chunk</th><th>分数</th><th>原始记录</th></tr></thead><tbody><tr v-for="(row, index) in group.rows" :key="`${group.title}-${index}`"><td>{{ rowId(row) }}</td><td>{{ rowScore(row) }}</td><td><code class="json-inline">{{ JSON.stringify(row) }}</code></td></tr></tbody></table>
+          <table>
+            <thead>
+              <tr><th>Chunk</th><th>分数</th><th>Chunk 内容</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in group.rows" :key="`${group.title}-${index}`">
+                <td>{{ rowId(row) }}</td>
+                <td>{{ rowScore(row) }}</td>
+                <td>
+                  <button
+                    class="chunk-content-trigger"
+                    type="button"
+                    :data-testid="`trace-chunk-${row.chunk_id ?? index}`"
+                    title="点击查看 Chunk 详情"
+                    @click="openChunk(row)"
+                  >
+                    <span class="chunk-content-preview">{{ chunkPreview(row) }}</span>
+                    <PanelRightOpen :size="14" aria-hidden="true" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         <div v-else class="empty-state compact"><Search :size="20" /><span>该阶段无候选</span></div>
       </section>
+
+      <a-drawer
+        v-model:visible="drawerVisible"
+        :width="560"
+        :footer="false"
+        title="Chunk 详情"
+        unmount-on-close
+      >
+        <div v-if="selectedChunk && !selectedChunk.restricted" class="chunk-detail-panel">
+          <div class="chunk-detail-toolbar">
+            <span class="muted-text">
+              {{ selectedChunk.document_name || selectedChunk.id }}
+            </span>
+            <button
+              class="secondary-button"
+              type="button"
+              data-testid="copy-chunk-json"
+              @click="copyChunkJson"
+            >
+              <Copy :size="16" />
+              {{ copied ? '已复制' : '复制原始 JSON' }}
+            </button>
+          </div>
+          <dl class="chunk-field-list">
+            <div v-for="field in chunkFields" :key="field.label" class="chunk-field">
+              <dt>{{ field.label }}</dt>
+              <dd>
+                <pre v-if="field.block" class="chunk-field-block">{{ field.value }}</pre>
+                <span v-else>{{ field.value }}</span>
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div v-else class="empty-state compact">
+          <AlertTriangle :size="20" />
+          <span>
+            {{ selectedChunk ? '该 Chunk 属于私有文档，当前账号无权查看详情' : 'Chunk 记录已不存在' }}
+          </span>
+        </div>
+      </a-drawer>
     </template>
   </div>
 </template>

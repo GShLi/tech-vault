@@ -534,4 +534,24 @@ def create_schema(engine: Engine) -> None:
     _bridge_model_provider_api_key(engine)
     _bridge_evaluation_run_provider(engine)
     _bridge_audit_log_nullability(engine)
+    _bridge_trace_rewrite(engine)
     _bridge_identifier_lengths(engine)
+
+
+def _bridge_trace_rewrite(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("retrieval_traces"):
+        return
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("retrieval_traces")
+    }
+    if "rewrite" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE retrieval_traces "
+                "ADD COLUMN rewrite TEXT NOT NULL DEFAULT '{}'"
+            )
+        )

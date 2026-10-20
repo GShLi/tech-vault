@@ -184,3 +184,26 @@ def test_create_schema_adds_chunk_auto_content_and_override_table():
             text("SELECT auto_content FROM chunks WHERE id = 'chk_legacy'")
         ).scalar_one()
     assert auto_content == "Automatic legacy content"
+
+
+def test_create_schema_adds_rewrite_to_legacy_retrieval_traces():
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE retrieval_traces ("
+                "id VARCHAR(26) PRIMARY KEY, "
+                "team_id VARCHAR(26) NOT NULL, "
+                "trace_id VARCHAR(36) NOT NULL, "
+                "original_query TEXT NOT NULL"
+                ")"
+            )
+        )
+
+    create_schema(engine)
+    create_schema(engine)
+    columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("retrieval_traces")
+    }
+    assert "rewrite" in columns

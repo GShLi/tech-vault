@@ -282,6 +282,48 @@ def _candidate_rows(chunks) -> list:
     ]
 
 
+def _rewrite_trace_payload(rewrite: Optional[Any]) -> dict:
+    if rewrite is None:
+        return {}
+    return {
+        "original_query": rewrite.original_query,
+        "rewritten_query": rewrite.rewritten_query,
+        "changed": rewrite.changed,
+        "route": rewrite.route,
+        "provider_id": rewrite.provider_id,
+        "model_id": rewrite.model_id,
+        "structured_mode": rewrite.structured_mode,
+        "extracted_filters": rewrite.extracted_filters,
+        "applied_filters": rewrite.applied_filters,
+        "dropped_filters": rewrite.dropped_filters,
+        "fallback_reason": rewrite.fallback_reason,
+        "validation_error": rewrite.validation_error,
+        "latency_ms": rewrite.latency_ms,
+        "input_tokens": rewrite.input_tokens,
+        "output_tokens": rewrite.output_tokens,
+    }
+
+
+def _rewrite_json(rewrite: Optional[Any]) -> str:
+    return json.dumps(
+        _rewrite_trace_payload(rewrite),
+        ensure_ascii=False,
+    )
+
+
+def _applied_filter_values(
+    rewrite: Optional[Any],
+    fallback_product: Optional[str],
+    fallback_versions: Sequence[str],
+) -> tuple[Optional[str], tuple[str, ...]]:
+    filters = rewrite.applied_filters if rewrite is not None else {}
+    product = filters.get("product", fallback_product)
+    versions = tuple(
+        filters.get("version_values", list(fallback_versions)) or ()
+    )
+    return product, versions
+
+
 def _recent_chat_history(session: Session, chat_id: str) -> List[dict]:
     rows = session.scalars(
         select(Message)
@@ -650,13 +692,19 @@ def _stream_answer_response(
             trace.rewritten_query = (
                 rewrite.rewritten_query if rewrite is not None else None
             )
+            trace.rewrite = _rewrite_json(rewrite)
+            trace_product, trace_versions = _applied_filter_values(
+                rewrite,
+                product,
+                version_values,
+            )
             trace.filters = json.dumps(
                 {
                     "team_id": team_id,
                     "knowledge_base_ids": list(knowledge_base_ids),
                     "viewer_user_id": user_id,
-                    "product": product,
-                    "version_values": list(version_values),
+                    "product": trace_product,
+                    "version_values": list(trace_versions),
                     "explicit_document_grant_count": len(explicit_document_grants),
                 }
             )
@@ -1237,6 +1285,11 @@ async def ask(
                     for audit in gateway_instance.audits
                 }
             )
+        failure_product, failure_versions = _applied_filter_values(
+            rewrite,
+            body.filters.product,
+            body.filters.version_values,
+        )
         session.add(
             TraceRecord(
                 team_id=body.team_id,
@@ -1248,13 +1301,14 @@ async def ask(
                 rewritten_query=(
                     rewrite.rewritten_query if rewrite is not None else None
                 ),
+                rewrite=_rewrite_json(rewrite),
                 filters=json.dumps(
                     {
                         "team_id": body.team_id,
                         "knowledge_base_ids": knowledge_base_ids,
                         "viewer_user_id": user.id,
-                        "product": body.filters.product,
-                        "version_values": body.filters.version_values,
+                        "product": failure_product,
+                        "version_values": list(failure_versions),
                         "explicit_document_grant_count": len(explicit_document_grants),
                     }
                 ),
@@ -1557,6 +1611,11 @@ async def ask(
         refusal_reason=refusal_reason,
     )
     session.add(assistant_message)
+    trace_product, trace_versions = _applied_filter_values(
+        rewrite,
+        body.filters.product,
+        body.filters.version_values,
+    )
     session.add(
         TraceRecord(
             team_id=body.team_id,
@@ -1566,13 +1625,14 @@ async def ask(
             engine_mode=engine_mode.value,
             original_query=question,
             rewritten_query=rewrite.rewritten_query,
+            rewrite=_rewrite_json(rewrite),
             filters=json.dumps(
                 {
                     "team_id": body.team_id,
                     "knowledge_base_ids": knowledge_base_ids,
                     "viewer_user_id": user.id,
-                    "product": body.filters.product,
-                    "version_values": body.filters.version_values,
+                    "product": trace_product,
+                    "version_values": list(trace_versions),
                     "explicit_document_grant_count": len(explicit_document_grants),
                 }
             ),

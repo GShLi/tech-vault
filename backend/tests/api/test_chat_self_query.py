@@ -1,7 +1,7 @@
 import json
 
 from backend.app.api.v1 import chats as chats_module
-from backend.app.db.models import Document, IndexGenerationRecord
+from backend.app.db.models import Document, IndexGenerationRecord, TraceRecord
 from backend.app.rag.domain.models import SearchResult
 
 
@@ -177,3 +177,12 @@ def test_chat_applies_llm_self_query_filters_to_retrieval(
     assert captured["filters"].product == "spring-boot"
     assert captured["filters"].version_values == ("3.2",)
     assert response.json()["data"]["status"] == "refused"
+    trace_id = response.json()["data"]["trace_id"]
+    with api_app.state.session_factory() as session:
+        trace = session.query(TraceRecord).filter_by(trace_id=trace_id).one()
+        rewrite_trace = json.loads(trace.rewrite)
+    assert rewrite_trace["structured_mode"] == "json_schema"
+    assert rewrite_trace["applied_filters"] == {
+        "product": "spring-boot",
+        "version_values": ["3.2"],
+    }

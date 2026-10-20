@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
       ]" :key="group.title" class="panel detail-panel">
         <div class="section-heading">
           <h3>{{ group.title }}</h3>
-          <span class="muted-text">{{ group.rows.length }} 条 · 点击 Chunk 内容查看详情</span>
+          <span class="muted-text">{{ group.rows.length }} 条</span>
         </div>
         <div v-if="group.rows.length" class="table-wrap">
           <table>

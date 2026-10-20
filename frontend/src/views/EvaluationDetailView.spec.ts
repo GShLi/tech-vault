@@ -188,4 +188,23 @@ describe('EvaluationDetailView provider selection', () => {
       }),
     )
   })
+
+  it('exposes providers inherited from the effective deployment policy', async () => {
+    apiMocks.getPolicy.mockResolvedValueOnce({
+      ...policy,
+      allowed_provider_ids: ['provider-1'],
+      version: 7,
+    })
+    const wrapper = await mountPage()
+
+    await wrapper.get('[data-testid="open-evaluation-run"]').trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get('[data-testid="run-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Provider One'])
+  })
 })

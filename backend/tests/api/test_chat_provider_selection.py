@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -132,13 +133,19 @@ def _add_generation(api_app, team_id):
         session.commit()
 
 
-def _stream_error_event(response):
+def _stream_event(response, event_name):
     for block in response.text.strip().split("\n\n"):
         lines = block.splitlines()
-        if lines and lines[0] == "event: error":
+        if lines and lines[0] == "event: {0}".format(event_name):
             data_line = next(line for line in lines if line.startswith("data:"))
             return json.loads(data_line.removeprefix("data:").lstrip())
-    raise AssertionError("stream response did not contain an error event")
+    raise AssertionError(
+        "stream response did not contain a {0} event".format(event_name)
+    )
+
+
+def _stream_error_event(response):
+    return _stream_event(response, "error")
 
 
 class _FakeSelectedAdapter:
@@ -655,6 +662,73 @@ def test_chat_ask_uses_selected_provider_for_stream_answer(
         model = json.loads(trace.model)
         assert model["provider_id"] == provider["id"]
         assert model["model_id"] == "model-a"
+
+
+def test_stream_done_latency_includes_provider_generation_time(
+    api_client,
+    api_app,
+    admin_headers,
+    monkeypatch,
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _select_provider(
+        api_client,
+        admin_headers,
+        team["id"],
+        chat["knowledge_base_ids"][0],
+    )
+    _add_generation(api_app, team["id"])
+    _install_fake_chat_stack(monkeypatch)
+
+    async def slow_pieces():
+        await asyncio.sleep(0.06)
+        yield "provider "
+        await asyncio.sleep(0.06)
+        yield "answer [c1]"
+
+    def slow_generate_stream(self, *, question, chunks, max_chunks):
+        return answer_stream_from_pieces(
+            slow_pieces(),
+            question=question,
+            chunks=tuple(chunks[:max_chunks]),
+            model_id=self.model_id,
+            route=self.route,
+        )
+
+    monkeypatch.setattr(
+        _FakeSelectedAdapter,
+        "generate_stream",
+        slow_generate_stream,
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Measure complete provider generation latency.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    done = _stream_event(response, "done")
+    with api_app.state.session_factory() as session:
+        trace = session.scalar(
+            select(TraceRecord).where(TraceRecord.trace_id == "trace-provider-selection")
+        )
+        assert trace is not None
+        persisted = json.loads(trace.stage_latency_ms)
+
+    assert persisted["gateway_answer_ms"] >= 100.0
+    pre_generation_total = sum(
+        value for key, value in persisted.items() if key != "gateway_answer_ms"
+    )
+    assert done["latency_ms"] == int(sum(persisted.values()))
+    assert done["latency_ms"] > int(pre_generation_total)
 
 
 def test_stream_policy_latency_excludes_gateway_construction(

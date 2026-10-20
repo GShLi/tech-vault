@@ -394,6 +394,23 @@ describe('ChatPage', () => {
     ).toEqual(['选择模型', 'claude-a'])
   })
 
+  it('exposes providers inherited from the effective deployment policy', async () => {
+    apiMocks.getPolicy.mockResolvedValueOnce({
+      ...modelPolicy,
+      allowed_provider_ids: ['provider-1', 'provider-2'],
+      version: 7,
+    })
+
+    const { wrapper } = await mountPage('/chat')
+
+    expect(
+      wrapper
+        .get('[data-testid="chat-provider-select"]')
+        .findAll('option')
+        .map((option) => option.text()),
+    ).toEqual(['选择供应商', 'Provider One', 'Provider Two'])
+  })
+
   it('clears provider options before the next team provider request resolves', async () => {
     const { wrapper } = await mountPage('/chat')
     expect(

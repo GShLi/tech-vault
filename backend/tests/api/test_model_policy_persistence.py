@@ -67,6 +67,53 @@ def test_deployment_policy_persists_and_caps_team_policy(api_client, admin_heade
     assert wider_than_deployment.json()["error"]["code"] == "DEPLOYMENT_POLICY_LIMIT"
 
 
+def test_team_policy_inherits_deployment_when_team_row_missing(
+    api_client, admin_headers
+):
+    team = _create_team(api_client, admin_headers)
+    provider = api_client.post(
+        "/api/v1/admin/providers/create",
+        json={
+            "name": "Inherited Policy Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "https://provider.example/v1",
+            "api_key": "sk-inherited-policy",
+            "model_ids": ["model-inherited"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    deployment = api_client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider["id"]],
+            "max_data_classification": "private",
+            "allow_chat_history": True,
+            "allow_document_metadata": True,
+        },
+        headers=admin_headers,
+    )
+    assert deployment.status_code == 200, deployment.text
+
+    response = api_client.get(
+        "/api/v1/model-policy",
+        params={"team_id": team["id"]},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {
+        "mode": "external_allowed",
+        "allowed_provider_ids": [provider["id"]],
+        "max_data_classification": "private",
+        "allow_chat_history": True,
+        "allow_document_metadata": True,
+        "require_redaction": True,
+        "version": 2,
+    }
+    assert "sk-inherited-policy" not in response.text
+
+
 def test_confidential_input_is_normalized_to_canonical_restricted(
     api_client, admin_headers
 ):

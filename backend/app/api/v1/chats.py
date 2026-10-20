@@ -576,6 +576,26 @@ def _stream_answer_response(
                 message.refusal_reason = refusal_reason
             stream_session.commit()
 
+    def effective_stage_latency(
+        *,
+        result: Optional[SearchResult],
+        stage_latency: Optional[dict[str, float]],
+        gateway_instance: Optional[LlmGateway],
+    ) -> dict[str, float]:
+        latency = dict(result.stage_latency) if result is not None else {}
+        if stage_latency:
+            latency.update(stage_latency)
+        if gateway_instance is not None:
+            latency.update(
+                {
+                    "gateway_{0}_ms".format(audit.purpose): float(
+                        audit.latency_ms
+                    )
+                    for audit in gateway_instance.audits
+                }
+            )
+        return latency
+
     def persist_trace(
         *,
         result: Optional[SearchResult],
@@ -654,18 +674,11 @@ def _stream_answer_response(
                 ],
                 ensure_ascii=False,
             )
-            latency = dict(result.stage_latency) if result is not None else {}
-            if stage_latency:
-                latency.update(stage_latency)
-            if gateway_instance is not None:
-                latency.update(
-                    {
-                        "gateway_{0}_ms".format(audit.purpose): float(
-                            audit.latency_ms
-                        )
-                        for audit in gateway_instance.audits
-                    }
-                )
+            latency = effective_stage_latency(
+                result=result,
+                stage_latency=stage_latency,
+                gateway_instance=gateway_instance,
+            )
             trace.stage_latency_ms = json.dumps(latency)
             trace.degraded = bool(
                 (result is not None and result.degraded)
@@ -986,7 +999,15 @@ def _stream_answer_response(
                     "input_tokens": answer.input_tokens,
                     "output_tokens": answer.output_tokens,
                     "cost_micros": answer.cost_micros,
-                    "latency_ms": int(sum(result.stage_latency.values())),
+                    "latency_ms": int(
+                        sum(
+                            effective_stage_latency(
+                                result=result,
+                                stage_latency=stage_latency,
+                                gateway_instance=gateway,
+                            ).values()
+                        )
+                    ),
                 },
             )
         except _StreamCancelled:

@@ -31,6 +31,22 @@ def test_normalize_model_list_url(base_url, expected):
     assert normalize_model_list_url(base_url) == expected
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://[::1",
+        "https://gateway.example:bad/v1",
+    ],
+)
+def test_normalize_model_list_url_rejects_malformed_authority(base_url):
+    with pytest.raises(ModelDiscoveryError) as caught:
+        normalize_model_list_url(base_url)
+
+    assert caught.value.status_code == 400
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert str(caught.value) == "Base URL must be an absolute HTTP or HTTPS URL."
+
+
 def test_openai_model_discovery_uses_bearer_auth_and_reads_data_ids():
     def handler(request):
         assert str(request.url) == "https://gateway.example/v1/models"

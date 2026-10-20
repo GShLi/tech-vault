@@ -109,6 +109,36 @@ def test_admin_provider_model_discovery_is_available_without_team_context(
     assert response.json()["data"]["models"] == ["admin-model"]
 
 
+@pytest.mark.parametrize(
+    ("path", "base_url"),
+    [
+        ("/api/v1/providers/models", "http://[::1"),
+        ("/api/v1/providers/models", "https://gateway.example:bad/v1"),
+        ("/api/v1/admin/providers/models", "http://[::1"),
+        ("/api/v1/admin/providers/models", "https://gateway.example:bad/v1"),
+    ],
+)
+def test_provider_model_discovery_rejects_malformed_urls(
+    api_client, admin_headers, path, base_url
+):
+    body = {
+        "provider_type": "openai_chat_completions",
+        "base_url": base_url,
+        "api_key": "sk-discovery-secret",
+    }
+    if path == "/api/v1/providers/models":
+        body["team_id"] = _create_team(api_client, admin_headers)["id"]
+
+    response = api_client.post(path, json=body, headers=admin_headers)
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["message"] == "Base URL must be an absolute HTTP or HTTPS URL."
+    assert error["request_id"]
+    assert "sk-discovery-secret" not in response.text
+
+
 def test_provider_type_only_accepts_supported_upstream_formats(
     api_client, admin_headers
 ):

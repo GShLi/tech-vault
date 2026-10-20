@@ -214,18 +214,6 @@ def _policy_view(policy: ModelPolicyRecord) -> dict:
     }
 
 
-def _default_policy() -> dict:
-    return {
-        "mode": "local_only",
-        "allowed_provider_ids": [],
-        "max_data_classification": "internal",
-        "allow_chat_history": False,
-        "allow_document_metadata": False,
-        "require_redaction": True,
-        "version": 1,
-    }
-
-
 def _deployment_policy(session: Session) -> DeploymentModelPolicyRecord:
     policy = session.scalar(
         select(DeploymentModelPolicyRecord).order_by(
@@ -300,9 +288,7 @@ def get_policy(
     )
     deployment = _deployment_policy(session)
     if policy is None:
-        data = _default_policy()
-        data["mode"] = "local_only"
-        return envelope(data, request.state.request_id)
+        return envelope(_deployment_view(deployment), request.state.request_id)
     if _MODE_RANK[policy.mode] > _MODE_RANK[deployment.mode]:
         policy.mode = deployment.mode
     if (

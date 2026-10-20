@@ -1362,3 +1362,20 @@ def test_chat_ask_rewrite_event_includes_self_query_metadata(
     assert '"route": "openai_chat_completions"' in response.text
     assert '"structured_mode": "json_schema"' in response.text
     assert '"applied_filters"' in response.text
+
+
+def test_candidate_rows_include_bm25_matched_terms():
+    rows = chats_module._candidate_rows(
+        [
+            RetrievedChunk(
+                chunk_id="chunk-highlight",
+                document_version_id="version-1",
+                content="Virtual threads",
+                fused_rank=1,
+                bm25_rank=1,
+                matched_terms=("Virtual", "threads"),
+            )
+        ]
+    )
+
+    assert rows[0]["matched_terms"] == ["Virtual", "threads"]

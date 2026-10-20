@@ -163,6 +163,44 @@ function chunkPreview(row: JsonRecord): string {
   return chunk.content?.trim() || 'Chunk 内容为空'
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function chunkSegments(
+  row: JsonRecord,
+): Array<{ text: string; highlighted: boolean }> {
+  const text = chunkPreview(row)
+  const matchedTerms = Array.isArray(row.matched_terms)
+    ? row.matched_terms.filter(
+        (value): value is string =>
+          typeof value === 'string' && value.trim().length > 0,
+      )
+    : []
+  const uniqueTerms = [
+    ...new Map(
+      matchedTerms.map((term) => [term.toLocaleLowerCase(), term]),
+    ).values(),
+  ].sort((left, right) => right.length - left.length)
+  if (!uniqueTerms.length) {
+    return [{ text, highlighted: false }]
+  }
+  const normalizedTerms = new Set(
+    uniqueTerms.map((term) => term.toLocaleLowerCase()),
+  )
+  const pattern = new RegExp(
+    `(${uniqueTerms.map(escapeRegex).join('|')})`,
+    'gi',
+  )
+  return text
+    .split(pattern)
+    .filter(Boolean)
+    .map((segment) => ({
+      text: segment,
+      highlighted: normalizedTerms.has(segment.toLocaleLowerCase()),
+    }))
+}
+
 function openChunk(row: JsonRecord): void {
   const chunkId = typeof row.chunk_id === 'string' ? row.chunk_id : ''
   if (!chunkId) return
@@ -356,7 +394,15 @@ onBeforeUnmount(() => {
                     title="点击查看 Chunk 详情"
                     @click="openChunk(row)"
                   >
-                    <span class="chunk-content-preview">{{ chunkPreview(row) }}</span>
+                    <span class="chunk-content-preview">
+                      <template
+                        v-for="(segment, segmentIndex) in chunkSegments(row)"
+                        :key="segmentIndex"
+                      >
+                        <mark v-if="segment.highlighted">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </span>
                     <PanelRightOpen :size="14" aria-hidden="true" />
                   </button>
                 </td>

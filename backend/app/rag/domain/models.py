@@ -112,6 +112,7 @@ class RetrievedChunk:
     bm25_rank: Optional[int] = None
     dense_rank: Optional[int] = None
     rerank_score: Optional[float] = None
+    matched_terms: Tuple[str, ...] = ()
     source_locator: Dict[str, Any] = field(default_factory=dict)
 
 

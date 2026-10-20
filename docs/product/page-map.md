@@ -205,6 +205,9 @@
 按“字段名 + 内容”查看完整明细，并可复制原始 JSON。无权限查看的私有 Chunk 只显示
 受限提示，不展示正文；已被删除的 Chunk 显示记录不存在。
 
+BM25 候选使用 Elasticsearch 返回的实际命中词在 Chunk 摘要中高亮；Dense、RRF、
+Rerank 和最终上下文不显示关键词高亮。旧 Trace 没有命中词数据时保持普通文本。
+
 QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（LLM 结构化、LLM JSON、
 规则回退）、应用的 product/version 过滤条件、provider/model、耗时、token 和回退
 原因。旧 Trace 没有改写元数据时不显示该区块。

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -18,8 +20,28 @@ from backend.app.rag.fusion.rrf import reciprocal_rank_fusion
 from .filters import elasticsearch_bool_query, qdrant_filter
 
 
+_HIGHLIGHT_TERM_RE = re.compile(r"<em>(.*?)</em>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
 def _source(hit: Dict[str, Any]) -> Dict[str, Any]:
     return hit.get("_source", hit)
+
+
+def _matched_terms(hit: Dict[str, Any]) -> tuple:
+    fragments = hit.get("highlight", {}).get("content", [])
+    terms = []
+    seen = set()
+    for fragment in fragments:
+        if not isinstance(fragment, str):
+            continue
+        for raw_term in _HIGHLIGHT_TERM_RE.findall(fragment):
+            term = html.unescape(_HTML_TAG_RE.sub("", raw_term)).strip()
+            key = term.casefold()
+            if term and key not in seen:
+                seen.add(key)
+                terms.append(term)
+    return tuple(terms)
 
 
 class _BaseEngine:
@@ -54,6 +76,7 @@ class _BaseEngine:
         *,
         bm25_rank: Optional[int] = None,
         dense_rank: Optional[int] = None,
+        matched_terms: tuple = (),
     ) -> RetrievedChunk:
         return RetrievedChunk(
             chunk_id=source.get("chunk_id", ""),
@@ -62,6 +85,7 @@ class _BaseEngine:
             fused_rank=rank,
             bm25_rank=bm25_rank,
             dense_rank=dense_rank,
+            matched_terms=matched_terms,
             source_locator=source.get("source_locator", {}),
         )
 
@@ -73,6 +97,13 @@ class ElasticsearchBM25Retriever(_BaseEngine):
         started = time.perf_counter()
         body = {
             "size": request.bm25_top_k,
+            "highlight": {
+                "fields": {
+                    "content": {
+                        "number_of_fragments": 0,
+                    }
+                }
+            },
             "query": {
                 "bool": {
                     "must": [
@@ -85,7 +116,12 @@ class ElasticsearchBM25Retriever(_BaseEngine):
         response = await self._request("POST", "/" + self._index + "/_search", json=body)
         hits = response.json().get("hits", {}).get("hits", [])
         chunks = [
-            self._to_retrieved(_source(hit), rank, bm25_rank=rank)
+            self._to_retrieved(
+                _source(hit),
+                rank,
+                bm25_rank=rank,
+                matched_terms=_matched_terms(hit),
+            )
             for rank, hit in enumerate(hits, start=1)
         ]
         latency = {"bm25_ms": (time.perf_counter() - started) * 1000.0}
@@ -105,11 +141,22 @@ class ElasticsearchHybridRetriever(_BaseEngine):
             "/" + self._index + "/_search",
             json={
                 "size": request.bm25_top_k,
+                "highlight": {
+                    "fields": {
+                        "content": {
+                            "number_of_fragments": 0,
+                        }
+                    }
+                },
                 "query": {"bool": {"must": [filters, {"match": {"content": text}}]}},
             },
         )
         bm25_hits = lexical.json().get("hits", {}).get("hits", [])
         bm25_ids = [_source(hit).get("chunk_id", "") for hit in bm25_hits]
+        bm25_terms = {
+            _source(hit).get("chunk_id", ""): _matched_terms(hit)
+            for hit in bm25_hits
+        }
 
         dense_hits: List[Dict[str, Any]] = []
         if request.query_vector:
@@ -144,6 +191,7 @@ class ElasticsearchHybridRetriever(_BaseEngine):
                 candidate.fused_rank,
                 bm25_rank=bm25_rank.get(candidate.chunk_id),
                 dense_rank=dense_rank.get(candidate.chunk_id),
+                matched_terms=bm25_terms.get(candidate.chunk_id, ()),
             )
             for candidate in fused[: request.rerank_input_size]
         ]
@@ -157,7 +205,12 @@ class ElasticsearchHybridRetriever(_BaseEngine):
             degraded=result.degraded,
             trace_id=result.trace_id,
             bm25_candidates=tuple(
-                self._to_retrieved(_source(hit), rank, bm25_rank=rank)
+                self._to_retrieved(
+                    _source(hit),
+                    rank,
+                    bm25_rank=rank,
+                    matched_terms=_matched_terms(hit),
+                )
                 for rank, hit in enumerate(bm25_hits, start=1)
             ),
             dense_candidates=tuple(

@@ -1638,6 +1638,13 @@ tbody tr:last-child td {
   -webkit-line-clamp: 2;
 }
 
+.chunk-content-preview mark {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #fde68a;
+  color: #713f12;
+}
+
 .chunk-detail-toolbar {
   display: flex;
   align-items: center;

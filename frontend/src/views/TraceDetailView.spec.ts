@@ -55,7 +55,14 @@ const trace: TraceView = {
 
 const chunkTrace: TraceView = {
   ...trace,
-  bm25_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.91 }],
+  bm25_candidates: [
+    {
+      chunk_id: 'chunk-7',
+      rank: 1,
+      score: 0.91,
+      matched_terms: ['Virtual', 'threads'],
+    },
+  ],
   dense_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.88 }],
   rrf_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.93 }],
   rerank_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.97 }],
@@ -273,5 +280,20 @@ describe('TraceDetailView', () => {
     expect(panel.text()).toContain('spring-boot')
     expect(panel.text()).toContain('3.2')
     expect(panel.text()).toContain('gpt-5-mini')
+  })
+
+  it('highlights BM25 matched terms in the chunk preview', async () => {
+    apiMocks.getTrace.mockResolvedValueOnce(chunkTrace)
+
+    const wrapper = await mountPage()
+    const marks = wrapper.findAll('.chunk-content-preview mark')
+
+    expect(marks.map((mark) => mark.text())).toEqual([
+      'Virtual',
+      'threads',
+      'threads',
+    ])
+    expect(wrapper.findAll('.chunk-content-preview').length).toBe(5)
+    expect(wrapper.findAll('.chunk-content-preview mark').length).toBe(3)
   })
 })

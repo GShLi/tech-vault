@@ -161,3 +161,44 @@ def test_bm25_and_dense_candidates_use_top_k_not_final_top_n():
     assert len(dense_result.chunks) == 50
     assert calls[0][1]["size"] == 50
     assert calls[1][1]["limit"] == 50
+
+
+def test_bm25_retriever_requests_and_parses_elasticsearch_highlights():
+    calls = []
+
+    async def fake_request(method, path, **kwargs):
+        calls.append(kwargs.get("json"))
+        return _FakeResponse(
+            {
+                "hits": {
+                    "hits": [
+                        {
+                            "_source": {
+                                "chunk_id": "chunk-highlight",
+                                "document_version_id": "dv-1",
+                                "content": (
+                                    "Virtual threads are lightweight Java "
+                                    "threads."
+                                ),
+                            },
+                            "highlight": {
+                                "content": [
+                                    "<em>Virtual</em> <em>threads</em> are "
+                                    "lightweight.",
+                                    "<em>Virtual</em> scheduling.",
+                                ]
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+
+    retriever = ElasticsearchBM25Retriever("http://es", "index")
+    retriever._request = fake_request
+
+    result = asyncio.run(retriever.search(_request()))
+
+    highlight = calls[0]["highlight"]["fields"]["content"]
+    assert highlight["number_of_fragments"] == 0
+    assert result.chunks[0].matched_terms == ("Virtual", "threads")

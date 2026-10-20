@@ -535,6 +535,18 @@ Trace 详情至少返回：
 - 模型、策略、token、成本和耗时。
 - `degraded`、错误和用户反馈。
 
+BM25 候选额外返回 `matched_terms`，其值来自 Elasticsearch `highlight` 的实际命中
+词项，用于 Trace 页高亮。旧 Trace 或未返回高亮信息的候选使用空数组：
+
+```json
+{
+  "chunk_id": "01JCHUNK...",
+  "rank": 1,
+  "bm25_rank": 1,
+  "matched_terms": ["virtual", "threads"]
+}
+```
+
 Trace 列表和详情都返回 `feedback` 数组。反馈通过
 `POST /messages/feedback` 写入，并按 Trace 的 `message_id` 关联：
 

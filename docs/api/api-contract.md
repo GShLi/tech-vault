@@ -458,6 +458,10 @@ Content-Type: application/json
 `503 MODEL_UNAVAILABLE`；上游响应格式无效返回 `502 MODEL_RESPONSE_INVALID`。
 问答接口不得回退到本地抽取式生成。
 
+回答引用只能来自模型输出中明确且有效的 `[cN]` 标记。模型未输出引用标记、
+只输出无效标记或明确表示知识库证据不足时，必须返回空引用并将消息标记为
+`refused`/`INSUFFICIENT_EVIDENCE`，不得把本轮检索到的全部 Chunk 自动作为引用。
+
 ### 9.2 SSE 事件
 
 ```text

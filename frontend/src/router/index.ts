@@ -72,7 +72,7 @@ export const appRoutes: RouteRecordRaw[] = [
       { path: 'admin/users', name: 'admin-users', component: AdminUsersView, meta: { title: '用户管理', adminOnly: true } },
       { path: 'admin/audit', name: 'admin-audit', component: AdminAuditView, meta: { title: '全局审计', adminOnly: true } },
       { path: 'admin/audit/:auditId', name: 'admin-audit-detail', component: AdminAuditView, meta: { title: '审计详情', adminOnly: true } },
-      { path: 'admin/model-policy', name: 'admin-model-policy', component: AdminPolicyView, meta: { title: '全局模型策略', adminOnly: true } },
+      { path: 'admin/model-policy', name: 'admin-model-policy', component: AdminPolicyView, meta: { title: '系统级模型策略', adminOnly: true } },
       { path: 'admin/model-providers', name: 'admin-model-providers', component: AdminProvidersView, meta: { title: '供应商准入', adminOnly: true } },
       { path: 'admin/system', name: 'admin-system', component: AdminSystemView, meta: { title: '系统状态', adminOnly: true } },
       { path: 'members', name: 'members-legacy', component: MembersView, meta: { title: '成员管理' } },

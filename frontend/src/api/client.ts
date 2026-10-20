@@ -1011,6 +1011,8 @@ export const api = {
     mode: string
     max_data_classification?: string
     allowed_provider_ids?: string[]
+    allow_chat_history?: boolean
+    allow_document_metadata?: boolean
   }): Promise<ModelPolicy> {
     return postData<ModelPolicy>('/admin/model-policy/update', body)
   },

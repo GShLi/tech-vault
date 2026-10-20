@@ -134,6 +134,40 @@ describe('AdminPolicyView provider admission', () => {
       mode: 'external_allowed',
       max_data_classification: 'restricted',
       allowed_provider_ids: ['provider-openai', 'provider-anthropic'],
+      allow_chat_history: false,
+      allow_document_metadata: false,
+    })
+  })
+
+  it('edits and saves system-level context permissions', async () => {
+    apiMocks.getAdminPolicy.mockResolvedValue({
+      ...adminPolicy,
+      allow_chat_history: false,
+      allow_document_metadata: false,
+    })
+    const wrapper = await mountPage()
+
+    expect(wrapper.text()).toContain('系统级模型策略')
+    const chatHistory = wrapper.get(
+      '[data-testid="admin-allow-chat-history"]',
+    )
+    const documentMetadata = wrapper.get(
+      '[data-testid="admin-allow-document-metadata"]',
+    )
+    expect((chatHistory.element as HTMLInputElement).checked).toBe(false)
+    expect((documentMetadata.element as HTMLInputElement).checked).toBe(false)
+
+    await chatHistory.setValue(true)
+    await documentMetadata.setValue(true)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(apiMocks.updateAdminPolicy).toHaveBeenCalledWith({
+      mode: 'external_allowed',
+      max_data_classification: 'restricted',
+      allowed_provider_ids: ['provider-openai'],
+      allow_chat_history: true,
+      allow_document_metadata: true,
     })
   })
 
@@ -142,7 +176,7 @@ describe('AdminPolicyView provider admission', () => {
 
     const wrapper = await mountPage()
 
-    expect(wrapper.text()).toContain('暂无平台供应商')
+    expect(wrapper.text()).toContain('暂无系统级供应商')
     expect(wrapper.find('a[href="/admin/model-providers"]').exists()).toBe(true)
   })
 

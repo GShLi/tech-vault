@@ -14,6 +14,8 @@ const providers = ref<ModelProvider[]>([])
 const mode = ref('local_only')
 const maxClassification = ref('internal')
 const allowedProviderIds = ref<string[]>([])
+const allowChatHistory = ref(false)
+const allowDocumentMetadata = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref<ApiRequestError | null>(null)
@@ -31,6 +33,8 @@ async function load(): Promise<void> {
     mode.value = policyView.mode
     maxClassification.value = policyView.max_data_classification
     allowedProviderIds.value = [...policyView.allowed_provider_ids]
+    allowChatHistory.value = policyView.allow_chat_history
+    allowDocumentMetadata.value = policyView.allow_document_metadata
   } catch (caught) {
     error.value = caught instanceof ApiRequestError ? caught : null
   } finally {
@@ -52,9 +56,13 @@ async function save(): Promise<void> {
       mode: mode.value,
       max_data_classification: maxClassification.value,
       allowed_provider_ids: [...allowedProviderIds.value],
+      allow_chat_history: allowChatHistory.value,
+      allow_document_metadata: allowDocumentMetadata.value,
     })
     allowedProviderIds.value = [...policy.value.allowed_provider_ids]
-    Message.success('平台模型策略已更新')
+    allowChatHistory.value = policy.value.allow_chat_history
+    allowDocumentMetadata.value = policy.value.allow_document_metadata
+    Message.success('系统级模型策略已更新')
   } catch (caught) {
     error.value = caught instanceof ApiRequestError ? caught : null
   } finally {
@@ -67,7 +75,7 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="page-header"><div><h2>全局模型策略</h2><p>平台级模型调用上限，团队策略只能在其范围内收紧。</p></div><StatusPill v-if="policy" :status="policy.mode" /></div>
+    <div class="page-header"><div><h2>系统级模型策略</h2><p>系统级模型调用上限，团队策略只能在其范围内收紧。</p></div><StatusPill v-if="policy" :status="policy.mode" /></div>
     <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
     <div v-if="loading && !policy" class="panel loading-state"><a-spin /><span>正在加载平台策略</span></div>
     <div v-else class="split-grid">
@@ -76,7 +84,23 @@ onMounted(load)
         <form class="form-stack" @submit.prevent="save">
           <label class="field"><span>平台模式</span><select v-model="mode"><option value="local_only">仅本地模型</option><option value="external_allowed">允许外部模型</option><option value="external_required">仅外部模型</option></select></label>
           <label class="field"><span>允许的最大数据分类</span><select v-model="maxClassification"><option value="public">公开</option><option value="internal">内部</option><option value="private">私有</option><option value="restricted">受限</option></select></label>
-          <button class="primary-button" type="submit" :disabled="saving"><Save :size="16" />{{ saving ? '保存中' : '保存平台策略' }}</button>
+          <label class="check-field">
+            <input
+              v-model="allowChatHistory"
+              data-testid="admin-allow-chat-history"
+              type="checkbox"
+            />
+            <span>允许向模型发送会话历史</span>
+          </label>
+          <label class="check-field">
+            <input
+              v-model="allowDocumentMetadata"
+              data-testid="admin-allow-document-metadata"
+              type="checkbox"
+            />
+            <span>允许向模型发送文档元数据</span>
+          </label>
+          <button class="primary-button" type="submit" :disabled="saving"><Save :size="16" />{{ saving ? '保存中' : '保存系统级策略' }}</button>
         </form>
       </section>
       <section class="panel detail-panel">
@@ -103,7 +127,7 @@ onMounted(load)
         </div>
         <div v-else class="empty-state compact provider-admission-empty">
           <Server :size="22" />
-          <span>暂无平台供应商</span>
+          <span>暂无系统级供应商</span>
           <RouterLink class="secondary-button" to="/admin/model-providers">前往供应商管理</RouterLink>
         </div>
         <div v-if="mode === 'local_only'" class="notice-box">

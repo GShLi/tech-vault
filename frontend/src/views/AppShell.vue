@@ -60,7 +60,7 @@ const governanceItems: NavItem[] = [
 const adminItems: NavItem[] = [
   { to: '/admin/users', label: '用户管理', icon: UserPlus, adminOnly: true },
   { to: '/admin/audit', label: '全局审计', icon: ScrollText, adminOnly: true },
-  { to: '/admin/model-policy', label: '全局模型策略', icon: ShieldCheck, adminOnly: true },
+  { to: '/admin/model-policy', label: '系统级模型策略', icon: ShieldCheck, adminOnly: true },
   { to: '/admin/model-providers', label: '供应商准入', icon: KeyRound, adminOnly: true },
   { to: '/admin/system', label: '系统状态', icon: Server, adminOnly: true },
 ]

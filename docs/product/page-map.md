@@ -27,7 +27,7 @@
 
 | 角色 | 标识 | 权限摘要 |
 | --- | --- | --- |
-| 平台管理员 | `admin` | 供应商、全局模型策略、系统健康 |
+| 平台管理员 | `admin` | 供应商、系统级模型策略、系统健康 |
 | 团队管理员 | `leader` | 团队资料、成员、知识库、审计、评测、模型策略 |
 | 普通成员 | `member` | 上传文档、添加来源、管理自己的私有文档、问答 |
 | 只读成员 | `viewer` | 查看有权限文档、问答、查看引用，不可修改资料 |
@@ -272,21 +272,24 @@ QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（L
 
 | 页面 | 路由 | 依赖 API |
 | --- | --- | --- |
-| 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update`、`GET /admin/providers` |
+| 系统级模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update`、`GET /admin/providers` |
 | 供应商准入 | `/admin/model-providers` | `GET /admin/providers`、`POST /admin/providers/create`、`POST /admin/providers/update` |
 | 用户管理 | `/admin/users` | `GET /admin/users`、`POST /admin/users/create`、`POST /admin/users/update`、`GET /teams` |
 | 全局审计 | `/admin/audit`、`/admin/audit/:auditId` | `GET /admin/audit`、`GET /admin/audit/detail?audit_id=` |
 | 系统状态 | `/admin/system` | `GET /health`、`GET /ready`、`GET /version` |
 
-全局模型策略页同时提供部署级供应商准入区域：平台管理员从全部平台供应商中
+系统级模型策略页同时提供系统级供应商准入区域：平台管理员从全部平台供应商中
 多选允许团队继承的供应商，保存时以完整 `allowed_provider_ids` 列表更新部署
 策略。列表展示供应商类型、启停状态、模型和 API Key 可用性；没有供应商时提供
 前往供应商准入页的入口。`local_only` 模式下允许保留准入选择，但明确提示外部
 模型调用当前禁用。
 
-团队模型策略页可从部署级允许的供应商中重新选择任意子集；因此团队列表可以从空
+页面同时提供“允许向模型发送会话历史”和“允许向模型发送文档元数据”两个系统级
+开关，保存时写入系统策略；团队只能在系统级允许后继续收紧。
+
+团队模型策略页可从系统级允许的供应商中重新选择任意子集；因此团队列表可以从空
 列表添加供应商，也可以移除供应商。模式、数据分类、聊天历史和文档元数据开关仍受
-部署级及既有团队安全上限约束。
+系统级及既有团队安全上限约束。
 
 ## 8. 页面与 API 优先级
 

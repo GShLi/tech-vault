@@ -897,22 +897,6 @@ def _stream_answer_response(
                 classification=classification,
                 max_chunks=8,
             )
-            citations = _citation_rows(context_chunks)
-            for citation in citations:
-                locator = citation["source_locator"] or {}
-                yield sse(
-                    "citation",
-                    {
-                        "citation_id": citation["citation_id"],
-                        "chunk_id": citation["chunk_id"],
-                        "document_id": locator.get("document_id", ""),
-                        "document_version_id": citation["document_version_id"],
-                        "document_name": locator.get("file_name", ""),
-                        "page_no": locator.get("page_no"),
-                        "heading_path": locator.get("heading_path", []),
-                        "source_url": locator.get("source_url", ""),
-                    },
-                )
 
             try:
                 async for piece in answer_stream:
@@ -927,15 +911,31 @@ def _stream_answer_response(
             answer = answer_stream.result
             if answer is None:
                 raise RuntimeError("answer stream completed without a result")
-            if answer.status == "completed" and not context_chunks:
-                answer = replace(
-                    answer,
-                    text="知识库中没有足够依据。",
-                    status="refused",
-                    citation_chunk_ids=(),
-                    refusal_reason="INSUFFICIENT_EVIDENCE",
-                )
-                sent_text = answer.text
+            chunk_by_id = {chunk.chunk_id: chunk for chunk in context_chunks}
+            citation_chunks = [
+                chunk_by_id[chunk_id]
+                for chunk_id in answer.citation_chunk_ids
+                if answer.status == "completed" and chunk_id in chunk_by_id
+            ]
+            if answer.status == "completed" and not citation_chunks:
+                if context_chunks:
+                    answer = replace(
+                        answer,
+                        status="refused",
+                        citation_chunk_ids=(),
+                        refusal_reason="INSUFFICIENT_EVIDENCE",
+                        degraded=True,
+                    )
+                else:
+                    answer = replace(
+                        answer,
+                        text="知识库中没有足够依据。",
+                        status="refused",
+                        citation_chunk_ids=(),
+                        refusal_reason="INSUFFICIENT_EVIDENCE",
+                    )
+                    sent_text = answer.text
+            citations = _citation_rows(citation_chunks)
 
             result = replace(
                 result,
@@ -981,6 +981,21 @@ def _stream_answer_response(
                 citations=citations,
                 refusal_reason=answer.refusal_reason,
             )
+            for citation in citations:
+                locator = citation["source_locator"] or {}
+                yield sse(
+                    "citation",
+                    {
+                        "citation_id": citation["citation_id"],
+                        "chunk_id": citation["chunk_id"],
+                        "document_id": locator.get("document_id", ""),
+                        "document_version_id": citation["document_version_id"],
+                        "document_name": locator.get("file_name", ""),
+                        "page_no": locator.get("page_no"),
+                        "heading_path": locator.get("heading_path", []),
+                        "source_url": locator.get("source_url", ""),
+                    },
+                )
             terminal = True
             yield sse(
                 "done",
@@ -1396,13 +1411,22 @@ async def ask(
             if chunk_id in chunk_by_id
         ]
         if answer.status == "completed" and not citation_chunks:
-            answer = replace(
-                answer,
-                text="知识库中没有足够依据。",
-                status="refused",
-                citation_chunk_ids=(),
-                refusal_reason="INSUFFICIENT_EVIDENCE",
-            )
+            if context_chunks:
+                answer = replace(
+                    answer,
+                    status="refused",
+                    citation_chunk_ids=(),
+                    refusal_reason="INSUFFICIENT_EVIDENCE",
+                    degraded=True,
+                )
+            else:
+                answer = replace(
+                    answer,
+                    text="知识库中没有足够依据。",
+                    status="refused",
+                    citation_chunk_ids=(),
+                    refusal_reason="INSUFFICIENT_EVIDENCE",
+                )
         citations = _citation_rows(citation_chunks)
         gateway_latency = {
             "gateway_{0}_ms".format(audit.purpose): float(audit.latency_ms)

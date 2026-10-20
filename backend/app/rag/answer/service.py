@@ -114,7 +114,7 @@ def _citation_chunk_ids(
 ) -> Tuple[Tuple[str, ...], bool]:
     matches = _CITATION_RE.findall(text)
     if not matches:
-        return tuple(chunk.chunk_id for chunk in chunks), True
+        return (), True
 
     cited = []
     seen = set()
@@ -130,7 +130,7 @@ def _citation_chunk_ids(
             has_invalid_citation = True
     if cited:
         return tuple(cited), has_invalid_citation
-    return tuple(chunk.chunk_id for chunk in chunks), True
+    return (), True
 
 
 def _piece_text(piece: object) -> str:

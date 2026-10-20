@@ -221,7 +221,7 @@ def test_answer_result_maps_citations_in_first_occurrence_order():
     assert result.status == "completed"
 
 
-def test_answer_result_without_citation_markers_uses_all_chunks_and_degrades():
+def test_answer_result_without_citation_markers_has_no_citations_and_degrades():
     chunks = (
         _chunk("chunk-1", "First"),
         _chunk("chunk-2", "Second", fused_rank=2),
@@ -235,7 +235,20 @@ def test_answer_result_without_citation_markers_uses_all_chunks_and_degrades():
         route="openai_chat_completions",
     )
 
-    assert result.citation_chunk_ids == ("chunk-1", "chunk-2")
+    assert result.citation_chunk_ids == ()
+    assert result.degraded is True
+
+
+def test_answer_result_invalid_citations_only_have_no_citations_and_degrade():
+    result = answer_result_from_text(
+        "Invalid [c99].",
+        question="What?",
+        chunks=(_chunk("chunk-1", "First"),),
+        model_id="model-1",
+        route="openai_chat_completions",
+    )
+
+    assert result.citation_chunk_ids == ()
     assert result.degraded is True
 
 
@@ -265,7 +278,7 @@ def test_answer_result_degrades_for_invalid_citations_alongside_valid_ones():
     assert result.degraded is True
 
 
-def test_max_chunks_limits_prompt_context_and_default_citations():
+def test_max_chunks_limits_prompt_context_and_without_markers_has_no_citations():
     def handler(request):
         body = json.loads(request.content)
         prompt = body["messages"][0]["content"]
@@ -291,7 +304,7 @@ def test_max_chunks_limits_prompt_context_and_default_citations():
         max_chunks=1,
     )
 
-    assert result.citation_chunk_ids == ("chunk-1",)
+    assert result.citation_chunk_ids == ()
     assert result.degraded is True
 
 

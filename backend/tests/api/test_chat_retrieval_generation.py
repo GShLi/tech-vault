@@ -20,6 +20,7 @@ from backend.app.db.models import (
     User,
 )
 from backend.app.rag.answer import AnswerResult
+from backend.app.rag.answer.service import answer_result_from_text
 from backend.app.rag.domain.models import (
     DataClassification,
     RetrievedChunk,
@@ -261,7 +262,8 @@ def test_gateway_streams_provider_generate_stream_without_buffering():
     assert pieces == ["first ", "second"]
     assert stream.result is not None
     assert stream.result.text == "first second"
-    assert stream.result.citation_chunk_ids == ("chunk-1",)
+    assert stream.result.citation_chunk_ids == ()
+    assert stream.result.degraded is True
     assert provider.calls == 1
 
 
@@ -474,16 +476,37 @@ def test_chat_ask_streams_citations_delta_and_done(
             RetrievedChunk(
                 chunk_id="chunk-1",
                 document_version_id="version-1",
-                content="Virtual threads reduce thread cost.",
+                content="Virtual threads are lightweight.",
                 fused_rank=1,
                 source_locator={"file_name": "threads.md"},
-            )
+            ),
+            RetrievedChunk(
+                chunk_id="chunk-2",
+                document_version_id="version-2",
+                content="Virtual threads reduce thread cost.",
+                fused_rank=2,
+                source_locator={"file_name": "thread-cost.md"},
+            ),
         ],
         stage_latency={},
         degraded=False,
         trace_id="trace-stream",
     )
-    _mock_ask_stack(api_app, team["id"], monkeypatch, result)
+
+    class SelectiveCitationProvider:
+        model_id = "model-test"
+        route = "local_model"
+
+        async def generate_stream(self, *, question, chunks, max_chunks):
+            yield "Provider answer [c2]"
+
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        result,
+        SelectiveCitationProvider(),
+    )
 
     response = api_client.post(
         "/api/v1/chats/ask",
@@ -501,12 +524,134 @@ def test_chat_ask_streams_citations_delta_and_done(
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "event: meta" in response.text
     assert "event: citation" in response.text
+    citation_index = response.text.index("event: citation")
+    done_index = response.text.index("event: done")
+    assert citation_index < done_index
+    assert response.text.count("event: citation") == 1
+    assert '"chunk_id": "chunk-2"' in response.text
     assert '"citation_id": "c1"' in response.text
     assert "event: delta" in response.text
-    assert '"text": "Provider answer [c1]"' in response.text
+    assert '"text": "Provider answer [c2]"' in response.text
     assert '"model_id": "model-test"' in response.text
     assert "event: done" in response.text
+    assert '"citation_ids": ["c1"]' in response.text
     assert "event: answer" not in response.text
+
+
+def test_chat_ask_non_stream_without_citations_refuses_with_model_text(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    refusal_text = "提供的知识库中没有包含我的名字或身份信息，因此无法回答“你叫什么名字”。"
+    result = SearchResult(
+        [
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Virtual threads reduce thread cost.",
+                fused_rank=1,
+                source_locator={"file_name": "threads.md"},
+            )
+        ],
+        {},
+        False,
+        "trace-no-citation",
+    )
+
+    class NoCitationProvider:
+        model_id = "model-test"
+        route = "local_model"
+
+        def generate(self, *, question, chunks, max_chunks):
+            return answer_result_from_text(
+                refusal_text,
+                question=question,
+                chunks=chunks,
+                model_id=self.model_id,
+                route=self.route,
+            )
+
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        result,
+        NoCitationProvider(),
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "你叫什么名字",
+            **_selection(chat),
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "refused"
+    assert data["refusal_reason"] == "INSUFFICIENT_EVIDENCE"
+    assert data["citations"] == []
+    assert data["content"] == refusal_text
+
+
+def test_chat_ask_stream_without_citations_refuses_without_citation_or_done(
+    api_client, api_app, admin_headers, monkeypatch
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    refusal_text = "提供的知识库中没有包含我的名字或身份信息，因此无法回答“你叫什么名字”。"
+    result = SearchResult(
+        [
+            RetrievedChunk(
+                chunk_id="chunk-1",
+                document_version_id="version-1",
+                content="Virtual threads reduce thread cost.",
+                fused_rank=1,
+                source_locator={"file_name": "threads.md"},
+            )
+        ],
+        {},
+        False,
+        "trace-stream-no-citation",
+    )
+
+    class NoCitationStreamProvider:
+        model_id = "model-test"
+        route = "local_model"
+
+        async def generate_stream(self, *, question, chunks, max_chunks):
+            yield refusal_text
+
+    _mock_ask_stack(
+        api_app,
+        team["id"],
+        monkeypatch,
+        result,
+        NoCitationStreamProvider(),
+    )
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "你叫什么名字",
+            **_selection(chat),
+            "stream": True,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert "event: citation" not in response.text
+    assert '"text": "{0}"'.format(refusal_text) in response.text
+    assert "event: refused" in response.text
+    assert '"reason_code": "INSUFFICIENT_EVIDENCE"' in response.text
+    assert "event: done" not in response.text
 
 
 def test_chat_ask_hydrates_citation_locator_from_persisted_chunk(

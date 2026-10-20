@@ -895,9 +895,17 @@ class OpenAIResponsesAdapter(_HttpProviderAdapter):
         for item in output:
             if not isinstance(item, dict):
                 continue
-            text = _content_text(item.get("content"))
-            if text is not None:
-                pieces.append(text)
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") not in {"output_text", "text"}:
+                    continue
+                text = block.get("text")
+                if isinstance(text, str):
+                    pieces.append(text)
         if not pieces and output:
             raise ProviderAdapterError(
                 502,

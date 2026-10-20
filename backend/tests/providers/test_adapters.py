@@ -793,6 +793,59 @@ def test_responses_rewrite_uses_text_format_and_downgrades():
     assert len(calls) == 2
 
 
+def test_responses_rewrite_ignores_reasoning_text_blocks():
+    adapter = OpenAIResponsesAdapter(
+        "provider-1",
+        "https://gateway.example",
+        "sk-test",
+        "model-test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "content": [
+                                {
+                                    "type": "reasoning_text",
+                                    "text": "internal reasoning",
+                                }
+                            ],
+                        },
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        {
+                                            "rewritten_query": "Virtual threads",
+                                            "filters": {
+                                                "product": None,
+                                                "version_values": [],
+                                            },
+                                        }
+                                    ),
+                                }
+                            ],
+                        },
+                    ],
+                },
+            )
+        ),
+    )
+
+    result = adapter.rewrite(question="Virtual threads")
+
+    assert result.rewritten_query == "Virtual threads"
+    assert result.extracted_filters == {
+        "product": None,
+        "version_values": [],
+    }
+
+
 def test_anthropic_rewrite_uses_forced_tool_use():
     def handler(request):
         body = json.loads(request.content)

@@ -74,6 +74,8 @@ def test_dual_engine_fuses_bm25_and_dense_without_losing_source_ranks():
     assert [chunk.chunk_id for chunk in result.chunks] == ["b", "a", "c"]
     assert result.chunks[0].bm25_rank == 2
     assert result.chunks[0].dense_rank == 1
+    assert result.rrf_candidates[0].rrf_score is not None
+    assert result.rrf_candidates[0].rrf_score > 0
     assert result.degraded is False
     assert result.trace_id == "trace-1"
     assert result.stage_latency["dense_ms"] == 2.0
@@ -181,6 +183,7 @@ def test_bm25_retriever_requests_and_parses_elasticsearch_highlights():
                                     "threads."
                                 ),
                             },
+                            "_score": 8.75,
                             "highlight": {
                                 "content": [
                                     "<em>Virtual</em> <em>threads</em> are "
@@ -201,4 +204,30 @@ def test_bm25_retriever_requests_and_parses_elasticsearch_highlights():
 
     highlight = calls[0]["highlight"]["fields"]["content"]
     assert highlight["number_of_fragments"] == 0
+    assert result.chunks[0].bm25_score == 8.75
     assert result.chunks[0].matched_terms == ("Virtual", "threads")
+
+
+def test_qdrant_retriever_preserves_vector_score():
+    async def fake_request(method, path, **kwargs):
+        return _FakeResponse(
+            {
+                "result": [
+                    {
+                        "score": 0.9234,
+                        "payload": {
+                            "chunk_id": "chunk-dense",
+                            "document_version_id": "dv-1",
+                            "content": "Virtual threads",
+                        },
+                    }
+                ]
+            }
+        )
+
+    retriever = QdrantDenseRetriever("http://qdrant", "collection")
+    retriever._request = fake_request
+
+    result = asyncio.run(retriever.search(_request()))
+
+    assert result.chunks[0].dense_score == 0.9234

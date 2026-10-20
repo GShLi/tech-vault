@@ -145,8 +145,8 @@ function rowId(row: JsonRecord): string {
   return String(row.chunk_id ?? row.document_version_id ?? row.id ?? '—')
 }
 
-function rowScore(row: JsonRecord): string {
-  const value = row.rerank_score ?? row.rrf_score ?? row.score ?? row.similarity
+function rowScore(row: JsonRecord, scoreKey: string): string {
+  const value = row[scoreKey] ?? row.score ?? row.similarity
   return typeof value === 'number' ? value.toFixed(4) : String(value ?? '—')
 }
 
@@ -367,11 +367,11 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-for="group in [
-        { title: 'BM25 候选', rows: trace.bm25_candidates },
-        { title: 'Dense 候选', rows: trace.dense_candidates },
-        { title: 'RRF 融合', rows: trace.rrf_candidates },
-        { title: 'Rerank 结果', rows: trace.rerank_candidates },
-        { title: '最终上下文', rows: trace.final_context },
+        { title: 'BM25 候选', scoreKey: 'bm25_score', rows: trace.bm25_candidates },
+        { title: 'Dense 候选', scoreKey: 'dense_score', rows: trace.dense_candidates },
+        { title: 'RRF 融合', scoreKey: 'rrf_score', rows: trace.rrf_candidates },
+        { title: 'Rerank 结果', scoreKey: 'rerank_score', rows: trace.rerank_candidates },
+        { title: '最终上下文', scoreKey: 'rerank_score', rows: trace.final_context },
       ]" :key="group.title" class="panel detail-panel">
         <div class="section-heading">
           <h3>{{ group.title }}</h3>
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
             <tbody>
               <tr v-for="(row, index) in group.rows" :key="`${group.title}-${index}`">
                 <td>{{ rowId(row) }}</td>
-                <td>{{ rowScore(row) }}</td>
+                <td>{{ rowScore(row, group.scoreKey) }}</td>
                 <td>
                   <button
                     class="chunk-content-trigger"

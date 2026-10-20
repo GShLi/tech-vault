@@ -543,9 +543,17 @@ BM25 候选额外返回 `matched_terms`，其值来自 Elasticsearch `highlight`
   "chunk_id": "01JCHUNK...",
   "rank": 1,
   "bm25_rank": 1,
+  "bm25_score": 8.75,
+  "dense_score": null,
+  "rrf_score": null,
+  "rerank_score": null,
   "matched_terms": ["virtual", "threads"]
 }
 ```
+
+各阶段分数使用独立字段：BM25 使用 Elasticsearch `_score` 写入 `bm25_score`，
+Dense 使用 Qdrant `score` 写入 `dense_score`，RRF 使用融合分数写入 `rrf_score`，
+Rerank 使用重排分数写入 `rerank_score`。这些分值量纲不同，不得混用或直接比较。
 
 Trace 列表和详情都返回 `feedback` 数组。反馈通过
 `POST /messages/feedback` 写入，并按 Trace 的 `message_id` 关联：

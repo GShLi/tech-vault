@@ -1373,9 +1373,17 @@ def test_candidate_rows_include_bm25_matched_terms():
                 content="Virtual threads",
                 fused_rank=1,
                 bm25_rank=1,
+                bm25_score=8.75,
+                dense_score=0.9234,
+                rrf_score=0.0328,
+                rerank_score=0.97,
                 matched_terms=("Virtual", "threads"),
             )
         ]
     )
 
     assert rows[0]["matched_terms"] == ["Virtual", "threads"]
+    assert rows[0]["bm25_score"] == 8.75
+    assert rows[0]["dense_score"] == 0.9234
+    assert rows[0]["rrf_score"] == 0.0328
+    assert rows[0]["rerank_score"] == 0.97

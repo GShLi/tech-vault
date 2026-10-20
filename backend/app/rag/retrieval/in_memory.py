@@ -102,6 +102,7 @@ class InMemoryRetriever:
                 key=lambda item: (-item[0], item[1]),
             )[: request.bm25_top_k]
         ]
+        bm25_scores = dict(bm25_scored)
 
         dense_scored = [
             (_cosine(request.query_vector, self._embedding.get(chunk.chunk_id, ())), chunk.chunk_id)
@@ -114,6 +115,7 @@ class InMemoryRetriever:
                 key=lambda item: (-item[0], item[1]),
             )[: request.dense_top_k]
         ]
+        dense_scores = dict(dense_scored)
 
         by_id = {chunk.chunk_id: chunk for chunk in visible}
         fused = reciprocal_rank_fusion(bm25_ids, dense_ids, k=request.rrf_k)
@@ -125,10 +127,37 @@ class InMemoryRetriever:
                 fused_rank=candidate.fused_rank,
                 bm25_rank=candidate.bm25_rank,
                 dense_rank=candidate.dense_rank,
+                bm25_score=bm25_scores.get(candidate.chunk_id),
+                dense_score=dense_scores.get(candidate.chunk_id),
+                rrf_score=candidate.fused_score,
                 source_locator=dict(by_id[candidate.chunk_id].source_locator),
             )
             for candidate in fused[: request.final_top_n]
         ]
+        bm25_candidates = tuple(
+            RetrievedChunk(
+                chunk_id=chunk_id,
+                document_version_id=by_id[chunk_id].document_version_id,
+                content=by_id[chunk_id].content,
+                fused_rank=rank,
+                bm25_rank=rank,
+                bm25_score=bm25_scores.get(chunk_id),
+                source_locator=dict(by_id[chunk_id].source_locator),
+            )
+            for rank, chunk_id in enumerate(bm25_ids, start=1)
+        )
+        dense_candidates = tuple(
+            RetrievedChunk(
+                chunk_id=chunk_id,
+                document_version_id=by_id[chunk_id].document_version_id,
+                content=by_id[chunk_id].content,
+                fused_rank=rank,
+                dense_rank=rank,
+                dense_score=dense_scores.get(chunk_id),
+                source_locator=dict(by_id[chunk_id].source_locator),
+            )
+            for rank, chunk_id in enumerate(dense_ids, start=1)
+        )
 
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         return SearchResult(
@@ -136,5 +165,8 @@ class InMemoryRetriever:
             stage_latency={"retrieval_ms": elapsed_ms},
             degraded=False,
             trace_id=str(uuid.uuid4()),
+            bm25_candidates=bm25_candidates,
+            dense_candidates=dense_candidates,
+            rrf_candidates=tuple(result_chunks),
         )
 

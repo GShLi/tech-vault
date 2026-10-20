@@ -28,6 +28,13 @@ def _source(hit: Dict[str, Any]) -> Dict[str, Any]:
     return hit.get("_source", hit)
 
 
+def _score(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _matched_terms(hit: Dict[str, Any]) -> tuple:
     fragments = hit.get("highlight", {}).get("content", [])
     terms = []
@@ -76,6 +83,10 @@ class _BaseEngine:
         *,
         bm25_rank: Optional[int] = None,
         dense_rank: Optional[int] = None,
+        bm25_score: Optional[float] = None,
+        dense_score: Optional[float] = None,
+        rrf_score: Optional[float] = None,
+        rerank_score: Optional[float] = None,
         matched_terms: tuple = (),
     ) -> RetrievedChunk:
         return RetrievedChunk(
@@ -85,6 +96,10 @@ class _BaseEngine:
             fused_rank=rank,
             bm25_rank=bm25_rank,
             dense_rank=dense_rank,
+            bm25_score=bm25_score,
+            dense_score=dense_score,
+            rrf_score=rrf_score,
+            rerank_score=rerank_score,
             matched_terms=matched_terms,
             source_locator=source.get("source_locator", {}),
         )
@@ -120,6 +135,7 @@ class ElasticsearchBM25Retriever(_BaseEngine):
                 _source(hit),
                 rank,
                 bm25_rank=rank,
+                bm25_score=_score(hit.get("_score")),
                 matched_terms=_matched_terms(hit),
             )
             for rank, hit in enumerate(hits, start=1)
@@ -153,6 +169,10 @@ class ElasticsearchHybridRetriever(_BaseEngine):
         )
         bm25_hits = lexical.json().get("hits", {}).get("hits", [])
         bm25_ids = [_source(hit).get("chunk_id", "") for hit in bm25_hits]
+        bm25_scores = {
+            _source(hit).get("chunk_id", ""): _score(hit.get("_score"))
+            for hit in bm25_hits
+        }
         bm25_terms = {
             _source(hit).get("chunk_id", ""): _matched_terms(hit)
             for hit in bm25_hits
@@ -177,6 +197,10 @@ class ElasticsearchHybridRetriever(_BaseEngine):
             dense_hits = knn.json().get("hits", {}).get("hits", [])
 
         dense_ids = [_source(hit).get("chunk_id", "") for hit in dense_hits]
+        dense_scores = {
+            _source(hit).get("chunk_id", ""): _score(hit.get("_score"))
+            for hit in dense_hits
+        }
         fused = reciprocal_rank_fusion(bm25_ids, dense_ids, k=request.rrf_k)
         sources: Dict[str, Dict[str, Any]] = {}
         for hit in bm25_hits + dense_hits:
@@ -191,6 +215,9 @@ class ElasticsearchHybridRetriever(_BaseEngine):
                 candidate.fused_rank,
                 bm25_rank=bm25_rank.get(candidate.chunk_id),
                 dense_rank=dense_rank.get(candidate.chunk_id),
+                bm25_score=bm25_scores.get(candidate.chunk_id),
+                dense_score=dense_scores.get(candidate.chunk_id),
+                rrf_score=candidate.fused_score,
                 matched_terms=bm25_terms.get(candidate.chunk_id, ()),
             )
             for candidate in fused[: request.rerank_input_size]
@@ -209,12 +236,18 @@ class ElasticsearchHybridRetriever(_BaseEngine):
                     _source(hit),
                     rank,
                     bm25_rank=rank,
+                    bm25_score=_score(hit.get("_score")),
                     matched_terms=_matched_terms(hit),
                 )
                 for rank, hit in enumerate(bm25_hits, start=1)
             ),
             dense_candidates=tuple(
-                self._to_retrieved(_source(hit), rank, dense_rank=rank)
+                self._to_retrieved(
+                    _source(hit),
+                    rank,
+                    dense_rank=rank,
+                    dense_score=_score(hit.get("_score")),
+                )
                 for rank, hit in enumerate(dense_hits, start=1)
             ),
             rrf_candidates=tuple(rrf_candidates),
@@ -245,7 +278,12 @@ class QdrantDenseRetriever(_BaseEngine):
         )
         points = response.json().get("result", [])
         chunks = [
-            self._to_retrieved(point.get("payload", {}), rank, dense_rank=rank)
+            self._to_retrieved(
+                point.get("payload", {}),
+                rank,
+                dense_rank=rank,
+                dense_score=_score(point.get("score")),
+            )
             for rank, point in enumerate(points, start=1)
         ]
         latency = {"dense_ms": (time.perf_counter() - started) * 1000.0}
@@ -279,6 +317,12 @@ class DualEngineRetriever:
         }
         bm25_rank = {chunk.chunk_id: chunk.bm25_rank for chunk in lexical.chunks}
         dense_rank = {chunk.chunk_id: chunk.dense_rank for chunk in dense.chunks}
+        bm25_scores = {
+            chunk.chunk_id: chunk.bm25_score for chunk in lexical.chunks
+        }
+        dense_scores = {
+            chunk.chunk_id: chunk.dense_score for chunk in dense.chunks
+        }
 
         rrf_candidates = [
             RetrievedChunk(
@@ -288,6 +332,9 @@ class DualEngineRetriever:
                 fused_rank=candidate.fused_rank,
                 bm25_rank=bm25_rank.get(candidate.chunk_id),
                 dense_rank=dense_rank.get(candidate.chunk_id),
+                bm25_score=bm25_scores.get(candidate.chunk_id),
+                dense_score=dense_scores.get(candidate.chunk_id),
+                rrf_score=candidate.fused_score,
                 source_locator=sources[candidate.chunk_id].source_locator,
             )
             for candidate in fused[: request.rerank_input_size]

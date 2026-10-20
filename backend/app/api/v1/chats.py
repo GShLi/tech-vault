@@ -277,6 +277,10 @@ def _candidate_rows(chunks) -> list:
             "score": chunk.rerank_score,
             "bm25_rank": chunk.bm25_rank,
             "dense_rank": chunk.dense_rank,
+            "bm25_score": chunk.bm25_score,
+            "dense_score": chunk.dense_score,
+            "rrf_score": chunk.rrf_score,
+            "rerank_score": chunk.rerank_score,
             "matched_terms": list(chunk.matched_terms),
         }
         for chunk in chunks

@@ -60,13 +60,42 @@ const chunkTrace: TraceView = {
       chunk_id: 'chunk-7',
       rank: 1,
       score: 0.91,
+      bm25_score: 8.75,
       matched_terms: ['Virtual', 'threads'],
     },
   ],
-  dense_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.88 }],
-  rrf_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.93 }],
-  rerank_candidates: [{ chunk_id: 'chunk-7', rank: 1, score: 0.97 }],
-  final_context: [{ chunk_id: 'chunk-7', rank: 1, score: 0.97 }],
+  dense_candidates: [
+    {
+      chunk_id: 'chunk-7',
+      rank: 1,
+      score: 0.88,
+      dense_score: 0.9234,
+    },
+  ],
+  rrf_candidates: [
+    {
+      chunk_id: 'chunk-7',
+      rank: 1,
+      score: 0.93,
+      rrf_score: 0.0328,
+    },
+  ],
+  rerank_candidates: [
+    {
+      chunk_id: 'chunk-7',
+      rank: 1,
+      score: 0.97,
+      rerank_score: 0.97,
+    },
+  ],
+  final_context: [
+    {
+      chunk_id: 'chunk-7',
+      rank: 1,
+      score: 0.97,
+      rerank_score: 0.97,
+    },
+  ],
   chunk_details: {
     'chunk-7': {
       id: 'chunk-7',
@@ -295,5 +324,17 @@ describe('TraceDetailView', () => {
     ])
     expect(wrapper.findAll('.chunk-content-preview').length).toBe(5)
     expect(wrapper.findAll('.chunk-content-preview mark').length).toBe(3)
+  })
+
+  it('shows the score for each retrieval stage', async () => {
+    apiMocks.getTrace.mockResolvedValueOnce(chunkTrace)
+
+    const wrapper = await mountPage()
+    const text = wrapper.text()
+
+    expect(text).toContain('8.7500')
+    expect(text).toContain('0.9234')
+    expect(text).toContain('0.0328')
+    expect(text).toContain('0.9700')
   })
 })

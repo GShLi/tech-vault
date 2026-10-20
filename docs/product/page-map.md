@@ -208,6 +208,10 @@
 BM25 候选使用 Elasticsearch 返回的实际命中词在 Chunk 摘要中高亮；Dense、RRF、
 Rerank 和最终上下文不显示关键词高亮。旧 Trace 没有命中词数据时保持普通文本。
 
+候选表格按阶段显示对应分数：BM25、Dense、RRF、Rerank 分别展示
+`bm25_score`、`dense_score`、`rrf_score`、`rerank_score`。旧 Trace 没有阶段专用
+字段时回退到通用 `score`；仍无值时显示 `—`。
+
 QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（LLM 结构化、LLM JSON、
 规则回退）、应用的 product/version 过滤条件、provider/model、耗时、token 和回退
 原因。旧 Trace 没有改写元数据时不显示该区块。

@@ -324,6 +324,7 @@ export interface TraceView {
   engine_mode: string
   original_query: string
   rewritten_query: string | null
+  rewrite?: TraceRewriteView
   filters: JsonRecord
   bm25_candidates: JsonRecord[]
   dense_candidates: JsonRecord[]
@@ -337,6 +338,24 @@ export interface TraceView {
   feedback: TraceFeedback[]
   chunk_details?: Record<string, TraceChunkDetail>
   created_at: string
+}
+
+export interface TraceRewriteView {
+  original_query?: string
+  rewritten_query?: string
+  changed?: boolean
+  route?: string
+  provider_id?: string | null
+  model_id?: string
+  structured_mode?: string | null
+  extracted_filters?: JsonRecord
+  applied_filters?: JsonRecord
+  dropped_filters?: JsonRecord[]
+  fallback_reason?: string | null
+  validation_error?: string | null
+  latency_ms?: number
+  input_tokens?: number
+  output_tokens?: number
 }
 
 export interface TraceChunkDetail {

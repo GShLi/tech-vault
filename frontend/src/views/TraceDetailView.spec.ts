@@ -236,4 +236,42 @@ describe('TraceDetailView', () => {
     )
     expect(wrapper.find('[data-testid="copy-chunk-json"]').exists()).toBe(false)
   })
+
+  it('renders query rewrite source, filters and fallback reason', async () => {
+    apiMocks.getTrace.mockResolvedValueOnce({
+      ...trace,
+      rewritten_query: 'Spring Boot 3.2 如何开启虚拟线程？',
+      rewrite: {
+        original_query: '它怎么开启？',
+        rewritten_query: 'Spring Boot 3.2 如何开启虚拟线程？',
+        changed: true,
+        route: 'openai_chat_completions',
+        model_id: 'gpt-5-mini',
+        structured_mode: 'json_schema',
+        extracted_filters: {
+          product: 'spring-boot',
+          version_values: ['3.2'],
+        },
+        applied_filters: {
+          product: 'spring-boot',
+          version_values: ['3.2'],
+        },
+        dropped_filters: [],
+        fallback_reason: null,
+        latency_ms: 820,
+        input_tokens: 450,
+        output_tokens: 24,
+      },
+    } as TraceView)
+
+    const wrapper = await mountPage()
+    const panel = wrapper.get('[data-testid="trace-rewrite"]')
+
+    expect(panel.text()).toContain('它怎么开启？')
+    expect(panel.text()).toContain('Spring Boot 3.2 如何开启虚拟线程？')
+    expect(panel.text()).toContain('LLM 结构化')
+    expect(panel.text()).toContain('spring-boot')
+    expect(panel.text()).toContain('3.2')
+    expect(panel.text()).toContain('gpt-5-mini')
+  })
 })

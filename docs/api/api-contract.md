@@ -30,7 +30,9 @@ Authorization: Bearer <access_token>
 
 - 默认拒绝，缺少 `team_id` 或知识库范围时不执行无过滤检索。
 - `leader` 和 `admin` 默认都不能查看成员私有文档正文，只有所有者或显式授权用户可以访问。
-- `leader` 只能收紧部署级策略；`member` 只能选择比团队和知识库策略更严格的模型范围。
+- `leader` 只能在部署级上限内调整团队策略；供应商列表可选择部署级允许的任意子集，
+  模式、数据分类和上下文开关不能放宽既有安全上限。`member` 只能选择比团队和知识库
+  策略更严格的模型范围。
 - `team_id` 无论位于 query 还是 body，都必须由后端校验当前用户的团队成员关系。
 
 ### 1.3 通用请求头
@@ -677,7 +679,7 @@ P0 的 `judge_mode` 允许 `rules`、`rules_and_manual`。LLM-as-Judge 在评分
 | 方法 | 路径 | 说明 | 优先级 |
 | --- | --- | --- | --- |
 | `GET` | `/model-policy?team_id=` | 团队模型策略 | P0 |
-| `POST` | `/model-policy/update` | 收紧团队模型策略 | P0 |
+| `POST` | `/model-policy/update` | 在部署级上限内更新团队模型策略 | P0 |
 | `GET` | `/providers?team_id=` | 可用供应商 | P0 |
 | `POST` | `/providers/create` | 创建团队供应商配置 | P0 |
 | `POST` | `/providers/models` | 根据 Base URL、上游格式和 API Key 获取模型列表 | P0 |

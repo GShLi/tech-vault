@@ -114,6 +114,59 @@ def test_team_policy_inherits_deployment_when_team_row_missing(
     assert "sk-inherited-policy" not in response.text
 
 
+def test_team_can_add_deployment_allowed_provider_to_empty_policy(
+    api_client, admin_headers
+):
+    provider = api_client.post(
+        "/api/v1/admin/providers/create",
+        json={
+            "name": "Team Selection Provider",
+            "provider_type": "openai_chat_completions",
+            "base_url": "https://provider.example/v1",
+            "api_key": "sk-team-selection",
+            "model_ids": ["model-selection"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    deployment = api_client.post(
+        "/api/v1/admin/model-policy/update",
+        json={
+            "mode": "external_allowed",
+            "allowed_provider_ids": [provider["id"]],
+            "max_data_classification": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert deployment.status_code == 200, deployment.text
+
+    team = _create_team(api_client, admin_headers)
+    created = api_client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team["id"],
+            "mode": "external_allowed",
+            "max_data_classification": "internal",
+            "allowed_provider_ids": [],
+        },
+        headers=admin_headers,
+    )
+    assert created.status_code == 200, created.text
+
+    selected = api_client.post(
+        "/api/v1/model-policy/update",
+        json={
+            "team_id": team["id"],
+            "mode": "external_allowed",
+            "max_data_classification": "internal",
+            "allowed_provider_ids": [provider["id"]],
+        },
+        headers=admin_headers,
+    )
+
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["data"]["allowed_provider_ids"] == [provider["id"]]
+
+
 def test_confidential_input_is_normalized_to_canonical_restricted(
     api_client, admin_headers
 ):

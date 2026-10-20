@@ -377,14 +377,6 @@ def update_policy(
                 "TEAM_POLICY_LIMIT",
                 "Team policy updates can only tighten the existing policy.",
             )
-        if not set(requested_provider_ids).issubset(
-            set(json.loads(policy.allowed_provider_ids or "[]"))
-        ):
-            raise ApiError(
-                409,
-                "TEAM_POLICY_LIMIT",
-                "Team policy updates can only tighten the existing policy.",
-            )
     requested_chat_history = bool(
         body.get(
             "allow_chat_history",

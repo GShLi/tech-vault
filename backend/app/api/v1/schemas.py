@@ -1,8 +1,8 @@
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -26,27 +26,6 @@ def _normalize_required_name(value: object) -> object:
     return normalized
 
 
-class RegisterRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=128)
-    display_name: str = Field(min_length=1, max_length=120)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email(cls, value: object) -> object:
-        return _normalize_email(value)
-
-    @field_validator("display_name", mode="before")
-    @classmethod
-    def normalize_display_name(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Display name must not be empty.")
-        return normalized
-
-
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=128)
@@ -60,6 +39,42 @@ class LoginRequest(BaseModel):
 class PasswordChangeRequest(BaseModel):
     old_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Display name must not be empty.")
+        return normalized
+
+
+class InvitationCreateRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=26)
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(min_length=1, max_length=16)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return _normalize_email(value)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"leader", "member", "viewer"}:
+            raise ValueError("role must be leader, member, or viewer")
+        return value
+
+
+class InvitationAcceptRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
 
 
 class AdminUserCreateRequest(BaseModel):
@@ -92,6 +107,35 @@ class AdminUserCreateRequest(BaseModel):
         return value
 
 
+class AdminUserUpdateRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=26)
+    status: Optional[str] = Field(default=None, min_length=1, max_length=16)
+    team_id: Optional[str] = Field(default=None, min_length=1, max_length=26)
+    role: Optional[str] = Field(default=None, min_length=1, max_length=16)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in {"active", "disabled"}:
+            raise ValueError("status must be active or disabled")
+        return value
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in {"leader", "member", "viewer"}:
+            raise ValueError("role must be leader, member, or viewer")
+        return value
+
+    @model_validator(mode="after")
+    def validate_update_fields(self):
+        if self.status is None and self.team_id is None and self.role is None:
+            raise ValueError("At least one of status, team_id, or role is required.")
+        if (self.team_id is None) != (self.role is None):
+            raise ValueError("team_id and role must be provided together.")
+        return self
+
+
 class UserView(BaseModel):
     id: str
     email: str
@@ -107,6 +151,10 @@ class MembershipView(BaseModel):
     team_name: str
     role: str
     status: str
+
+
+class AdminUserView(UserView):
+    memberships: List[MembershipView]
 
 
 class MeView(BaseModel):
@@ -173,6 +221,8 @@ class DocumentView(BaseModel):
     visibility: str
     data_classification: str
     doc_status: str
+    deleted_at: Optional[datetime]
+    purged_at: Optional[datetime]
     version: int
     created_at: datetime
     updated_at: datetime
@@ -208,12 +258,57 @@ class ChatView(BaseModel):
     updated_at: datetime
 
 
+class AskFilters(BaseModel):
+    knowledge_base_ids: List[str] = Field(default_factory=list)
+    product: Optional[str] = Field(default=None, max_length=120)
+    version_values: List[str] = Field(default_factory=list)
+
+    @field_validator("knowledge_base_ids", "version_values")
+    @classmethod
+    def validate_string_lists(cls, value: List[str]) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+
 class AskRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=26)
     chat_id: str = Field(min_length=1, max_length=26)
     question: str = Field(min_length=1, max_length=4000)
+    provider_id: str = Field(min_length=1, max_length=26)
+    model_id: str = Field(min_length=1, max_length=120)
+    filters: AskFilters = Field(default_factory=AskFilters)
+    # Kept for older clients; nested filters are the canonical contract.
     knowledge_base_ids: List[str] = Field(default_factory=list)
+    model_policy: str = "inherit"
     stream: bool = True
+
+    @field_validator("question", "provider_id", "model_id")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+    @field_validator("knowledge_base_ids")
+    @classmethod
+    def validate_legacy_knowledge_base_ids(cls, value: List[str]) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("model_policy")
+    @classmethod
+    def validate_model_policy(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {
+            "inherit",
+            "local_only",
+            "external_allowed",
+            "external_required",
+        }:
+            raise ValueError("invalid model_policy")
+        return normalized
+
+    def selected_knowledge_base_ids(self) -> List[str]:
+        return self.filters.knowledge_base_ids or self.knowledge_base_ids
 
 
 class MessageView(BaseModel):
@@ -223,6 +318,6 @@ class MessageView(BaseModel):
     content: str
     status: str
     trace_id: Optional[str]
-    citation_ids: List[str]
+    citation_ids: List[Dict[str, object]]
     refusal_reason: Optional[str]
     created_at: datetime

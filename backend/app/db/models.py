@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.ids import new_ulid
@@ -30,6 +31,20 @@ class User(Base):
     )
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    user_id: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"), index=True)
+    refresh_jti: Mapped[str] = mapped_column(String(26), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -43,12 +58,19 @@ class Document(Base):
     file_name: Mapped[str] = mapped_column(String(500))
     source_type: Mapped[str] = mapped_column(String(20), default="upload")
     source_uri: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    object_uri: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     product: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     version_family: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     version_values: Mapped[str] = mapped_column(Text, default="[]")
     visibility: Mapped[str] = mapped_column(String(16), default="team_shared")
     data_classification: Mapped[str] = mapped_column(String(16), default="internal")
     doc_status: Mapped[str] = mapped_column(String(16), default="building")
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    purged_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     current_version_id: Mapped[Optional[str]] = mapped_column(
         String(26), nullable=True
     )
@@ -133,12 +155,27 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    model_policy_mode: Mapped[str] = mapped_column(String(24), default="local_only")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+
+class KnowledgeBaseMember(Base):
+    __tablename__ = "knowledge_base_members"
+
+    kb_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("knowledge_bases.id"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("users.id"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    added_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
 
@@ -167,7 +204,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(16), default="user")
     content: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="generating")
-    trace_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     citation_ids: Mapped[str] = mapped_column(Text, default="[]")
     refusal_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -176,7 +213,7 @@ class Message(Base):
 class ChunkRecord(Base):
     __tablename__ = "chunks"
 
-    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    id: Mapped[str] = mapped_column(String(68), primary_key=True, default=new_ulid)
     document_id: Mapped[str] = mapped_column(String(26), ForeignKey("documents.id"), index=True)
     team_id: Mapped[str] = mapped_column(String(26), default="", index=True)
     knowledge_base_id: Mapped[str] = mapped_column(String(26), default="", index=True)
@@ -186,6 +223,7 @@ class ChunkRecord(Base):
     doc_status: Mapped[str] = mapped_column(String(16), default="active")
     chunk_status: Mapped[str] = mapped_column(String(16), default="enabled")
     content: Mapped[str] = mapped_column(Text)
+    auto_content: Mapped[str] = mapped_column(Text, default="")
     heading_path: Mapped[str] = mapped_column(Text, default="[]")
     source_locator: Mapped[str] = mapped_column(Text, default="{}")
     version_values: Mapped[str] = mapped_column(Text, default="[]")
@@ -195,6 +233,38 @@ class ChunkRecord(Base):
     index_generation: Mapped[str] = mapped_column(String(26), default="")
     status: Mapped[str] = mapped_column(String(16), default="enabled")
     version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
+class ChunkOverride(Base):
+    __tablename__ = "chunk_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "logical_chunk_key",
+            name="uq_chunk_override_document_logical_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    document_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("documents.id"), index=True
+    )
+    source_path: Mapped[str] = mapped_column(String(500), default="")
+    logical_chunk_key: Mapped[str] = mapped_column(Text)
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    manual_status: Mapped[str] = mapped_column(String(16), default="enabled")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    pending_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_chunk_id: Mapped[Optional[str]] = mapped_column(String(68), nullable=True)
+    applied_chunk_id: Mapped[Optional[str]] = mapped_column(String(68), nullable=True)
+    index_generation: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    updated_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
@@ -234,6 +304,276 @@ class EvaluationRun(Base):
     engine_mode: Mapped[str] = mapped_column(String(20), default="dual_engine")
     status: Mapped[str] = mapped_column(String(16), default="queued")
     baseline_run_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    provider_id: Mapped[str] = mapped_column(String(26), default="")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
+class Invitation(Base):
+    __tablename__ = "invitations"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[str] = mapped_column(String(16), default="member")
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    invited_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[Optional[str]] = mapped_column(
+        String(26), ForeignKey("teams.id"), nullable=True, index=True
+    )
+    actor_id: Mapped[Optional[str]] = mapped_column(
+        String(26), ForeignKey("users.id"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(40))
+    resource_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    details: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
+
+
+class ModelProvider(Base):
+    __tablename__ = "model_providers"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[Optional[str]] = mapped_column(
+        String(26), ForeignKey("teams.id"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    provider_type: Mapped[str] = mapped_column(String(40))
+    base_url: Mapped[str] = mapped_column(String(500))
+    api_key_masked: Mapped[str] = mapped_column(String(40), default="")
+    api_key_encrypted: Mapped[str] = mapped_column(Text, default="")
+    api_key_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    model_ids: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class ModelPolicyRecord(Base):
+    __tablename__ = "model_policies"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    mode: Mapped[str] = mapped_column(String(24), default="local_only")
+    allowed_provider_ids: Mapped[str] = mapped_column(Text, default="[]")
+    max_data_classification: Mapped[str] = mapped_column(String(16), default="internal")
+    allow_chat_history: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_document_metadata: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_redaction: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
+class DeploymentModelPolicyRecord(Base):
+    __tablename__ = "deployment_model_policies"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    mode: Mapped[str] = mapped_column(String(24), default="local_only")
+    allowed_provider_ids: Mapped[str] = mapped_column(Text, default="[]")
+    max_data_classification: Mapped[str] = mapped_column(String(16), default="internal")
+    allow_chat_history: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_document_metadata: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_redaction: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
+class ModelCall(Base):
+    __tablename__ = "model_calls"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    provider_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    purpose: Mapped[str] = mapped_column(String(40), default="answer")
+    classification: Mapped[str] = mapped_column(String(16), default="internal")
+    external: Mapped[bool] = mapped_column(Boolean, default=False)
+    request_id: Mapped[str] = mapped_column(String(80), default="")
+    cost_micros: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class EvaluationCase(Base):
+    __tablename__ = "evaluation_cases"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    dataset_id: Mapped[str] = mapped_column(String(26), ForeignKey("evaluation_datasets.id"), index=True)
+    query_id: Mapped[str] = mapped_column(String(120))
+    query_type: Mapped[str] = mapped_column(String(40))
+    query: Mapped[str] = mapped_column(Text)
+    relevant_chunk_ids: Mapped[str] = mapped_column(Text, default="[]")
+    filters: Mapped[str] = mapped_column(Text, default="{}")
+    relevance: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class EvaluationResult(Base):
+    __tablename__ = "evaluation_results"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    run_id: Mapped[str] = mapped_column(String(26), ForeignKey("evaluation_runs.id"), index=True)
+    metrics: Mapped[str] = mapped_column(Text, default="{}")
+    report: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class TraceRecord(Base):
+    __tablename__ = "retrieval_traces"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    chat_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    message_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    trace_id: Mapped[str] = mapped_column(String(36), index=True)
+    engine_mode: Mapped[str] = mapped_column(String(24), default="dual_engine")
+    original_query: Mapped[str] = mapped_column(Text)
+    rewritten_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    filters: Mapped[str] = mapped_column(Text, default="{}")
+    bm25_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    dense_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    rrf_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    rerank_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    final_context: Mapped[str] = mapped_column(Text, default="[]")
+    stage_latency_ms: Mapped[str] = mapped_column(Text, default="{}")
+    degraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    error_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    model: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    message_id: Mapped[str] = mapped_column(String(26), ForeignKey("messages.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    feedback_type: Mapped[str] = mapped_column(String(24))
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class SourceConnection(Base):
+    __tablename__ = "source_connections"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    kb_id: Mapped[str] = mapped_column(String(26), ForeignKey("knowledge_bases.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(24), default="github")
+    repo_url: Mapped[str] = mapped_column(String(500))
+    branch: Mapped[str] = mapped_column(String(120), default="main")
+    path_filters: Mapped[str] = mapped_column(Text, default="[]")
+    credentials_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    sync_cursor: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
+class Credential(Base):
+    __tablename__ = "credentials"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    secret_masked: Mapped[str] = mapped_column(String(40))
+    secret_encrypted: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class IndexGenerationRecord(Base):
+    __tablename__ = "index_generations"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="staging")
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedding_model: Mapped[str] = mapped_column(String(120), default="bge-m3")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_errors: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    validated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ChunkHistory(Base):
+    __tablename__ = "chunk_history"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    chunk_id: Mapped[str] = mapped_column(String(68), ForeignKey("chunks.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    old_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+_TRACE_LOCATION_FIELDS = frozenset(
+    {
+        "chunk_id",
+        "document_id",
+        "document_version_id",
+        "document_name",
+        "citation_id",
+        "source_locator",
+        "page_no",
+        "heading_path",
+        "rank",
+        "fused_rank",
+        "rerank_rank",
+        "score",
+        "support_score",
+    }
+)
+
+
+def sanitize_trace_context(raw_context: Optional[str]) -> str:
+    try:
+        context = json.loads(raw_context or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return "[]"
+    if not isinstance(context, list):
+        return "[]"
+    sanitized = []
+    for item in context:
+        if not isinstance(item, dict):
+            continue
+        sanitized.append(
+            {
+                key: value
+                for key, value in item.items()
+                if key in _TRACE_LOCATION_FIELDS
+            }
+        )
+    return json.dumps(sanitized, ensure_ascii=False)
+
+
+@event.listens_for(TraceRecord, "before_insert")
+@event.listens_for(TraceRecord, "before_update")
+def _sanitize_trace_context_before_write(_mapper, _connection, target: TraceRecord):
+    target.final_context = sanitize_trace_context(target.final_context)

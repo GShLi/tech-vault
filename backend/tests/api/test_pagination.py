@@ -85,3 +85,10 @@ def test_decode_cursor_rejects_noncanonical_payload():
             '"created_at":"2026-10-19T12:00:00+00:00"}'
         )
     )
+
+
+def test_cursor_round_trips_deterministic_chunk_id():
+    created_at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    chunk_id = "chk_" + "a" * 64
+
+    assert decode_cursor(encode_cursor(created_at, chunk_id)) == (created_at, chunk_id)

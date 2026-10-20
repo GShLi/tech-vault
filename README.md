@@ -1,43 +1,40 @@
 # TechVault 典阁
 
-面向研发团队的私有技术知识库与 RAG 问答系统。它支持文件与 GitHub 文档接入、团队共享与私有资料隔离、结构感知分块、混合检索、重排、带引用回答、拒答和检索链路追踪。
+面向研发团队的私有技术知识库与 RAG 问答系统。P0 已形成可运行的前后端垂直切片：管理员开户、团队与知识库、文件和 GitHub 文档接入、异步入库、Chunk 管理、混合检索、Rerank、带引用问答、检索 Trace、评测、模型策略和审计。
 
-项目以“权限在召回阶段生效、默认数据不出域、所有检索变更可评测”为基本约束。当前仓库是 PoC 工程骨架，当前垂直切片已包含 FastAPI 应用工厂、内置管理员与登录、团队和知识库 API、文档上传与分块入库、Elasticsearch/Qdrant 生产检索适配器，以及对应的 Vue3 页面；Reranker、真实 LLM 生成、Trace 和其余前端页面仍待后续迭代接入。
-
-完整设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)。
+完整产品与架构设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)，接口基线见 [API 契约](./docs/api/api-contract.md) 和 [OpenAPI](./docs/api/openapi.yaml)。
 
 ## 核心能力
 
-- 文件上传和 GitHub 仓库文档接入
-- 团队、知识库、文档、chunk 的分层权限
-- Markdown、代码、PDF 和 API 文档的结构感知分块
-- BM25 与 Dense Retrieval 混合召回、RRF 融合和 Rerank
-- 多轮 Query Rewrite、版本过滤、引用定位和证据不足拒答
-- `dual_engine` 与 `elastic_single` 两种检索模式
-- 索引 generation、staging 校验、原子切换、回滚和软删除
-- 本地模型优先的 LLM 数据出境策略
-- 黄金集、Recall、MRR、nDCG 和全链路检索 Trace
+- 内置超级管理员，禁止外部注册；用户和团队只能由管理员创建。
+- 平台角色为 `admin`，团队成员角色为 `leader | member | viewer`，无租户字段。
+- 文件上传与 GitHub 来源同步，原始文件进入 MinIO。
+- 文档、版本、Chunk、知识库成员范围和私有文档授权。
+- Markdown、TXT、PDF、DOCX 的解析、结构感知分块和索引 generation。
+- `dual_engine`（ES + Qdrant + RRF）与 `elastic_single`（ES 混合检索）两种后端检索模式。
+- Query Rewrite、Rerank、证据不足拒答、引用定位和可追踪降级状态。
+- SSE 问答与任务进度，支持取消、超时和终端状态持久化。
+- Trace、黄金集、Recall/MRR/nDCG、模型数据策略和全链路审计。
+- 文档软删除保留窗口；过期后由 Celery Beat 巡检清理索引、MinIO、本地文件和缓存。
 
 ## 系统架构
 
 ```text
-Vue3 前端
-    |
-Nginx / FastAPI
-    |
-业务模块 ────────────── RAG 核心
-    |                     |
-    |                     ├─ 解析 / 分块 / Embedding
-    |                     ├─ Retriever / RRF / Rerank
-    |                     ├─ 上下文组装 / 引用 / 拒答
-    |                     └─ Trace / 评测
-    |
-Celery Worker
-    |
+Vue 3 + Vite
+      |
+FastAPI  /api/v1
+      |
+业务模块 ───────────── RAG 核心
+      |                  | 解析 / 分块 / Embedding
+      |                  | Retrieval / RRF / Rerank
+      |                  | 上下文 / 引用 / 拒答 / Trace
+      |
+Celery Worker + Beat
+      |
 PostgreSQL   MinIO   Elasticsearch   Qdrant   Redis
-                         |
-               BGE-M3 / bge-reranker-v2-m3 / LLM
 ```
+
+开发时自有代码直接运行本地进程，Docker 只承载 PostgreSQL、Redis、MinIO、Elasticsearch 和 Qdrant，便于热更新与调试。
 
 ## 仓库结构
 
@@ -45,149 +42,91 @@ PostgreSQL   MinIO   Elasticsearch   Qdrant   Redis
 tech-vault/
 ├── backend/
 │   ├── app/
-│   │   ├── api/                  # FastAPI 路由和应用入口
-│   │   │   └── v1/
-│   │   ├── core/                 # 配置、认证、授权、模型策略
-│   │   ├── db/                   # ORM、仓储和迁移
-│   │   ├── modules/              # 业务模块
-│   │   │   ├── identity/
-│   │   │   ├── teams/
-│   │   │   ├── knowledge_bases/
-│   │   │   ├── documents/
-│   │   │   ├── sources/
-│   │   │   ├── ingestion/
-│   │   │   ├── chunks/
-│   │   │   ├── chats/
-│   │   │   ├── feedback/
-│   │   │   ├── evaluations/
-│   │   │   ├── model_policies/
-│   │   │   └── audit/
-│   │   ├── rag/                  # RAG 核心接口与适配器
-│   │   │   ├── domain/
-│   │   │   ├── chunking/
-│   │   │   ├── ingestion/
-│   │   │   ├── fusion/
-│   │   │   ├── indexing/
-│   │   │   ├── retrieval/
-│   │   │   ├── parsing/
-│   │   │   ├── embedding/
-│   │   │   ├── rerank/
-│   │   │   ├── context/
-│   │   │   ├── answer/
-│   │   │   ├── llm_gateway/
-│   │   │   ├── evaluation/
-│   │   │   └── observability/
-│   │   └── workers/              # Celery 任务
-│   └── tests/                    # 单元和集成测试
-├── frontend/                     # Vue3 应用，页面骨架待接入
-├── deploy/                       # Docker Compose、Nginx、K8s
-├── docs/                         # ADR、API 和工程文档
-├── scripts/                      # 初始化、导入和评测脚本
-├── pyproject.toml
-└── README.md
+│   │   ├── api/v1/          # FastAPI 路由
+│   │   ├── core/            # 配置、认证、授权、密钥和模型策略
+│   │   ├── db/              # SQLAlchemy 模型与 PoC schema bridge
+│   │   ├── modules/         # 文档、团队、来源、审计、模型策略等业务模块
+│   │   ├── rag/             # 解析、分块、索引、检索、重排、生成与评测
+│   │   └── workers/         # Celery 任务和 inline/Celery 统一调度
+│   └── tests/
+├── frontend/                # Vue 3 工作台
+├── deploy/                  # 本地依赖 Compose 与容器化部署模板
+├── docs/                    # API、页面、ADR 与实施文档
+├── scripts/                 # 真实依赖验证脚本
+└── pyproject.toml
 ```
 
-## 当前实现状态
+## 本地启动
 
-第一个垂直切片已建立并可测试：
-
-- FastAPI 应用工厂，以及健康检查、就绪检查和版本接口
-- 注册、登录和当前用户认证 API
-- 团队与知识库 API
-- Vue3 登录/注册、团队选择、知识库管理页面与真实 API 联调
-- SQLAlchemy 核心持久化
-- 共享 RAG 领域对象和 `Retriever` / `IndexWriter` 端口
-- 默认拒绝的文档授权和检索过滤
-- LLM 数据出境策略的基本约束
-- Markdown 结构分块与稳定 chunk 标识
-- 加权 RRF
-- Recall、MRR、nDCG 评测指标
-- 黄金集加载和种子样本
-- 内存索引 generation 和内存检索适配器
-- Elasticsearch BM25 与 Qdrant Dense 生产适配器
-- `dual_engine` 应用层 RRF 与 `elastic_single` ES 混合检索
-
-第一个垂直切片尚未接入：
-
-- Reranker 与真实 LLM 生成链路
-- 文档上传与来源同步 API
-- Chunk 管理 API
-- 对话、Trace 和评测 API
-- 生产数据库迁移
-- PDF、DOCX、GitHub 解析链路
-- MinIO、Redis 和 Celery Worker
-- BGE-M3、bge-reranker-v2-m3 和真实 LLM
-- 文档上传、Chunk 管理、检索调试、评测和完整问答工作台页面
-- 生产级鉴权、审计、监控和备份
-
-## 本地开发
-
-目标运行时是 Python 3.10+。当前基础模块保持 Python 3.9 兼容，便于在当前工作环境运行测试。
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools
-python -m pip install -e ".[test]"
-pytest -q
-```
-
-当前基线测试：
-
-```text
-193 passed
-```
-
-前端测试与构建：
-
-```bash
-cd frontend
-export PATH="$HOME/.nvm/versions/node/v22.15.0/bin:$PATH"
-npm test
-npm run build
-```
-
-前后端真实联调：
-
-```bash
-cd frontend
-npm run integration
-```
-
-该脚本使用系统 Chrome 以超级管理员登录，创建团队、知识库和普通成员账号，
-再验证普通成员登录后的权限，并输出桌面端与移动端截图。
-
-### 启动 API
-
-开发时 Docker 只启动外部依赖，后端和前端直接用本地进程运行：
+### 1. 启动依赖服务
 
 ```bash
 cd deploy
 docker compose up -d
 ```
 
-该命令只启动 PostgreSQL、Redis、MinIO、Elasticsearch 和 Qdrant。
+本地端口：
+
+| 服务 | 地址 |
+| --- | --- |
+| PostgreSQL | `127.0.0.1:55433` |
+| Redis | `127.0.0.1:56379` |
+| Elasticsearch | `http://127.0.0.1:59200` |
+| Qdrant | `http://127.0.0.1:56333` |
+| MinIO API | `http://127.0.0.1:59000` |
+| MinIO Console | `http://127.0.0.1:59001` |
+
+### 2. 启动后端
 
 ```bash
-python -m pip install -e ".[test,api]"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test,api,tasks]"
+
 export TECHVAULT_ENVIRONMENT=development
 export TECHVAULT_DATABASE_URL="postgresql+psycopg2://techvault:techvault@127.0.0.1:55433/techvault"
 export TECHVAULT_REDIS_URL="redis://127.0.0.1:56379/0"
 export TECHVAULT_ES_URL="http://127.0.0.1:59200"
 export TECHVAULT_QDRANT_URL="http://127.0.0.1:56333"
+export TECHVAULT_MINIO_URL="http://127.0.0.1:59000"
+export TECHVAULT_MINIO_PUBLIC_URL="http://127.0.0.1:59000"
+export TECHVAULT_MINIO_ACCESS_KEY=minioadmin
+export TECHVAULT_MINIO_SECRET_KEY=minioadmin
+export TECHVAULT_MINIO_BUCKET=techvault
+export TECHVAULT_UPLOAD_DIR="$PWD/data/uploads"
+export TECHVAULT_OBJECT_STORAGE_ENABLED=true
 export TECHVAULT_ENABLE_INDEXING=true
-uvicorn backend.app.main:create_app --factory --reload
+export TECHVAULT_TASK_EXECUTION_MODE=inline
+
+.venv/bin/uvicorn backend.app.main:create_app --factory --reload --port 8000
 ```
 
-默认服务地址为 `http://127.0.0.1:8000`，API 前缀为 `/api/v1`，交互文档为
-`http://127.0.0.1:8000/docs`。当前 API 已覆盖健康检查、管理员登录与开户、
-团队、知识库、文档上传、Chunk 和带引用的基础问答；Reranker、
-真实 LLM 生成和 Trace 仍待接入。
+`TECHVAULT_TASK_EXECUTION_MODE` 支持 `inline` 和 `celery`：
 
-生产环境必须显式设置至少 32 字节的唯一 `TECHVAULT_JWT_SECRET`，且不得使用
-`development` 环境。
+- `inline`：本地单进程同步执行，便于测试和单模块调试。
+- `celery`：API 只入队，由独立 Worker 执行；生产形态使用该模式。
 
-### 初始管理员与账号开通
+使用 Celery 时另开两个进程：
+
+```bash
+.venv/bin/celery -A backend.app.workers.tasks worker --loglevel=info
+.venv/bin/celery -A backend.app.workers.tasks beat --loglevel=info
+```
+
+`beat` 每小时触发过期文档物理清理。
+
+### 3. 启动前端
+
+```bash
+cd frontend
+export PATH="$HOME/.nvm/versions/node/v22.15.0/bin:$PATH"
+npm install
+VITE_DEV_API_TARGET=http://127.0.0.1:8000 npm run dev
+```
+
+打开 `http://127.0.0.1:5173/login`。API 文档在 `http://127.0.0.1:8000/docs`。
+
+## 初始管理员
 
 首次启动会创建内置超级管理员：
 
@@ -196,60 +135,67 @@ uvicorn backend.app.main:create_app --factory --reload
 密码：ChangeMe-123!
 ```
 
-请首次登录后在“设置 → 修改密码”中更换密码。外部注册默认关闭，
-团队和用户只能由超级管理员创建；内置管理员不允许删除、停用或降级。
-可通过 `TECHVAULT_ADMIN_EMAIL`、`TECHVAULT_ADMIN_PASSWORD` 和
-`TECHVAULT_ADMIN_DISPLAY_NAME` 覆盖初始账号配置。
+首次登录后请立即修改密码。内置管理员不能被删除、停用或降级，但允许修改自己的密码。可通过 `TECHVAULT_ADMIN_EMAIL`、`TECHVAULT_ADMIN_PASSWORD` 和 `TECHVAULT_ADMIN_DISPLAY_NAME` 覆盖初始值。
 
-测试数据库使用独立的 SQLite 内存库；本地开发默认使用
-`data/techvault.db`，可通过 `TECHVAULT_DATABASE_URL` 覆盖。
+## 验证
 
-只验证第一个 RAG 垂直切片：
+后端：
 
 ```bash
-pytest backend/tests/smoke/test_vertical_slice.py -q
+.venv/bin/pytest -q
+.venv/bin/python -m compileall -q backend/app backend/tests
 ```
 
-该烟雾测试覆盖 Markdown 分块、权限过滤、内存混合检索、RRF 排序和评测指标，并校验请求结果中的非空 `trace_id`。
+前端：
 
-验证真实 Elasticsearch + Qdrant 检索栈（需先启动 Docker 中的 ES/Qdrant）：
+```bash
+cd frontend
+export PATH="$HOME/.nvm/versions/node/v22.15.0/bin:$PATH"
+npm test
+npm run build
+```
+
+真实依赖验证：
 
 ```bash
 .venv/bin/python scripts/verify_retrieval_stack.py
+.venv/bin/python scripts/verify_object_storage.py
+.venv/bin/python scripts/verify_rag_e2e.py
 ```
 
-该脚本写入 staging generation、执行校验与激活，分别运行 `dual_engine` 和
-`elastic_single`，并确认其他成员的私有文档不会被召回。
+- `verify_retrieval_stack.py` 校验 ES/Qdrant staging、激活、双引擎和 ES 单引擎对照。
+- `verify_object_storage.py` 校验 MinIO 上传、下载、删除和删除后不可下载。
+- `verify_rag_e2e.py` 校验上传、入库、检索、生成和引用链路。
 
-后续安装 API 依赖时使用：
+前后端联调脚本：
 
 ```bash
-python -m pip install -e ".[test,api,tasks]"
+cd frontend
+VITE_DEV_API_TARGET=http://127.0.0.1:8001 npm run integration
 ```
 
 ## 开发约定
 
-- 业务模块通过应用服务调用 RAG 领域接口，不直接依赖 ES、Qdrant 或模型 SDK。
-- 权限过滤必须在召回前执行，不能先召回再在应用层删除。
-- `dual_engine` 和 `elastic_single` 通过配置切换，共用 Rerank、上下文、引用和评测代码。
-- 任何外部模型调用都必须经过 `llm_gateway`，默认策略为 `local_only`。
-- 索引写入使用 staging generation，校验和激活后才能被检索。
-- 每次问答 Trace 与离线评测共享同一候选和上下文结构。
+- 项目文档和 OpenAPI 是接口事实来源；实现与文档冲突时先修文档或代码，禁止长期双口径。
+- API 路径不包含团队或资源路径参数；写操作参数放 JSON body，查询接口只使用有限 query 参数。
+- 权限过滤必须进入召回条件；禁止先召回再在应用层剔除无权内容。
+- 外部模型调用统一经过 `llm_gateway`，默认 `local_only`。
+- 索引写入使用 staging generation，通过校验后激活；失败保留上一个 active generation。
+- 文档删除先停止召回，保留期内可恢复，过期后由后台任务幂等清理。
+- 任何秘密值只写不读，日志、Trace 和审计不得记录完整密钥或原始文档内容。
 
-## 进一步文档
+## 文档索引
 
-- [P0 垂直切片实施计划](./docs/superpowers/plans/2026-10-18-techvault-p0-vertical-slice.md)
-- [前端页面与路由清单](./docs/product/page-map.md)
+- [项目设计与产品需求](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)
+- [前端页面与路由](./docs/product/page-map.md)
 - [API 契约](./docs/api/api-contract.md)
-- [OpenAPI 骨架](./docs/api/openapi.yaml)
-- [ADR 目录](./docs/adr/README.md)
-- [API 文档目录](./docs/api/README.md)
+- [OpenAPI](./docs/api/openapi.yaml)
 - [部署说明](./deploy/README.md)
 - [脚本说明](./scripts/README.md)
+- [ADR 目录](./docs/adr/README.md)
 
 ## Git 远程
 
 ```text
 origin  git@github.com:GShLi/tech-vault.git
 ```
-

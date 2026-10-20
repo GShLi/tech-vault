@@ -22,25 +22,6 @@ tags:
 security:
 - bearerAuth: []
 paths:
-  /auth/register:
-    post:
-      tags:
-      - auth
-      summary: Register a user
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
   /auth/login:
     post:
       tags:
@@ -52,14 +33,44 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/LoginBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /admin/users:
+    get:
+      tags:
+      - auth
+      summary: List platform users
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserPageEnvelope'
   /admin/users/create:
     post:
       tags:
@@ -70,10 +81,32 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/AdminUserCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /admin/users/update:
+    post:
+      tags:
+      - auth
+      summary: Update a user and team role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdateBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
           content:
             application/json:
               schema:
@@ -83,13 +116,10 @@ paths:
       tags:
       - auth
       summary: Refresh an access token
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
+      security: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -101,13 +131,9 @@ paths:
       tags:
       - auth
       summary: Log out
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '204':
           description: No content
   /auth/me:
@@ -116,6 +142,8 @@ paths:
       - auth
       summary: Current user and memberships
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -132,8 +160,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/UserUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -150,29 +180,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/PasswordChangeBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '204':
           description: No content
-  /auth/password/forgot:
-    post:
-      tags:
-      - auth
-      summary: Request password reset
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
   /teams:
     get:
       tags:
@@ -193,12 +206,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TeamListEnvelope'
+                $ref: '#/components/schemas/TeamPageEnvelope'
   /teams/create:
     post:
       tags:
@@ -209,8 +224,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/TeamCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -229,6 +246,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -245,8 +264,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/TeamUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -278,12 +299,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/TeamMemberPageEnvelope'
   /invitations/create:
     post:
       tags:
@@ -294,8 +317,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/InvitationCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -307,6 +332,7 @@ paths:
       tags:
       - teams
       summary: Read an invitation
+      security: []
       parameters:
       - name: token
         in: query
@@ -314,6 +340,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -330,8 +358,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/InvitationAcceptBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -348,8 +378,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/TeamMemberUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -366,10 +398,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/TeamMemberRemoveBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /members/transfer-documents:
     post:
       tags:
@@ -380,8 +418,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/TransferDocumentsBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -413,12 +453,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgeBaseListEnvelope'
+                $ref: '#/components/schemas/KnowledgeBasePageEnvelope'
   /kbs/create:
     post:
       tags:
@@ -429,8 +471,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/KnowledgeBaseCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -454,6 +498,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -470,8 +516,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/KnowledgeBaseUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -488,8 +536,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/KnowledgeBaseArchiveBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -513,6 +563,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -529,14 +581,74 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/KnowledgeBasePolicyUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /kbs/members:
+    get:
+      tags:
+      - kbs
+      summary: List knowledge-base members
+      parameters:
+      - name: team_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: kb_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseMemberPageEnvelope'
+  /kbs/members/update:
+    post:
+      tags:
+      - kbs
+      summary: Replace knowledge-base members
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseMembersUpdateBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseMemberCollectionEnvelope'
   /facets:
     get:
       tags:
@@ -549,6 +661,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -571,11 +685,6 @@ paths:
         required: true
         schema:
           type: string
-      - name: status
-        in: query
-        required: false
-        schema:
-          type: string
       - name: limit
         in: query
         required: false
@@ -590,12 +699,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/DocumentPageEnvelope'
   /docs/upload:
     post:
       tags:
@@ -606,8 +717,10 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/MultipartBody'
+              $ref: '#/components/schemas/DocumentUploadBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -631,6 +744,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -647,8 +762,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -665,8 +782,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentDeleteBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -683,8 +802,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentRestoreBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -707,13 +828,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/DocumentVersionPageEnvelope'
   /docs/version:
     get:
       tags:
@@ -736,6 +872,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -759,12 +897,42 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /docs/download:
+    get:
+      tags:
+      - docs
+      summary: Download document source through the API
+      parameters:
+      - name: team_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: document_id
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Document source
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Document or source is unavailable
   /docs/rebuild:
     post:
       tags:
@@ -775,8 +943,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentRebuildBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -799,13 +969,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/DocumentGrantPageEnvelope'
   /docs/grants/create:
     post:
       tags:
@@ -816,8 +1001,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentGrantCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -834,10 +1021,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/DocumentGrantRevokeBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /sources:
     get:
       tags:
@@ -851,16 +1044,31 @@ paths:
           type: string
       - name: kb_id
         in: query
-        required: true
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/SourceConnectionPageEnvelope'
   /sources/github/create:
     post:
       tags:
@@ -871,10 +1079,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/GitHubSourceCreateBody'
       responses:
-        '202':
-          description: Accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '201':
+          description: Created
           content:
             application/json:
               schema:
@@ -896,6 +1106,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -912,8 +1124,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/GitHubSourceUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -930,10 +1144,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/SourceDeleteBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /sources/sync:
     post:
       tags:
@@ -944,8 +1164,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/SourceSyncBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -962,10 +1184,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/SourcePauseBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /sources/resume:
     post:
       tags:
@@ -976,10 +1204,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/SourceResumeBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /credentials:
     get:
       tags:
@@ -991,13 +1225,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/CredentialPageEnvelope'
   /credentials/create:
     post:
       tags:
@@ -1008,8 +1257,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/CredentialCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -1026,10 +1277,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/CredentialDeleteBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /ingestions:
     get:
       tags:
@@ -1055,12 +1312,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/IngestionRunPageEnvelope'
   /ingestions/detail:
     get:
       tags:
@@ -1078,6 +1337,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1101,12 +1362,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
-          description: Server-sent events
+          description: Server-sent ingestion progress events.
           content:
             text/event-stream:
               schema:
-                type: string
+                $ref: '#/components/schemas/IngestionStreamEvent'
   /ingestions/retry:
     post:
       tags:
@@ -1117,8 +1380,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/IngestionRetryBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -1135,8 +1400,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/IngestionCancelBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -1159,13 +1426,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/DocumentTaskPageEnvelope'
   /chunks:
     get:
       tags:
@@ -1182,11 +1464,6 @@ paths:
         required: true
         schema:
           type: string
-      - name: status
-        in: query
-        required: false
-        schema:
-          type: string
       - name: limit
         in: query
         required: false
@@ -1201,12 +1478,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/ChunkPageEnvelope'
   /chunks/detail:
     get:
       tags:
@@ -1224,6 +1503,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1240,8 +1521,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChunkUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1258,8 +1541,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChunkDisableBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1276,8 +1561,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChunkEnableBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1294,8 +1581,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChunkRegenerateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -1318,13 +1607,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/ChunkHistoryPageEnvelope'
   /docs/chunks:
     get:
       tags:
@@ -1341,13 +1645,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/DocumentChunkPageEnvelope'
   /chunks/bulk:
     post:
       tags:
@@ -1358,8 +1677,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChunkBulkBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1391,12 +1712,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/ChatPageEnvelope'
   /chats/create:
     post:
       tags:
@@ -1407,8 +1730,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChatCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -1432,6 +1757,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1448,8 +1775,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChatUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1466,10 +1795,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChatDeleteBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /chats/messages:
     get:
       tags:
@@ -1500,30 +1835,38 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/MessagePageEnvelope'
   /chats/ask:
     post:
       tags:
       - chats
-      summary: Ask a grounded question and stream the answer
+      summary: Ask a grounded question using JSON or SSE
+      description: Requires non-empty provider_id and model_id. Missing, empty, or undecryptable credentials for the selected configured provider return 409 RESOURCE_STATE_CONFLICT. Upstream timeout or unavailability returns 503 MODEL_UNAVAILABLE; no extractive fallback is used.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ChatAskBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
-          description: Server-sent events
+          description: JSON when stream is false; server-sent events when stream is true.
           content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
             text/event-stream:
               schema:
-                type: string
+                $ref: '#/components/schemas/AskStreamEvent'
   /messages/cancel:
     post:
       tags:
@@ -1534,8 +1877,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/MessageCancelBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -1559,6 +1904,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1582,6 +1929,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1598,8 +1947,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/MessageFeedbackBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -1631,12 +1982,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/RetrievalTracePageEnvelope'
   /traces/detail:
     get:
       tags:
@@ -1654,26 +2007,10 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /traces/replay:
-    post:
-      tags:
-      - traces
-      summary: Replay a trace with a new version
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '202':
-          description: Accepted
           content:
             application/json:
               schema:
@@ -1695,6 +2032,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1726,12 +2065,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/EvaluationDatasetPageEnvelope'
   /evals/datasets/create:
     post:
       tags:
@@ -1742,8 +2083,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationDatasetCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -1767,6 +2110,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1783,8 +2128,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationDatasetUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1801,10 +2148,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationDatasetArchiveBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /evals/datasets/cases:
     get:
       tags:
@@ -1835,12 +2188,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/EvaluationCasePageEnvelope'
   /evals/datasets/cases/create:
     post:
       tags:
@@ -1851,8 +2206,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationCaseCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
           content:
@@ -1869,8 +2226,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationCaseUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1887,10 +2246,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationCaseDeleteBody'
       responses:
-        '204':
-          description: No content
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
   /evals/datasets/import:
     post:
       tags:
@@ -1899,12 +2264,14 @@ paths:
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              $ref: '#/components/schemas/MultipartBody'
+              $ref: '#/components/schemas/EvaluationDatasetImportBody'
       responses:
-        '202':
-          description: Accepted
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '201':
+          description: Created
           content:
             application/json:
               schema:
@@ -1918,6 +2285,11 @@ paths:
       - name: team_id
         in: query
         required: true
+        schema:
+          type: string
+      - name: dataset_id
+        in: query
+        required: false
         schema:
           type: string
       - name: limit
@@ -1934,12 +2306,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/EvaluationRunPageEnvelope'
   /evals/runs/start:
     post:
       tags:
@@ -1950,8 +2324,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationRunStartBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -1975,6 +2351,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -1998,12 +2376,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
-          description: Server-sent events
+          description: Server-sent evaluation progress events.
           content:
             text/event-stream:
               schema:
-                type: string
+                $ref: '#/components/schemas/EvaluationStreamEvent'
   /evals/runs/cancel:
     post:
       tags:
@@ -2014,8 +2394,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/EvaluationRunCancelBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -2039,58 +2421,59 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
-  /evals/comparisons/create:
-    post:
-      tags:
-      - evals
-      summary: Create an A/B comparison
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /evals/comparisons/detail:
+  /model-policy:
     get:
       tags:
-      - evals
-      summary: Get an A/B comparison
+      - policies
+      summary: Get team model policy
       parameters:
       - name: team_id
         in: query
         required: true
         schema:
           type: string
-      - name: comparison_id
-        in: query
-        required: true
-        schema:
-          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
-  /gaps:
+  /model-policy/update:
+    post:
+      tags:
+      - policies
+      summary: Tighten team model policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPolicyUpdateBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /providers:
     get:
       tags:
-      - evals
-      summary: List knowledge gaps
+      - policies
+      summary: List available model providers
       parameters:
       - name: team_id
         in: query
@@ -2111,102 +2494,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
-  /gaps/update:
-    post:
-      tags:
-      - evals
-      summary: Update a knowledge gap
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /gaps/promote:
-    post:
-      tags:
-      - evals
-      summary: Promote a knowledge gap to a golden-set case
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /model-policy:
-    get:
-      tags:
-      - policies
-      summary: Get team model policy
-      parameters:
-      - name: team_id
-        in: query
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /model-policy/update:
-    post:
-      tags:
-      - policies
-      summary: Tighten team model policy
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenericBody'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /providers:
-    get:
-      tags:
-      - policies
-      summary: List available model providers
-      parameters:
-      - name: team_id
-        in: query
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/ProviderPageEnvelope'
   /providers/create:
     post:
       tags:
@@ -2217,10 +2512,32 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ProviderCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /providers/models:
+    post:
+      tags:
+      - policies
+      summary: Discover models from a team provider upstream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderModelsBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
           content:
             application/json:
               schema:
@@ -2235,8 +2552,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/ProviderTestBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2268,12 +2587,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/ModelCallPageEnvelope'
   /audit:
     get:
       tags:
@@ -2299,12 +2620,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/AuditLogPageEnvelope'
   /audit/detail:
     get:
       tags:
@@ -2322,6 +2645,56 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /admin/audit:
+    get:
+      tags:
+      - policies
+      summary: List global audit records as a platform administrator
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogPageEnvelope'
+  /admin/audit/detail:
+    get:
+      tags:
+      - policies
+      summary: Get a global audit record as a platform administrator
+      parameters:
+      - name: audit_id
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2334,6 +2707,8 @@ paths:
       - policies
       summary: Get deployment model policy
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2350,8 +2725,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/AdminModelPolicyUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2363,13 +2740,29 @@ paths:
       tags:
       - policies
       summary: List all model providers
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/AdminProviderPageEnvelope'
   /admin/providers/create:
     post:
       tags:
@@ -2380,10 +2773,32 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/AdminProviderCreateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /admin/providers/models:
+    post:
+      tags:
+      - policies
+      summary: Discover models from a global provider upstream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminProviderModelsBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
           content:
             application/json:
               schema:
@@ -2398,8 +2813,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/AdminProviderUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2411,13 +2828,29 @@ paths:
       tags:
       - policies
       summary: List registered models
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/AdminModelPageEnvelope'
   /admin/models/update:
     post:
       tags:
@@ -2428,8 +2861,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/AdminModelUpdateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2461,12 +2896,14 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Envelope'
+                $ref: '#/components/schemas/IndexGenerationPageEnvelope'
   /generations/detail:
     get:
       tags:
@@ -2484,6 +2921,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2507,6 +2946,8 @@ paths:
         schema:
           type: string
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2523,8 +2964,30 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/GenerationValidateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+  /generations/reindex:
+    post:
+      tags:
+      - generations
+      summary: Create a staging generation and rebuild the team index
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerationReindexBody'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -2541,8 +3004,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/GenerationActivateBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -2559,8 +3024,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GenericBody'
+              $ref: '#/components/schemas/GenerationRollbackBody'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '202':
           description: Accepted
           content:
@@ -2574,6 +3041,8 @@ paths:
       summary: Process health
       security: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2587,6 +3056,8 @@ paths:
       summary: Dependency readiness
       security: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2600,6 +3071,8 @@ paths:
       summary: Build version
       security: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           description: OK
           content:
@@ -2612,6 +3085,13 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  responses:
+    ErrorResponse:
+      description: Structured API error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
     Meta:
       type: object
@@ -2624,6 +3104,9 @@ components:
       allOf:
       - $ref: '#/components/schemas/Meta'
       - type: object
+        required:
+        - next_cursor
+        - has_more
         properties:
           next_cursor:
             type: string
@@ -2637,11 +3120,14 @@ components:
       - meta
       properties:
         data:
-          type: object
-          additionalProperties: true
+          oneOf:
+          - type: object
+            additionalProperties: true
+          - type: array
+            items: {}
         meta:
-          $ref: '#/components/schemas/PageMeta'
-    ListEnvelope:
+          $ref: '#/components/schemas/Meta'
+    PageEnvelope:
       type: object
       required:
       - data
@@ -2652,24 +3138,258 @@ components:
           items: {}
         meta:
           $ref: '#/components/schemas/PageMeta'
-    TeamListEnvelope:
+    AdminUserPageEnvelope:
       allOf:
-      - $ref: '#/components/schemas/ListEnvelope'
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AdminUser'
+    TeamPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
       - type: object
         properties:
           data:
             type: array
             items:
               $ref: '#/components/schemas/Team'
-    KnowledgeBaseListEnvelope:
+    TeamMemberPageEnvelope:
       allOf:
-      - $ref: '#/components/schemas/ListEnvelope'
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/TeamMember'
+    KnowledgeBasePageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
       - type: object
         properties:
           data:
             type: array
             items:
               $ref: '#/components/schemas/KnowledgeBase'
+    KnowledgeBaseMemberPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/KnowledgeBaseMember'
+    KnowledgeBaseMemberCollectionEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/Envelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/KnowledgeBaseMember'
+    DocumentPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Document'
+    DocumentVersionPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/DocumentVersion'
+    DocumentGrantPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/DocumentGrant'
+    IngestionRunPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/IngestionRun'
+    DocumentTaskPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/DocumentTask'
+    ChunkPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Chunk'
+    DocumentChunkPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/DocumentChunk'
+    ChunkHistoryPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/ChunkHistory'
+    ChatPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Chat'
+    MessagePageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Message'
+    RetrievalTracePageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/RetrievalTrace'
+    EvaluationDatasetPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/EvaluationDataset'
+    EvaluationCasePageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/EvaluationCase'
+    EvaluationRunPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/EvaluationRun'
+    SourceConnectionPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/SourceConnection'
+    CredentialPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Credential'
+    ProviderPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Provider'
+    AdminProviderPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AdminProvider'
+    ModelCallPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/ModelCall'
+    AuditLogPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AuditLog'
+    AdminModelPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AdminModel'
+    IndexGenerationPageEnvelope:
+      allOf:
+      - $ref: '#/components/schemas/PageEnvelope'
+      - type: object
+        properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/IndexGeneration'
     ErrorEnvelope:
       type: object
       required:
@@ -2680,6 +3400,7 @@ components:
           required:
           - code
           - message
+          - details
           - request_id
           properties:
             code:
@@ -2691,24 +3412,1267 @@ components:
               additionalProperties: true
             request_id:
               type: string
-    GenericBody:
+    LoginBody:
       type: object
-      additionalProperties: true
-    MultipartBody:
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    AdminUserCreateBody:
       type: object
-      additionalProperties: true
+      required:
+      - email
+      - display_name
+      - password
+      - team_id
+      - role
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        team_id:
+          type: string
+          maxLength: 26
+        role:
+          $ref: '#/components/schemas/TeamRole'
+    AdminUserUpdateBody:
+      type: object
+      required:
+      - user_id
+      anyOf:
+      - required:
+        - status
+      - required:
+        - team_id
+        - role
+      description: At least one of status or the team_id/role pair is required.
+      properties:
+        user_id:
+          type: string
+          maxLength: 26
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        team_id:
+          type: string
+          maxLength: 26
+        role:
+          $ref: '#/components/schemas/TeamRole'
+    UserUpdateBody:
+      type: object
+      required:
+      - display_name
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+    PasswordChangeBody:
+      type: object
+      required:
+      - old_password
+      - new_password
+      properties:
+        old_password:
+          type: string
+          minLength: 1
+          maxLength: 128
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    TeamCreateBody:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    TeamUpdateBody:
+      type: object
+      required:
+      - team_id
+      - name
+      - name
       properties:
         team_id:
           type: string
+          maxLength: 26
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    InvitationCreateBody:
+      type: object
+      required:
+      - team_id
+      - email
+      - role
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        role:
+          $ref: '#/components/schemas/TeamRole'
+    InvitationAcceptBody:
+      type: object
+      required:
+      - token
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 128
+    TeamMemberUpdateBody:
+      type: object
+      required:
+      - team_id
+      - user_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        user_id:
+          type: string
+          maxLength: 26
+        role:
+          $ref: '#/components/schemas/TeamRole'
+        status:
+          $ref: '#/components/schemas/MemberUpdateStatus'
+    TeamMemberRemoveBody:
+      type: object
+      required:
+      - team_id
+      - user_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        user_id:
+          type: string
+          maxLength: 26
+    TransferDocumentsBody:
+      type: object
+      required:
+      - team_id
+      - from_user_id
+      - to_user_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        from_user_id:
+          type: string
+          maxLength: 26
+        to_user_id:
+          type: string
+          maxLength: 26
+    KnowledgeBaseCreateBody:
+      type: object
+      required:
+      - team_id
+      - name
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    KnowledgeBaseUpdateBody:
+      type: object
+      required:
+      - team_id
+      - kb_id
+      - name
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
         kb_id:
           type: string
+          maxLength: 26
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    KnowledgeBaseArchiveBody:
+      type: object
+      required:
+      - team_id
+      - kb_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        kb_id:
+          type: string
+          maxLength: 26
+    KnowledgeBasePolicyUpdateBody:
+      type: object
+      required:
+      - team_id
+      - kb_id
+      - mode
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        kb_id:
+          type: string
+          maxLength: 26
+        mode:
+          $ref: '#/components/schemas/ModelPolicyMode'
+    DocumentUploadBody:
+      type: object
+      description: Document owner is always the authenticated user.
+      required:
+      - team_id
+      - kb_id
+      - file
+      additionalProperties: false
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        kb_id:
+          type: string
+          maxLength: 26
         file:
           type: string
           format: binary
-        metadata:
+        product:
           type: string
+          maxLength: 120
+          nullable: true
+        version_values:
+          type: array
+          items:
+            type: string
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        data_classification:
+          $ref: '#/components/schemas/DataClassification'
+    DocumentUpdateBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+        file_name:
+          type: string
+          maxLength: 500
+        owner_user_id:
+          type: string
+          maxLength: 26
+        product:
+          type: string
+          maxLength: 120
+          nullable: true
+        version_values:
+          type: array
+          items:
+            type: string
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        data_classification:
+          $ref: '#/components/schemas/DataClassification'
+    DocumentDeleteBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+    DocumentRestoreBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+    DocumentRebuildBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+    DocumentGrantCreateBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      - user_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+        user_id:
+          type: string
+          maxLength: 26
+    DocumentGrantRevokeBody:
+      type: object
+      required:
+      - team_id
+      - grant_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        grant_id:
+          type: string
+          maxLength: 26
+    GitHubSourceCreateBody:
+      type: object
+      required:
+      - team_id
+      - kb_id
+      - repo_url
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        kb_id:
+          type: string
+          maxLength: 26
+        repo_url:
+          type: string
+          format: uri
+        branch:
+          type: string
+          maxLength: 120
+        path_filters:
+          type: array
+          items:
+            type: string
+        credentials_id:
+          type: string
+          maxLength: 26
+          nullable: true
+    GitHubSourceUpdateBody:
+      type: object
+      required:
+      - team_id
+      - source_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        source_id:
+          type: string
+          maxLength: 26
+        repo_url:
+          type: string
+          format: uri
+        branch:
+          type: string
+          maxLength: 120
+        path_filters:
+          type: array
+          items:
+            type: string
+        credentials_id:
+          type: string
+          maxLength: 26
+          nullable: true
+    SourceDeleteBody:
+      type: object
+      required:
+      - team_id
+      - source_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        source_id:
+          type: string
+          maxLength: 26
+    SourceSyncBody:
+      type: object
+      required:
+      - team_id
+      - source_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        source_id:
+          type: string
+          maxLength: 26
+    SourcePauseBody:
+      type: object
+      required:
+      - team_id
+      - source_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        source_id:
+          type: string
+          maxLength: 26
+    SourceResumeBody:
+      type: object
+      required:
+      - team_id
+      - source_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        source_id:
+          type: string
+          maxLength: 26
+    CredentialCreateBody:
+      type: object
+      required:
+      - team_id
+      - secret
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        name:
+          type: string
+          maxLength: 120
+        secret:
+          type: string
+          minLength: 1
+    CredentialDeleteBody:
+      type: object
+      required:
+      - team_id
+      - credential_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        credential_id:
+          type: string
+          maxLength: 26
+    IngestionRetryBody:
+      type: object
+      required:
+      - team_id
+      - run_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        run_id:
+          type: string
+          maxLength: 26
+    IngestionCancelBody:
+      type: object
+      required:
+      - team_id
+      - run_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        run_id:
+          type: string
+          maxLength: 26
+    ChunkUpdateBody:
+      type: object
+      additionalProperties: false
+      required:
+      - team_id
+      - chunk_id
+      - content
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chunk_id:
+          type: string
+          maxLength: 68
+        content:
+          type: string
+          minLength: 1
+    ChunkDisableBody:
+      type: object
+      required:
+      - team_id
+      - chunk_ids
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chunk_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+    ChunkEnableBody:
+      type: object
+      required:
+      - team_id
+      - chunk_ids
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chunk_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+    ChunkRegenerateBody:
+      type: object
+      required:
+      - team_id
+      - document_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        document_id:
+          type: string
+          maxLength: 26
+    ChunkBulkBody:
+      type: object
+      additionalProperties: false
+      required:
+      - team_id
+      - chunk_ids
+      - action
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chunk_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        action:
+          type: string
+          enum:
+          - enable
+          - disable
+    ChatCreateBody:
+      type: object
+      required:
+      - team_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        title:
+          type: string
+          maxLength: 200
+        knowledge_base_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    ChatUpdateBody:
+      type: object
+      required:
+      - team_id
+      - chat_id
+      - title
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chat_id:
+          type: string
+          maxLength: 26
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+    ChatDeleteBody:
+      type: object
+      required:
+      - team_id
+      - chat_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chat_id:
+          type: string
+          maxLength: 26
+    ChatAskFilters:
+      type: object
+      properties:
+        knowledge_base_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        product:
+          type: string
+          maxLength: 120
+          nullable: true
+        version_values:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    ChatAskBody:
+      type: object
+      required:
+      - team_id
+      - chat_id
+      - question
+      - provider_id
+      - model_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        chat_id:
+          type: string
+          maxLength: 26
+        question:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        provider_id:
+          type: string
+          minLength: 1
+          maxLength: 26
+          description: Active provider selected from the team's allowed provider list.
+        model_id:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Model configured on the selected provider and allowed by policy.
+        filters:
+          $ref: '#/components/schemas/ChatAskFilters'
+        knowledge_base_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        model_policy:
+          type: string
+          enum:
+          - inherit
+          - local_only
+          - external_allowed
+          - external_required
+        stream:
+          type: boolean
+          default: true
+    MessageCancelBody:
+      type: object
+      required:
+      - team_id
+      - message_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        message_id:
+          type: string
+          maxLength: 26
+    MessageFeedbackBody:
+      type: object
+      required:
+      - team_id
+      - message_id
+      - feedback_type
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        message_id:
+          type: string
+          maxLength: 26
+        feedback_type:
+          type: string
+          enum:
+          - useful
+          - not_useful
+          - citation_error
+          - knowledge_gap
+        comment:
+          type: string
+          nullable: true
+    AskStreamEvent:
+      type: object
+      required:
+      - event
+      - data
+      properties:
+        event:
+          type: string
+          enum:
+          - meta
+          - rewrite
+          - citation
+          - delta
+          - done
+          - refused
+          - error
+        data:
+          type: object
+          additionalProperties: true
+    IngestionStreamEvent:
+      type: object
+      required:
+      - event
+      - data
+      properties:
+        event:
+          type: string
+          enum:
+          - progress
+          - completed
+          - failed
+          - cancelled
+        data:
+          type: object
+          required:
+          - run_id
+          - status
+          - stage
+          - percent
+          - error_code
+          - retryable
+          properties:
+            run_id:
+              type: string
+            status:
+              $ref: '#/components/schemas/IngestionStatus'
+            stage:
+              type: string
+              nullable: true
+            percent:
+              type: integer
+            error_code:
+              type: string
+              nullable: true
+            retryable:
+              type: boolean
+    EvaluationStreamEvent:
+      type: object
+      required:
+      - event
+      - data
+      properties:
+        event:
+          type: string
+          enum:
+          - progress
+          - completed
+          - failed
+          - cancelled
+        data:
+          type: object
+          required:
+          - run_id
+          - status
+          - stage
+          properties:
+            run_id:
+              type: string
+            status:
+              $ref: '#/components/schemas/EvaluationStatus'
+            stage:
+              type: string
+    EvaluationDatasetCreateBody:
+      type: object
+      required:
+      - team_id
+      - name
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    EvaluationDatasetUpdateBody:
+      type: object
+      required:
+      - team_id
+      - dataset_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        dataset_id:
+          type: string
+          maxLength: 26
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+    EvaluationDatasetArchiveBody:
+      type: object
+      required:
+      - team_id
+      - dataset_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        dataset_id:
+          type: string
+          maxLength: 26
+    EvaluationCaseCreateBody:
+      type: object
+      required:
+      - team_id
+      - dataset_id
+      - query_id
+      - query
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        dataset_id:
+          type: string
+          maxLength: 26
+        query_id:
+          type: string
+          minLength: 1
+          maxLength: 120
+        query_type:
+          type: string
+          default: concept
+        query:
+          type: string
+          minLength: 1
+        relevant_chunk_ids:
+          type: array
+          items:
+            type: string
+        filters:
+          type: object
+          additionalProperties: true
+        relevance:
+          type: object
+          additionalProperties: true
+    EvaluationCaseUpdateBody:
+      type: object
+      required:
+      - team_id
+      - case_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        case_id:
+          type: string
+          maxLength: 26
+        query_id:
+          type: string
+          maxLength: 120
+        query_type:
+          type: string
+        query:
+          type: string
+        relevant_chunk_ids:
+          type: array
+          items:
+            type: string
+        filters:
+          type: object
+          additionalProperties: true
+        relevance:
+          type: object
+          additionalProperties: true
+    EvaluationCaseDeleteBody:
+      type: object
+      required:
+      - team_id
+      - case_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        case_id:
+          type: string
+          maxLength: 26
+    EvaluationDatasetImportBody:
+      type: object
+      required:
+      - team_id
+      - dataset_id
+      anyOf:
+      - required:
+        - cases
+      - required:
+        - content
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        dataset_id:
+          type: string
+          maxLength: 26
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvaluationCaseInput'
+        content:
+          type: string
+          description: JSONL content. Each non-empty line is an evaluation case.
+    EvaluationRunStartBody:
+      type: object
+      required:
+      - team_id
+      - dataset_id
+      - provider_id
+      - model_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        dataset_id:
+          type: string
+          maxLength: 26
+        provider_id:
+          type: string
+          minLength: 1
+          maxLength: 26
+        model_id:
+          type: string
+          minLength: 1
+          maxLength: 120
+        engine_mode:
+          $ref: '#/components/schemas/EngineMode'
+        judge_mode:
+          type: string
+          enum:
+          - rules
+          - rules_and_manual
+        baseline_run_id:
+          type: string
+          maxLength: 26
+          nullable: true
+    EvaluationRunCancelBody:
+      type: object
+      required:
+      - team_id
+      - run_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        run_id:
+          type: string
+          maxLength: 26
+    ModelPolicyUpdateBody:
+      type: object
+      required:
+      - team_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        mode:
+          $ref: '#/components/schemas/ModelPolicyMode'
+        allowed_provider_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        max_data_classification:
+          $ref: '#/components/schemas/DataClassification'
+        allow_chat_history:
+          type: boolean
+        allow_document_metadata:
+          type: boolean
+    ProviderCreateBody:
+      type: object
+      additionalProperties: false
+      required:
+      - team_id
+      - name
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        name:
+          type: string
+          maxLength: 120
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+        model_ids:
+          type: array
+          default: []
+          items:
+            type: string
+    ProviderModelsBody:
+      type: object
+      additionalProperties: false
+      required:
+      - team_id
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+    ProviderTestBody:
+      type: object
+      required:
+      - team_id
+      - provider_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        provider_id:
+          type: string
+          maxLength: 26
+    AdminModelPolicyUpdateBody:
+      type: object
+      required:
+      - mode
+      properties:
+        mode:
+          $ref: '#/components/schemas/ModelPolicyMode'
+        allowed_provider_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        max_data_classification:
+          $ref: '#/components/schemas/DataClassification'
+        allow_chat_history:
+          type: boolean
+        allow_document_metadata:
+          type: boolean
+    AdminProviderCreateBody:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+        model_ids:
+          type: array
+          default: []
+          items:
+            type: string
+    AdminProviderModelsBody:
+      type: object
+      additionalProperties: false
+      required:
+      - provider_type
+      - base_url
+      - api_key
+      properties:
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          minLength: 1
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+    AdminProviderUpdateBody:
+      type: object
+      additionalProperties: false
+      required:
+      - provider_id
+      properties:
+        provider_id:
+          type: string
+          maxLength: 26
+        status:
+          $ref: '#/components/schemas/ProviderStatus'
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+          maxLength: 500
+        api_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+        model_ids:
+          type: array
+          items:
+            type: string
+    AdminModelUpdateBody:
+      type: object
+      required:
+      - provider_id
+      - model_ids
+      properties:
+        provider_id:
+          type: string
+          maxLength: 26
+        model_ids:
+          type: array
+          items:
+            type: string
+    GenerationValidateBody:
+      type: object
+      required:
+      - team_id
+      - generation_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        generation_id:
+          type: string
+          maxLength: 26
+    GenerationReindexBody:
+      type: object
+      required:
+      - team_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+    GenerationActivateBody:
+      type: object
+      required:
+      - team_id
+      - generation_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
+        generation_id:
+          type: string
+          maxLength: 26
+    GenerationRollbackBody:
+      type: object
+      required:
+      - team_id
+      properties:
+        team_id:
+          type: string
+          maxLength: 26
     User:
       type: object
+      required:
+      - id
+      - email
+      - display_name
+      - status
+      - is_super_admin
+      - is_builtin
+      - created_at
       properties:
         id:
           type: string
@@ -2717,7 +4681,7 @@ components:
         display_name:
           type: string
         status:
-          type: string
+          $ref: '#/components/schemas/UserStatus'
         is_super_admin:
           type: boolean
         is_builtin:
@@ -2725,8 +4689,43 @@ components:
         created_at:
           type: string
           format: date-time
+    AdminUser:
+      allOf:
+      - $ref: '#/components/schemas/User'
+      - type: object
+        required:
+        - memberships
+        properties:
+          memberships:
+            type: array
+            items:
+              $ref: '#/components/schemas/Membership'
+    Membership:
+      type: object
+      required:
+      - team_id
+      - team_name
+      - role
+      - status
+      properties:
+        team_id:
+          type: string
+        team_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/TeamRole'
+        status:
+          $ref: '#/components/schemas/MemberStatus'
     Team:
       type: object
+      required:
+      - id
+      - name
+      - description
+      - role
+      - version
+      - created_at
+      - updated_at
       properties:
         id:
           type: string
@@ -2736,7 +4735,7 @@ components:
           type: string
           nullable: true
         role:
-          $ref: '#/components/schemas/Role'
+          $ref: '#/components/schemas/TeamRole'
         version:
           type: integer
         created_at:
@@ -2745,8 +4744,46 @@ components:
         updated_at:
           type: string
           format: date-time
+    TeamMember:
+      type: object
+      required:
+      - team_id
+      - user_id
+      - role
+      - status
+      - email
+      - display_name
+      - joined_at
+      properties:
+        team_id:
+          type: string
+        user_id:
+          type: string
+        role:
+          $ref: '#/components/schemas/TeamRole'
+        status:
+          $ref: '#/components/schemas/MemberStatus'
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
     KnowledgeBase:
       type: object
+      required:
+      - id
+      - team_id
+      - name
+      - description
+      - status
+      - default_model_policy_mode
+      - document_count
+      - version
+      - created_at
+      - updated_at
       properties:
         id:
           type: string
@@ -2757,6 +4794,11 @@ components:
         description:
           type: string
           nullable: true
+        status:
+          type: string
+          enum:
+          - active
+          - archived
         default_model_policy_mode:
           $ref: '#/components/schemas/ModelPolicyMode'
         document_count:
@@ -2769,16 +4811,69 @@ components:
         updated_at:
           type: string
           format: date-time
+    KnowledgeBaseMember:
+      type: object
+      required:
+      - kb_id
+      - user_id
+      - email
+      - display_name
+      - status
+      properties:
+        kb_id:
+          type: string
+        user_id:
+          type: string
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - active
+    KnowledgeBaseMembersUpdateBody:
+      type: object
+      required:
+      - team_id
+      - kb_id
+      - user_ids
+      properties:
+        team_id:
+          type: string
+        kb_id:
+          type: string
+        user_ids:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
     Document:
       type: object
+      required:
+      - id
+      - knowledge_base_id
+      - file_name
+      - source_type
+      - product
+      - version_values
+      - visibility
+      - data_classification
+      - doc_status
+      - deleted_at
+      - purged_at
+      - version
+      - created_at
+      - updated_at
       properties:
         id:
           type: string
         knowledge_base_id:
           type: string
-        owner_user_id:
-          type: string
         file_name:
+          type: string
+        source_type:
           type: string
         product:
           type: string
@@ -2793,10 +4888,166 @@ components:
           $ref: '#/components/schemas/DataClassification'
         doc_status:
           $ref: '#/components/schemas/DocumentStatus'
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        purged_at:
+          type: string
+          format: date-time
+          nullable: true
         version:
           type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DocumentDetail:
+      allOf:
+      - $ref: '#/components/schemas/Document'
+      - type: object
+        required:
+        - owner_user_id
+        - current_version_id
+        - source_uri
+        - version_family
+        properties:
+          owner_user_id:
+            type: string
+          current_version_id:
+            type: string
+            nullable: true
+          source_uri:
+            type: string
+            nullable: true
+          version_family:
+            type: string
+            nullable: true
+    DocumentVersion:
+      type: object
+      required:
+      - id
+      - content_fingerprint
+      - file_size_bytes
+      - status
+      - index_generation
+      - chunk_count
+      - created_at
+      properties:
+        id:
+          type: string
+        content_fingerprint:
+          type: string
+        file_size_bytes:
+          type: integer
+        status:
+          type: string
+        index_generation:
+          type: string
+          nullable: true
+        chunk_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+    DocumentGrant:
+      type: object
+      required:
+      - id
+      - user_id
+      - granted_by
+      - created_at
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        granted_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    IngestionRun:
+      type: object
+      required:
+      - id
+      - document_version_id
+      - status
+      - current_stage
+      - stage_progress_pct
+      - error_code
+      - retryable
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+        document_version_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/IngestionStatus'
+        current_stage:
+          type: string
+          nullable: true
+        stage_progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error_code:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DocumentTask:
+      type: object
+      required:
+      - id
+      - status
+      - current_stage
+      - stage_progress_pct
+      - error_code
+      - created_at
+      properties:
+        id:
+          type: string
+        status:
+          $ref: '#/components/schemas/IngestionStatus'
+        current_stage:
+          type: string
+          nullable: true
+        stage_progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error_code:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
     Chunk:
       type: object
+      required:
+      - id
+      - document_id
+      - document_version_id
+      - content
+      - heading_path
+      - source_locator
+      - status
+      - quality_flags
+      - version
+      - index_generation
+      - created_at
+      - updated_at
       properties:
         id:
           type: string
@@ -2804,6 +5055,7 @@ components:
           type: string
         document_version_id:
           type: string
+          nullable: true
         content:
           type: string
         heading_path:
@@ -2824,10 +5076,144 @@ components:
         index_generation:
           type: string
           nullable: true
-    Chat:
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DocumentChunk:
       type: object
+      required:
+      - id
+      - document_id
+      - content
+      - heading_path
+      - status
+      - version
       properties:
         id:
+          type: string
+        document_id:
+          type: string
+        content:
+          type: string
+        heading_path:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/ChunkStatus'
+        version:
+          type: integer
+    ChunkHistory:
+      type: object
+      required:
+      - id
+      - action
+      - old_content
+      - new_content
+      - actor_id
+      - created_at
+      properties:
+        id:
+          type: string
+        action:
+          type: string
+        old_content:
+          type: string
+          nullable: true
+        new_content:
+          type: string
+          nullable: true
+        actor_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SourceConnection:
+      type: object
+      required:
+      - id
+      - team_id
+      - kb_id
+      - source_type
+      - repo_url
+      - branch
+      - path_filters
+      - credentials_id
+      - created_by
+      - status
+      - sync_cursor
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        kb_id:
+          type: string
+        source_type:
+          type: string
+        repo_url:
+          type: string
+        branch:
+          type: string
+        path_filters:
+          type: array
+          items:
+            type: string
+        credentials_id:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+        status:
+          type: string
+        sync_cursor:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Credential:
+      type: object
+      required:
+      - id
+      - name
+      - secret_masked
+      - created_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        secret_masked:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Chat:
+      type: object
+      required:
+      - id
+      - team_id
+      - user_id
+      - title
+      - knowledge_base_ids
+      - version
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        user_id:
           type: string
         title:
           type: string
@@ -2835,11 +5221,27 @@ components:
           type: array
           items:
             type: string
+          uniqueItems: true
+        version:
+          type: integer
         created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
     Message:
       type: object
+      required:
+      - id
+      - chat_id
+      - role
+      - content
+      - status
+      - trace_id
+      - citation_ids
+      - refusal_reason
+      - created_at
       properties:
         id:
           type: string
@@ -2860,21 +5262,40 @@ components:
         citation_ids:
           type: array
           items:
-            type: string
+            type: object
+            additionalProperties: true
         refusal_reason:
           type: string
           nullable: true
+        created_at:
+          type: string
+          format: date-time
     Citation:
       type: object
+      required:
+      - citation_id
+      - chunk_id
+      - document_version_id
+      - excerpt
+      - source_locator
       properties:
         citation_id:
           type: string
         chunk_id:
           type: string
+        document_version_id:
+          type: string
+        excerpt:
+          type: string
+        source_locator:
+          type: object
+          additionalProperties: true
         document_id:
           type: string
+          nullable: true
         document_name:
           type: string
+          nullable: true
         page_no:
           type: integer
           nullable: true
@@ -2884,13 +5305,15 @@ components:
             type: string
         source_url:
           type: string
-        excerpt:
-          type: string
         support_score:
           type: number
           format: float
     RetrievalCandidate:
       type: object
+      required:
+      - chunk_id
+      - rank
+      - score
       properties:
         chunk_id:
           type: string
@@ -2899,20 +5322,71 @@ components:
         score:
           type: number
           format: float
-        source:
+        bm25_rank:
+          type: integer
+          nullable: true
+        dense_rank:
+          type: integer
+          nullable: true
+    TraceFeedback:
+      type: object
+      required:
+      - id
+      - feedback_type
+      - comment
+      - created_at
+      properties:
+        id:
+          type: string
+        feedback_type:
           type: string
           enum:
-          - bm25
-          - dense
-          - rrf
-          - rerank
+          - useful
+          - not_useful
+          - citation_error
+          - knowledge_gap
+        comment:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
     RetrievalTrace:
       type: object
+      required:
+      - id
+      - trace_id
+      - team_id
+      - chat_id
+      - message_id
+      - engine_mode
+      - original_query
+      - rewritten_query
+      - filters
+      - bm25_candidates
+      - dense_candidates
+      - rrf_candidates
+      - rerank_candidates
+      - final_context
+      - stage_latency_ms
+      - degraded
+      - error_code
+      - model
+      - feedback
+      - created_at
       properties:
+        id:
+          type: string
         trace_id:
           type: string
+        team_id:
+          type: string
+        chat_id:
+          type: string
+          nullable: true
         message_id:
           type: string
+          nullable: true
         engine_mode:
           $ref: '#/components/schemas/EngineMode'
         original_query:
@@ -2955,8 +5429,22 @@ components:
         model:
           type: object
           additionalProperties: true
+        feedback:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceFeedback'
+        created_at:
+          type: string
+          format: date-time
     EvaluationDataset:
       type: object
+      required:
+      - id
+      - name
+      - description
+      - case_count
+      - version
+      - created_at
       properties:
         id:
           type: string
@@ -2969,8 +5457,58 @@ components:
           type: integer
         version:
           type: integer
+        created_at:
+          type: string
+          format: date-time
+    EvaluationCaseInput:
+      type: object
+      required:
+      - query_id
+      - query
+      properties:
+        query_id:
+          type: string
+        query_type:
+          type: string
+        query:
+          type: string
+        relevant_chunk_ids:
+          type: array
+          items:
+            type: string
+        filters:
+          type: object
+          additionalProperties: true
+        relevance:
+          type: object
+          additionalProperties: true
+    EvaluationCase:
+      allOf:
+      - $ref: '#/components/schemas/EvaluationCaseInput'
+      - type: object
+        required:
+        - id
+        - dataset_id
+        - created_at
+        properties:
+          id:
+            type: string
+          dataset_id:
+            type: string
+          created_at:
+            type: string
+            format: date-time
     EvaluationRun:
       type: object
+      required:
+      - id
+      - dataset_id
+      - engine_mode
+      - status
+      - baseline_run_id
+      - provider_id
+      - model_id
+      - created_at
       properties:
         id:
           type: string
@@ -2983,6 +5521,13 @@ components:
         baseline_run_id:
           type: string
           nullable: true
+        provider_id:
+          type: string
+        model_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     ModelPolicy:
       type: object
       properties:
@@ -3002,16 +5547,143 @@ components:
           type: boolean
         version:
           type: integer
-    IndexGeneration:
+    Provider:
       type: object
+      required:
+      - id
+      - name
+      - provider_type
+      - base_url
+      - model_ids
+      - status
+      - has_api_key
       properties:
         id:
+          type: string
+        name:
+          type: string
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+        api_key_masked:
+          type: string
+        has_api_key:
+          type: boolean
+          description: True only when a non-empty encrypted API key is stored and decryptable.
+        api_key_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        model_ids:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/ProviderStatus'
+    AdminProvider:
+      type: object
+      required:
+      - id
+      - name
+      - provider_type
+      - base_url
+      - model_ids
+      - status
+      - has_api_key
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider_type:
+          $ref: '#/components/schemas/ProviderType'
+        base_url:
+          type: string
+        model_ids:
+          type: array
+          items:
+            type: string
+        api_key_masked:
+          type: string
+        has_api_key:
+          type: boolean
+          description: True only when a non-empty encrypted API key is stored and decryptable.
+        api_key_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ProviderStatus'
+    ModelCall:
+      type: object
+      required:
+      - id
+      - provider_id
+      - model_id
+      - purpose
+      - classification
+      - external
+      - cost_micros
+      - latency_ms
+      - created_at
+      properties:
+        id:
+          type: string
+        provider_id:
+          type: string
+        model_id:
+          type: string
+        purpose:
+          type: string
+        classification:
+          type: string
+        external:
+          type: boolean
+        cost_micros:
+          type: integer
+        latency_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+    AdminModel:
+      type: object
+      required:
+      - provider_id
+      - model_id
+      - status
+      properties:
+        provider_id:
+          type: string
+        model_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProviderStatus'
+    IndexGeneration:
+      type: object
+      required:
+      - id
+      - team_id
+      - status
+      - chunk_count
+      - embedding_model
+      - error_message
+      - validation_errors
+      - created_at
+      - validated_at
+      - activated_at
+      properties:
+        id:
+          type: string
+        team_id:
           type: string
         status:
           type: string
           enum:
           - staging
           - validating
+          - validated
           - active
           - failed
           - cleaning
@@ -3019,6 +5691,122 @@ components:
           type: integer
         embedding_model:
           type: string
+        error_message:
+          type: string
+          nullable: true
+        validation_errors:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        validated_at:
+          type: string
+          format: date-time
+          nullable: true
+        activated_at:
+          type: string
+          format: date-time
+          nullable: true
+    GenerationRun:
+      type: object
+      required:
+      - generation_id
+      - status
+      - execution_mode
+      - task_id
+      - passed
+      - checked_chunks
+      - errors
+      properties:
+        generation_id:
+          type: string
+        status:
+          type: string
+        execution_mode:
+          type: string
+          enum:
+          - inline
+          - celery
+        task_id:
+          type: string
+          nullable: true
+        passed:
+          type: boolean
+          nullable: true
+        checked_chunks:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+    GenerationReindex:
+      type: object
+      required:
+      - generation
+      - run
+      properties:
+        generation:
+          $ref: '#/components/schemas/IndexGeneration'
+        run:
+          $ref: '#/components/schemas/GenerationRun'
+    GenerationValidation:
+      type: object
+      required:
+      - generation_id
+      - status
+      - passed
+      - errors
+      - checked_chunks
+      - validated_at
+      properties:
+        generation_id:
+          type: string
+        status:
+          type: string
+        passed:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        checked_chunks:
+          type: integer
+        validated_at:
+          type: string
+          format: date-time
+          nullable: true
+    AuditLog:
+      type: object
+      required:
+      - id
+      - team_id
+      - actor_id
+      - action
+      - resource_type
+      - resource_id
+      - details
+      - created_at
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+          nullable: true
+        actor_id:
+          type: string
+          nullable: true
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          nullable: true
+        details:
+          type: object
+          additionalProperties: true
         created_at:
           type: string
           format: date-time
@@ -3029,6 +5817,39 @@ components:
       - leader
       - member
       - viewer
+    TeamRole:
+      type: string
+      enum:
+      - leader
+      - member
+      - viewer
+    UserStatus:
+      type: string
+      enum:
+      - active
+      - disabled
+    MemberStatus:
+      type: string
+      enum:
+      - active
+      - disabled
+      - removed
+    MemberUpdateStatus:
+      type: string
+      enum:
+      - active
+      - disabled
+    ProviderStatus:
+      type: string
+      enum:
+      - active
+      - disabled
+    ProviderType:
+      type: string
+      enum:
+      - openai_responses
+      - openai_chat_completions
+      - anthropic_messages
     Visibility:
       type: string
       enum:
@@ -3064,7 +5885,7 @@ components:
       - embedding
       - indexing
       - validating
-      - active
+      - completed
       - failed
       - deleting
       - cancelled

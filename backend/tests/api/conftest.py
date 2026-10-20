@@ -9,6 +9,57 @@ ADMIN_EMAIL = "admin@techvault.local"
 ADMIN_PASSWORD = "ChangeMe-123!"
 
 
+def login_headers(
+    client,
+    email: str = ADMIN_EMAIL,
+    password: str = "password-123",
+):
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": "Bearer " + response.json()["data"]["access_token"]}
+
+
+def admin_headers_for(client):
+    return login_headers(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+
+def create_team_as_admin(client, headers, name="Test Team"):
+    response = client.post(
+        "/api/v1/teams/create",
+        json={"name": name},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
+def create_user_as_admin(
+    client,
+    headers,
+    team_id,
+    email,
+    role="member",
+    password="password-123",
+    display_name="Test User",
+):
+    response = client.post(
+        "/api/v1/admin/users/create",
+        json={
+            "email": email,
+            "display_name": display_name,
+            "password": password,
+            "team_id": team_id,
+            "role": role,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
 @pytest.fixture()
 def api_app():
     engine = build_engine("sqlite+pysqlite:///:memory:")
@@ -16,10 +67,9 @@ def api_app():
     factory = build_session_factory(engine)
     return create_app(
         settings=Settings(
-            environment="test",
+            environment="development",
             jwt_secret="test-secret-at-least-32-bytes-long",
-            allow_registration=True,
-            allow_legacy_team_creation=True,
+            task_execution_mode="inline",
         ),
         session_factory=factory,
     )
@@ -40,8 +90,7 @@ def strict_api_app():
         settings=Settings(
             environment="test",
             jwt_secret="test-secret-at-least-32-bytes-long",
-            allow_registration=False,
-            allow_legacy_team_creation=False,
+            task_execution_mode="inline",
         ),
         session_factory=factory,
     )
@@ -55,9 +104,4 @@ def strict_api_client(strict_api_app):
 
 @pytest.fixture()
 def admin_headers(api_client):
-    login = api_client.post(
-        "/api/v1/auth/login",
-        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-    )
-    token = login.json()["data"]["access_token"]
-    return {"Authorization": "Bearer " + token}
+    return admin_headers_for(api_client)

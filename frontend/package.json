@@ -4,11 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "dev": "vite --configLoader runner",
+    "build": "vue-tsc --noEmit && vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner",
+    "test": "vitest run --configLoader runner",
+    "test:watch": "vitest --configLoader runner",
     "integration": "node scripts/integration-smoke.mjs"
   },
   "dependencies": {
@@ -27,7 +27,7 @@
     "playwright-core": "^1.49.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^2.1.8",
+    "vitest": "^3.2.4",
     "vue-tsc": "^2.2.0"
   }
 }

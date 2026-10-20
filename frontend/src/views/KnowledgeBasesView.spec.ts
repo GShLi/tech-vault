@@ -83,7 +83,12 @@ describe('KnowledgeBasesView', () => {
     const wrapper = mount(KnowledgeBasesView, {
       global: {
         plugins: [pinia],
-        stubs: { AModal: true, ASpin: true, ATag: true },
+        stubs: {
+          AModal: true,
+          ASpin: true,
+          ATag: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
       },
     })
     await flushPromises()
@@ -98,12 +103,76 @@ describe('KnowledgeBasesView', () => {
     const wrapper = mount(KnowledgeBasesView, {
       global: {
         plugins: [pinia],
-        stubs: { AModal: true, ASpin: true, ATag: true },
+        stubs: {
+          AModal: true,
+          ASpin: true,
+          ATag: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
       },
     })
     await flushPromises()
 
     expect(wrapper.text()).toContain('Java 资料')
     expect(wrapper.find('[data-testid="kb-create-open"]').exists()).toBe(false)
+  })
+
+  it('appends the next cursor page without dropping the first page', async () => {
+    apiMocks.listKbs
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'kb-1',
+            team_id: 'team-1',
+            name: 'Java 资料',
+            description: 'JDK notes',
+            status: 'active',
+            default_model_policy_mode: 'local_only',
+            document_count: 0,
+            version: 1,
+            created_at: '2026-10-19T12:00:00+00:00',
+            updated_at: '2026-10-19T12:00:00+00:00',
+          },
+        ],
+        meta: { next_cursor: 'cursor-1', has_more: true, request_id: 'req-1' },
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'kb-2',
+            team_id: 'team-1',
+            name: 'Python 资料',
+            description: 'Async notes',
+            status: 'active',
+            default_model_policy_mode: 'local_only',
+            document_count: 3,
+            version: 1,
+            created_at: '2026-10-19T12:00:00+00:00',
+            updated_at: '2026-10-19T12:00:00+00:00',
+          },
+        ],
+        meta: { next_cursor: null, has_more: false, request_id: 'req-2' },
+      })
+
+    const wrapper = mount(KnowledgeBasesView, {
+      global: {
+        plugins: [makeStore('leader')],
+        stubs: {
+          AModal: true,
+          ASpin: true,
+          ATag: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('.load-more button').trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.listKbs).toHaveBeenNthCalledWith(1, 'team-1', null)
+    expect(apiMocks.listKbs).toHaveBeenNthCalledWith(2, 'team-1', 'cursor-1')
+    expect(wrapper.text()).toContain('Java 资料')
+    expect(wrapper.text()).toContain('Python 资料')
   })
 })

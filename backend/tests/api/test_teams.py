@@ -3,23 +3,11 @@ from datetime import datetime, timezone
 from sqlalchemy import update
 
 from backend.app.db.models import Team
-
-
-def _register_and_login(client, email="leader@example.com"):
-    client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": "password-123", "display_name": "Leader"},
-    )
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": "password-123"},
-    )
-    token = login.json()["data"]["access_token"]
-    return {"Authorization": "Bearer " + token}
+from backend.tests.api.conftest import admin_headers_for
 
 
 def test_team_create_list_and_detail(api_client):
-    headers = _register_and_login(api_client)
+    headers = admin_headers_for(api_client)
     created = api_client.post(
         "/api/v1/teams/create",
         json={"name": "Platform", "description": "Platform engineering"},
@@ -53,7 +41,7 @@ def test_team_create_list_and_detail(api_client):
 
 
 def test_team_list_paginates_by_created_at_and_id(api_client, api_app):
-    headers = _register_and_login(api_client, email="team-pages@example.com")
+    headers = admin_headers_for(api_client)
     team_ids = []
     for name in ("One", "Two", "Three"):
         response = api_client.post(
@@ -106,7 +94,7 @@ def test_team_list_paginates_by_created_at_and_id(api_client, api_app):
 
 
 def test_team_list_rejects_invalid_cursor(api_client):
-    headers = _register_and_login(api_client, email="team-cursor@example.com")
+    headers = admin_headers_for(api_client)
 
     response = api_client.get(
         "/api/v1/teams",
@@ -119,7 +107,7 @@ def test_team_list_rejects_invalid_cursor(api_client):
 
 
 def test_team_list_exact_limit_has_no_next_page(api_client):
-    headers = _register_and_login(api_client, email="team-exact-limit@example.com")
+    headers = admin_headers_for(api_client)
     for name in ("One", "Two"):
         response = api_client.post(
             "/api/v1/teams/create",
@@ -140,7 +128,7 @@ def test_team_list_exact_limit_has_no_next_page(api_client):
 
 
 def test_team_update_requires_leader_and_if_match(api_client):
-    headers = _register_and_login(api_client)
+    headers = admin_headers_for(api_client)
     team = api_client.post(
         "/api/v1/teams/create",
         json={"name": "Platform"},
@@ -180,7 +168,7 @@ def test_team_update_requires_leader_and_if_match(api_client):
 
 
 def test_team_update_accepts_quoted_if_match(api_client):
-    headers = _register_and_login(api_client, email="quoted-if-match@example.com")
+    headers = admin_headers_for(api_client)
     team = api_client.post(
         "/api/v1/teams/create",
         json={"name": "Platform"},
@@ -199,7 +187,7 @@ def test_team_update_accepts_quoted_if_match(api_client):
 
 
 def test_team_create_rejects_whitespace_only_name(api_client):
-    headers = _register_and_login(api_client, email="whitespace-create@example.com")
+    headers = admin_headers_for(api_client)
 
     response = api_client.post(
         "/api/v1/teams/create",
@@ -212,7 +200,7 @@ def test_team_create_rejects_whitespace_only_name(api_client):
 
 
 def test_team_update_rejects_whitespace_only_name(api_client):
-    headers = _register_and_login(api_client, email="whitespace-update@example.com")
+    headers = admin_headers_for(api_client)
     team = api_client.post(
         "/api/v1/teams/create",
         json={"name": "Platform"},

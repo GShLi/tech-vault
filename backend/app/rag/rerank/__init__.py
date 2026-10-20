@@ -1,2 +1,1 @@
-"""Candidate reranking adapters."""
-
+"""Local or remote cross-encoder reranking."""

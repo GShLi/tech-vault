@@ -177,6 +177,8 @@ def chunk_markdown(
     data_classification: DataClassification = DataClassification.INTERNAL,
     product: Optional[str] = None,
     version_values: Tuple[str, ...] = (),
+    document_file_name: str = "",
+    source_url: str = "",
 ) -> List[Chunk]:
     """Split Markdown into bounded chunks while retaining heading structure."""
 
@@ -209,6 +211,17 @@ def chunk_markdown(
                 occurrence=occurrence,
                 part=part,
             )
+            source_locator = {
+                "source_path": source_path,
+                "heading_path": list(section.heading_path),
+                "document_version_id": document_version_id,
+            }
+            if document_id:
+                source_locator["document_id"] = document_id
+            if document_file_name:
+                source_locator["file_name"] = document_file_name
+            if source_url:
+                source_locator["source_url"] = source_url
             chunks.append(
                 Chunk(
                     chunk_id=chunk_id,
@@ -224,10 +237,7 @@ def chunk_markdown(
                     content=part_text,
                     logical_chunk_key=logical_chunk_key,
                     content_hash=content_hash,
-                    source_locator={
-                        "source_path": source_path,
-                        "heading_path": list(section.heading_path),
-                    },
+                    source_locator=source_locator,
                     product=product,
                     version_values=version_values,
                 )

@@ -4,6 +4,7 @@ import { useAuthStore } from './auth'
 
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
+  logout: vi.fn(),
   me: vi.fn(),
   getToken: vi.fn(),
   setToken: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('@/api/client', async (importOriginal) => {
     api: {
       ...actual.api,
       login: mocks.login,
+      logout: mocks.logout,
       me: mocks.me,
     },
     getAccessToken: mocks.getToken,
@@ -65,15 +67,18 @@ describe('auth store', () => {
     expect(auth.isAuthenticated).toBe(true)
   })
 
-  it('clears token and user state on logout', () => {
+  it('calls the server logout endpoint and clears local session state', async () => {
+    mocks.logout.mockResolvedValue(undefined)
     const auth = useAuthStore()
     auth.token = 'access-token'
     auth.me = me
 
-    auth.logout()
+    const logoutRequest = auth.logout()
 
+    expect(mocks.logout).toHaveBeenCalledOnce()
     expect(mocks.clearToken).toHaveBeenCalled()
     expect(auth.token).toBeNull()
     expect(auth.me).toBeNull()
+    await logoutRequest
   })
 })

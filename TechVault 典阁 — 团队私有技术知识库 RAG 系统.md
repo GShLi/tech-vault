@@ -106,8 +106,8 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 
 ### 2.1 用户与团队管理
 
-1. 用户注册、登录、JWT 身份认证。
-2. 团队创建、成员邀请、成员移除和角色变更。
+1. 内置超级管理员登录和 JWT 身份认证；禁止外部自助注册，所有普通用户由管理员创建并分配团队角色。
+2. 团队只能由管理员创建；团队负责人可邀请、移除成员并变更角色。
 3. 团队成员生命周期：离职、禁用、重新启用和私有文档转移。
 4. 用户个人信息管理和密码策略。
 5. 所有成员、角色和权限变更写入审计日志。
@@ -131,14 +131,14 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
    - `product`、`version_family`、`version_values`。
    - `valid_from`、`deprecated_at`、`owner_user_id`。
    - `data_classification`、`content_hash`、`doc_status`。
-5. 文档管理支持列表、预览、解析状态、版本历史、复制来源链接和删除。
-6. 删除采用软删除：先停止召回，再异步清理索引和对象存储，最后标记完成。
+5. 文档管理支持列表、预览、解析状态、版本历史、复制来源链接、删除和保留期内恢复。
+6. 删除采用保留窗口软删除：立即停止召回，保留原始对象供恢复；过期后由后台巡检异步清理索引、对象存储和缓存。
 7. 同一内容通过内容指纹识别，避免重复入库。
 
 ### 2.3 异步入库与任务管理
 
 1. 上传和同步任务进入 Celery 队列。
-2. 任务状态包括：`queued`、`fetching`、`parsing`、`chunking`、`embedding`、`indexing`、`validating`、`active`、`failed`、`deleting`、`cancelled`。
+2. 任务状态包括：`queued`、`fetching`、`parsing`、`chunking`、`embedding`、`indexing`、`validating`、`completed`、`failed`、`deleting`、`cancelled`。
 3. 前端展示每个阶段的进度、失败原因、可重试性和最近一次成功时间。
 4. 任务日志记录阶段耗时、输入输出数量、错误类型和重试次数。
 5. 可恢复失败从阶段边界或 checkpoint 继续，不可恢复失败停止并保留原始文件。
@@ -464,10 +464,11 @@ backend/app/rag/
 
 1. 文档内容变化创建新 `document_version`，旧版本按保留策略处理。
 2. 文档进入 `deleting` 状态后立即从召回过滤中排除。
-3. 后台异步清理 ES、Qdrant、MinIO 和可选缓存。
-4. 权限撤销先生效于授权服务和索引过滤字段，再异步清理历史版本。
-5. 权限变更必须写入 `index_generation` 变更记录和审计日志。
-6. 重建或模型切换失败时保留上一个 active generation。
+3. 删除完成记录 `deleted_at` 并进入 `deleted`，在默认 7 天保留窗口内允许恢复。
+4. 保留窗口过期后拒绝恢复，并由后台巡检异步清理 ES、Qdrant、MinIO、本地工作副本和可选缓存，成功记录 `purged_at`。
+5. 权限撤销先生效于授权服务和索引过滤字段，再异步清理历史版本。
+6. 权限变更必须写入 `index_generation` 变更记录和审计日志。
+7. 重建或模型切换失败时保留上一个 active generation。
 
 ### 6.4 问答流程
 
@@ -495,6 +496,9 @@ backend/app/rag/
 3. 生成后校验引用编号和 chunk 映射，禁止引用未进入上下文的片段。
 4. 证据不足、引用无法映射或上下文为空时拒答。
 5. 用户反馈进入反馈表，并在聚合后进入知识缺口队列。
+6. 业务拒答是受控成功结果：消息状态保存为 `refused`，原因码为
+   `INSUFFICIENT_EVIDENCE`，流式连接以 `refused` 终止事件结束，不再发送
+   `done` 或 `error`。`error` 只表示策略、模型、流处理等系统失败。
 
 ---
 
@@ -619,7 +623,7 @@ ES 和 Qdrant 至少共享以下字段：
 | `external_allowed` | 满足分类和供应商限制时，可以调用经批准的外部模型 |
 | `external_required` | 仅用于明确允许的知识库；外部模型不可用则失败，不静默切换 |
 
-请求涉及多个文档分类时，以候选上下文的最高敏感级别为准。无法使用外部模型时优先切换本地模型；本地模型也不可用则明确拒答，不能悄悄删除敏感片段后继续生成。
+请求涉及多个文档分类时，以候选上下文的最高敏感级别为准。无法使用外部模型时优先切换本地模型；本地模型也不可用时返回 `MODEL_UNAVAILABLE`，不能把模型故障伪装成证据不足拒答，也不能悄悄删除敏感片段后继续生成。
 
 ### 8.4 统一模型网关
 
@@ -710,7 +714,7 @@ API Key 只保存在服务端密钥管理系统或加密配置中，禁止返回
 ### 8.8 PoC 验收用例
 
 1. 部署策略为 `local_only` 时，即使配置外部 Key，也不发生外部网络请求。
-2. 知识库允许云模型，但上下文包含 `private` 或 `restricted` 时，按策略切换本地或拒答。
+2. 知识库允许云模型，但上下文包含 `private` 或 `restricted` 时，按策略切换本地；无法回退时返回 `MODEL_UNAVAILABLE`，策略本身不允许时返回 `POLICY_DENIED`。
 3. 文档出现 API Key、JWT、私钥或连接串时，外部请求阻断或脱敏，审计无原始值。
 4. 外部模型不可用时，不突破知识库策略；允许回退时返回 `degraded=true` 和本地模型标识。
 5. 外部调用审计不能用于读取无权限文档正文。
@@ -813,6 +817,11 @@ BM25 Top50
 - 证据不足、引用映射失败或答案超出上下文时拒答。
 - 用户可标记“有用、无用、引用错误、知识缺失”。
 - 失败问题进入知识缺口队列，并可用于补充黄金集。
+
+拒答与错误分开建模：`refused` 表示系统正常执行了证据门禁，HTTP/SSE 链路没有
+发生技术失败；`error` 表示策略拒绝、模型不可用或流处理异常。Trace 列表和详情
+通过 `feedback` 数组返回关联到该回答消息的用户反馈，只有聊天所有者、团队
+`leader` 或平台 `admin` 可以读取。
 
 ### 9.8 检索 Trace
 
@@ -995,7 +1004,7 @@ techvault-b-es-hybrid-<generation>
 
 ### 12.1 核心接口
 
-完整接口目录、请求字段、SSE 事件和错误码以 [`docs/api/api-contract.md`](./docs/api/api-contract.md) 与 [`docs/api/openapi.yaml`](./docs/api/openapi.yaml) 为准。接口不使用路径参数；团队 ID、资源 ID 和业务参数放在请求体中，GET 查询接口只使用少量 query 参数。下表只列出主链路入口。
+完整接口目录、请求字段、SSE 事件和错误码以 [`docs/api/api-contract.md`](./docs/api/api-contract.md) 与 [`docs/api/openapi.yaml`](./docs/api/openapi.yaml) 为准。接口不使用路径参数；团队 ID、资源 ID 和业务参数放在请求体中，GET 查询接口只使用少量 query 参数。Document 响应禁止返回本地路径、对象存储 URI、bucket 或内部存储键；原文下载必须经过权限校验后的 `/api/v1/docs/download` 或短期签名接口。下表只列出主链路入口。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -1037,13 +1046,28 @@ techvault-b-es-hybrid-<generation>
 
 ### 12.3 流式响应事件
 
-- `meta`：模型、策略、`trace_id` 和是否降级。
-- `rewrite`：可选展示的检索问题。
-- `citation`：引用编号、文档和定位信息。
-- `delta`：增量文本。
-- `done`：最终 token、成本和引用列表。
-- `refused`：证据不足，返回拒答原因。
-- `error`：策略拒绝、证据不足或系统错误。
+`POST /api/v1/chats/ask` 在 `stream=true` 时返回 `text/event-stream`：
+
+- `meta`：`message_id`、初始 `trace_id`、`engine_mode`、`status=generating`。
+  流开始时 `trace_id` 为空，最终值由消息详情和 Trace 接口提供。
+- `rewrite`：可选，字段为 `original`、`rewritten`，仅在文本发生变化时发送。
+- `citation`：字段为 `citation_id`、`chunk_id`、`document_id`、
+  `document_version_id`、`document_name`、`page_no`、`heading_path`、
+  `source_url`。
+- `delta`：字段为 `text`，可以多次出现。
+- `done`：字段为 `message_id`、`status`、`citation_ids`、`model_id`、`route`、
+  `policy`、`policy_version`、`classification`、`degraded`、`input_tokens`、
+  `output_tokens`、`cost_micros`、`latency_ms`。
+- `refused`：终止事件，字段为 `message_id`、`status=refused`、`reason_code`、
+  `message`。拒答不是系统错误，发送后不再发送 `done` 或 `error`。
+- `error`：终止事件，字段为 `code`、`message`、`retryable`、`request_id`；
+  允许的流错误码为 `STREAM_ERROR`、`POLICY_DENIED`、`MODEL_UNAVAILABLE`。
+
+`done`、`refused`、`error` 三者互斥。客户端主动断开时，服务端保存已生成内容
+并把消息标记为 `cancelled`，不额外发送终止事件。
+
+入库 SSE 的 `progress`、`completed`、`failed`、`cancelled` 事件共享同一组字段：
+`run_id`、`status`、`stage`、`percent`、`error_code`、`retryable`。
 
 ### 12.4 错误语义
 
@@ -1051,10 +1075,16 @@ techvault-b-es-hybrid-<generation>
 | --- | --- |
 | `PERMISSION_DENIED` | 无知识库或文档权限 |
 | `POLICY_DENIED` | 数据出境策略拒绝 |
-| `INSUFFICIENT_EVIDENCE` | 证据不足，建议拒答 |
 | `INDEX_NOT_READY` | 索引 generation 未激活 |
-| `RETRIEVAL_DEGRADED` | 检索发生降级 |
 | `MODEL_UNAVAILABLE` | 模型不可用且策略不允许回退 |
+| `RETRIEVAL_UNAVAILABLE` | 检索链路不可用 |
+| `STREAM_ERROR` | SSE 生成或持久化异常 |
+| `PROTECTED_ACCOUNT` | 内置管理员不可停用、删除或降级 |
+| `RETENTION_EXPIRED` | 文档已超过恢复窗口 |
+
+`INSUFFICIENT_EVIDENCE` 是 SSE `refused.reason_code`，不是 HTTP 错误码；
+`degraded` 是 Trace 和 `done` 事件中的布尔状态，不是错误码。完整 HTTP 错误码、
+GitHub 来源错误和 SSE 错误语义以 API 契约第 2 节和第 9 节为准。
 
 ---
 

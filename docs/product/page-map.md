@@ -28,7 +28,7 @@
 | 角色 | 标识 | 权限摘要 |
 | --- | --- | --- |
 | 平台管理员 | `admin` | 供应商、全局模型策略、系统健康 |
-| 团队管理员 | `leader` | 团队、成员、知识库、审计、评测、模型策略 |
+| 团队管理员 | `leader` | 团队资料、成员、知识库、审计、评测、模型策略 |
 | 普通成员 | `member` | 上传文档、添加来源、管理自己的私有文档、问答 |
 | 只读成员 | `viewer` | 查看有权限文档、问答、查看引用，不可修改资料 |
 
@@ -50,7 +50,8 @@
 - API 字段使用 `snake_case`，前端不自行转换字段名。
 - ID 统一为 ULID 字符串，前端不得解析其结构。
 - 时间统一为 UTC ISO 8601，例如 `2026-10-18T12:00:00Z`，展示时转本地时区。
-- 列表统一使用游标分页，不在前端做全量拉取。
+- 契约提供 `limit`/`cursor` 的资源列表统一使用游标分页；`facets` 等派生聚合
+  对象和详情内嵌数组按接口文档处理，不假定其具备独立翻页能力。
 - 可编辑资源使用 `version` 做乐观锁；提交时发送 `If-Match`。
 
 ## 2. 公开页面
@@ -77,8 +78,17 @@
 页面状态：
 
 - 没有知识库时引导创建或等待管理员配置。
-- 无检索结果时显示“知识库中没有足够依据”，不显示伪造答案。
-- 外部模型被策略拒绝时显示 `POLICY_DENIED` 或本地模型回退状态。
+- 发送按钮在供应商、模型、知识库和问题均已选择前保持禁用并显示为灰色；供应商和模型选项来自当前团队策略允许的可用供应商及其 `model_ids`。
+- 无检索结果时显示“知识库中没有足够依据”，不显示伪造答案。服务端以
+  `refused` 终止事件和 `reason_code=INSUFFICIENT_EVIDENCE` 表示受控拒答，界面
+  不应把它展示成系统错误。
+- 引用只展示模型通过有效 `[cN]` 标记明确指向的 Chunk。模型回答没有有效引用
+  标记时，按证据不足处理并清空引用，不得展示本轮全部检索片段。
+- `citation_id` 保留模型原始 `[cN]` 标签；回答正文中的有效标记可点击，点击后滚动
+  定位并展开对应引用，引用条目的摘要也可通过键盘或点击展开/收起。无匹配引用的
+  标记显示为不可点击的不可用状态。
+- 外部模型被策略拒绝时显示 `POLICY_DENIED`；已配置供应商不可用时显示
+  `MODEL_UNAVAILABLE`，不进行抽取式回退。
 - 流式响应支持停止生成和重新生成。
 
 ### 3.2 会话历史
@@ -106,9 +116,13 @@
 | 项目 | 内容 |
 | --- | --- |
 | 路由 | `/knowledge-bases/:kbId` |
-| 页面目标 | 管理文档、来源、模型策略和索引状态 |
-| 主要组件 | 文档列表、上传入口、GitHub 来源、任务状态、知识库策略摘要 |
-| 依赖 API | `GET /kbs/detail?team_id=&kb_id=`、`GET /docs?team_id=&kb_id=`、`GET /sources?team_id=&kb_id=`、`GET /ingestions?team_id=` |
+| 页面目标 | 管理文档、来源、模型策略、索引状态和知识库成员范围 |
+| 主要组件 | 文档列表、上传入口、GitHub 来源、任务状态、知识库策略摘要、成员范围列表与多选编辑器 |
+| 依赖 API | `GET /kbs/detail?team_id=&kb_id=`、`GET /docs?team_id=&kb_id=`、`GET /sources?team_id=&kb_id=`、`GET /ingestions?team_id=`、`GET /kbs/members?team_id=&kb_id=`、`POST /kbs/members/update` |
+
+知识库成员范围对所有有知识库访问权限的成员展示。团队 `leader` 可以从当前团队
+所有 `active` 成员中选择并保存成员范围；`member` 和 `viewer` 仅能查看，不能
+提交成员范围修改。平台 `admin` 不自动获得团队知识库的管理权限。
 
 ### 4.3 文件上传
 
@@ -135,7 +149,7 @@
 | 路由 | `/documents/:documentId` |
 | 页面目标 | 查看文档元数据、版本、解析状态、权限和下载入口 |
 | 主要组件 | 元数据面板、版本时间线、来源链接、权限设置、重建按钮 |
-| 依赖 API | `GET /docs/detail?team_id=&document_id=`、`GET /docs/versions?team_id=&document_id=`、`POST /docs/update`、`GET /docs/download-url?team_id=&document_id=` |
+| 依赖 API | `GET /docs/detail?team_id=&document_id=`、`GET /docs/versions?team_id=&document_id=`、`POST /docs/update`、`GET /docs/download?team_id=&document_id=`、`GET /docs/download-url?team_id=&document_id=` |
 
 ### 4.6 文档版本
 
@@ -182,8 +196,12 @@
 | 路由 | `/traces`、`/traces/:traceId` |
 | 主要用户 | `leader`、研发 |
 | 页面目标 | 查看 Query Rewrite、过滤条件、候选、RRF、Rerank、最终上下文和模型信息 |
-| 主要组件 | Trace 列表、阶段时间线、候选表格、引用映射、降级标记 |
+| 主要组件 | Trace 列表、阶段时间线、候选表格、引用映射、降级标记、用户反馈摘要 |
 | 依赖 API | `GET /traces?team_id=`、`GET /traces/detail?team_id=&trace_id=` |
+
+候选表格直接显示 Chunk 原文摘要，内容区域具备按钮语义和悬浮反馈，点击后在抽屉中
+按“字段名 + 内容”查看完整明细，并可复制原始 JSON。无权限查看的私有 Chunk 只显示
+受限提示，不展示正文；已被删除的 Chunk 显示记录不存在。
 
 ### 5.4 知识缺口
 
@@ -235,22 +253,29 @@
 | 模型策略 | `/settings/model-policy` | `GET /model-policy?team_id=`、`POST /model-policy/update` |
 | 供应商 | `/settings/providers` | `GET /providers?team_id=`、`POST /providers/create`、`POST /providers/test` |
 | 审计日志 | `/settings/audit` | `GET /audit?team_id=` |
-| 索引管理 | `/settings/index-generations` | `GET /generations?team_id=`、`POST /generations/activate`、`POST /generations/rollback` |
+| 索引管理 | `/settings/index-generations` | `GET /generations?team_id=`、`POST /generations/reindex`、`POST /generations/activate`、`POST /generations/rollback` |
 
 ### 7.2 平台设置
 
 | 页面 | 路由 | 依赖 API |
 | --- | --- | --- |
-| 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update` |
+| 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update`、`GET /admin/providers` |
 | 供应商准入 | `/admin/model-providers` | `GET /admin/providers`、`POST /admin/providers/create`、`POST /admin/providers/update` |
-| 用户管理 | `/admin/users` | `POST /admin/users/create`、`GET /teams` |
+| 用户管理 | `/admin/users` | `GET /admin/users`、`POST /admin/users/create`、`POST /admin/users/update`、`GET /teams` |
+| 全局审计 | `/admin/audit`、`/admin/audit/:auditId` | `GET /admin/audit`、`GET /admin/audit/detail?audit_id=` |
 | 系统状态 | `/admin/system` | `GET /health`、`GET /ready`、`GET /version` |
+
+全局模型策略页同时提供部署级供应商准入区域：平台管理员从全部平台供应商中
+多选允许团队继承的供应商，保存时以完整 `allowed_provider_ids` 列表更新部署
+策略。列表展示供应商类型、启停状态、模型和 API Key 可用性；没有供应商时提供
+前往供应商准入页的入口。`local_only` 模式下允许保留准入选择，但明确提示外部
+模型调用当前禁用。
 
 ## 8. 页面与 API 优先级
 
 | 优先级 | 页面 |
 | --- | --- |
-| P0 | 登录/注册、问答工作台、会话历史、知识库列表/详情/策略、文件上传、GitHub 来源、文档版本、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
+| P0 | 登录与管理员开户、问答工作台、会话历史、知识库列表/详情/策略、文件上传、GitHub 来源、文档版本与恢复、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
 | P1 | 知识缺口、Trace 回放、评测 A/B 对比、供应商测试、找回密码 |
 | P2 | Confluence/Notion/Slack/Drive 等连接器、源系统 ACL、知识图谱、Agentic Retrieval |
 
@@ -259,7 +284,8 @@
 - 页面组件只调用 `docs/api/openapi.yaml` 中定义的接口。
 - 未完成的后端接口使用 OpenAPI 示例或 MSW mock，不自行定义字段。
 - 任何接口字段变更必须先改 OpenAPI，再同步前端类型和后端实现。
-- 列表页面必须支持游标分页和错误重试。
+- 声明支持游标分页的列表必须实现继续加载和错误重试；派生聚合结果不得伪造
+  `has_more=true`。
 - 所有写操作显示 `request_id`，便于联调时定位日志。
 - SSE 流式问答不得使用轮询替代，除不支持 SSE 的环境外不提供降级实现。
 

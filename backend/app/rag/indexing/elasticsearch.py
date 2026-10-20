@@ -11,7 +11,7 @@ from backend.app.rag.domain.models import Chunk, ValidationResult
 
 
 def _index_name(generation_id: str) -> str:
-    return "techvault-chunks-{0}".format(generation_id)
+    return "techvault-chunks-{0}".format(generation_id.lower())
 
 
 def index_name_for_generation(generation_id: str) -> str:
@@ -100,6 +100,100 @@ class ElasticsearchIndexWriter:
         await self._request("POST", "/" + index + "/_refresh")
         self._staged.add(generation_id)
         self._validated.discard(generation_id)
+
+    async def delete_document(self, generation_id: str, document_id: str) -> None:
+        """Remove every indexed chunk for a document from the generation."""
+
+        try:
+            await self._request(
+                "POST",
+                "/" + _index_name(generation_id) + "/_delete_by_query",
+                params={"refresh": "true", "conflicts": "proceed"},
+                json={"query": {"term": {"document_id": document_id}}},
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def delete_chunks(
+        self,
+        generation_id: str,
+        chunk_ids: Iterable[str],
+    ) -> None:
+        ids = [chunk_id for chunk_id in chunk_ids if chunk_id]
+        if not ids:
+            return
+        try:
+            await self._request(
+                "POST",
+                "/{0}/_delete_by_query".format(_index_name(generation_id)),
+                params={"refresh": "true", "conflicts": "proceed"},
+                json={"query": {"terms": {"chunk_id": ids}}},
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def set_document_status(
+        self,
+        generation_id: str,
+        document_id: str,
+        status: str,
+    ) -> None:
+        try:
+            await self._request(
+                "POST",
+                "/{0}/_update_by_query".format(_index_name(generation_id)),
+                params={"refresh": "true", "conflicts": "proceed"},
+                json={
+                    "query": {"term": {"document_id": document_id}},
+                    "script": {
+                        "source": "ctx._source.doc_status = params.status",
+                        "lang": "painless",
+                        "params": {"status": status},
+                    },
+                },
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def set_chunk_status(
+        self, generation_id: str, chunk_id: str, status: str
+    ) -> None:
+        """Update retrieval status without rebuilding the chunk vector."""
+
+        try:
+            await self._request(
+                "POST",
+                "/{0}/_update/{1}".format(_index_name(generation_id), chunk_id),
+                json={"doc": {"chunk_status": status}},
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+
+    async def update_chunk(
+        self,
+        generation_id: str,
+        chunk_id: str,
+        content: str,
+        content_vector: List[float],
+    ) -> None:
+        try:
+            await self._request(
+                "POST",
+                "/{0}/_update/{1}".format(_index_name(generation_id), chunk_id),
+                json={
+                    "doc": {
+                        "content": content,
+                        "content_vector": list(content_vector),
+                    }
+                },
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
 
     @staticmethod
     def _bulk_body(actions: List[dict]) -> str:

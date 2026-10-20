@@ -37,6 +37,16 @@ def _normalize_classification(
         return DataClassification.RESTRICTED
 
 
+def normalize_classification(value: object) -> DataClassification:
+    normalized = str(value or "").strip().lower()
+    if normalized == "confidential":
+        normalized = DataClassification.RESTRICTED.value
+    try:
+        return DataClassification(normalized)
+    except ValueError:
+        return DataClassification.RESTRICTED
+
+
 def resolve_model_policy(
     deployment_mode: str = _LOCAL_ONLY,
     *,
@@ -49,6 +59,7 @@ def resolve_model_policy(
     allow_chat_history: bool = False,
     allow_document_metadata: bool = False,
     require_redaction: bool = True,
+    max_data_classification: Optional[DataClassification] = None,
     policy_available: bool = True,
     policy_version: str = "p0",
 ) -> ModelPolicyDecision:
@@ -114,6 +125,22 @@ def resolve_model_policy(
             policy_version=policy_version,
         )
 
+    maximum = _normalize_classification(
+        max_data_classification or DataClassification.INTERNAL
+    )
+    if (
+        _CLASSIFICATION_RANK[classification]
+        > _CLASSIFICATION_RANK[maximum]
+    ):
+        fallback_mode = (
+            "reject" if _EXTERNAL_REQUIRED in effective_modes else "local_model"
+        )
+        return _deny_decision(
+            reason_code="classification_above_policy",
+            fallback_mode=fallback_mode,
+            policy_version=policy_version,
+        )
+
     requires_external = _EXTERNAL_REQUIRED in effective_modes
     if not effective_modes or all(mode == _LOCAL_ONLY for mode in effective_modes):
         return _deny_decision(
@@ -125,7 +152,7 @@ def resolve_model_policy(
     return ModelPolicyDecision(
         allow_external=True,
         allowed_provider_ids=tuple(allowed_provider_ids),
-        max_data_classification=DataClassification.INTERNAL,
+        max_data_classification=maximum,
         allowed_model_ids=tuple(allowed_model_ids),
         allow_chat_history=bool(allow_chat_history),
         allow_document_metadata=bool(allow_document_metadata),

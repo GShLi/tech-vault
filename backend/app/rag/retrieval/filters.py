@@ -44,17 +44,7 @@ def elasticsearch_bool_query(filters: RetrievalFilters) -> Dict[str, Any]:
         {"bool": {"should": conditions["visibility_should"], "minimum_should_match": 1}},
     ]
     if conditions["product"]:
-        must.append(
-            {
-                "bool": {
-                    "should": [
-                        {"term": {"product": conditions["product"]}},
-                        {"bool": {"must_not": [{"exists": {"field": "product"}}]}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
-        )
+        must.append({"term": {"product": conditions["product"]}})
     if conditions["version_values"]:
         must.append(
             {"terms": {"version_values": conditions["version_values"]}}

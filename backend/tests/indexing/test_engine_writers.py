@@ -10,6 +10,7 @@ from backend.app.rag.indexing.elasticsearch import (
     index_name_for_generation,
 )
 from backend.app.rag.indexing.qdrant import QdrantIndexWriter, _point_id
+from backend.app.rag.indexing.synonyms import SYNONYM_RULES, SYNONYM_VERSION
 
 
 def test_elasticsearch_bulk_body_is_newline_delimited_json():
@@ -70,6 +71,12 @@ def test_elasticsearch_index_uses_search_time_java_jdk_synonyms(monkeypatch):
         == "tech_search"
     )
     assert body["mappings"]["_meta"]["synonym_version"]
+
+
+def test_synonym_dictionary_covers_product_and_unversioned_jdk_aliases():
+    assert SYNONYM_VERSION == "2026-10-21.2"
+    assert "springboot, spring boot" in SYNONYM_RULES
+    assert "jdk, java sdk" in SYNONYM_RULES
 
 
 def test_qdrant_point_id_is_a_deterministic_uuid():

@@ -748,8 +748,9 @@ API Key 只写不读。任何响应都不得返回完整密钥，只能返回 `a
 | `POST` | `/generations/rollback` | 回滚到上一个 active | P0 |
 
 Elasticsearch generation 使用搜索期 `synonym_graph` 分析器，文档正文仍使用标准
-分析器，仅查询时展开同义词。首版词典包含 Java/JDK 8、11、17、21 的带版本别名，
-例如 `Java11`、`Java 11`、`JDK11` 和 `JDK 11`。索引 `_meta.synonym_version`
+分析器，仅查询时展开同义词。词典包含 `SpringBoot`/`Spring Boot`、
+`JDK`/`Java SDK`，以及 Java/JDK 8、11、17、21 的带版本别名，例如 `Java11`、
+`Java 11`、`JDK11` 和 `JDK 11`。索引 `_meta.synonym_version`
 记录词典版本；修改词典后必须创建新 generation、校验并激活，旧 generation 可回滚。
 该词典只影响 Elasticsearch BM25，不影响 Qdrant 向量检索。
 

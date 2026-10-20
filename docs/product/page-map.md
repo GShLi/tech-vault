@@ -250,11 +250,17 @@
 
 | 页面 | 路由 | 依赖 API |
 | --- | --- | --- |
-| 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update` |
+| 全局模型策略 | `/admin/model-policy` | `GET /admin/model-policy`、`POST /admin/model-policy/update`、`GET /admin/providers` |
 | 供应商准入 | `/admin/model-providers` | `GET /admin/providers`、`POST /admin/providers/create`、`POST /admin/providers/update` |
 | 用户管理 | `/admin/users` | `GET /admin/users`、`POST /admin/users/create`、`POST /admin/users/update`、`GET /teams` |
 | 全局审计 | `/admin/audit`、`/admin/audit/:auditId` | `GET /admin/audit`、`GET /admin/audit/detail?audit_id=` |
 | 系统状态 | `/admin/system` | `GET /health`、`GET /ready`、`GET /version` |
+
+全局模型策略页同时提供部署级供应商准入区域：平台管理员从全部平台供应商中
+多选允许团队继承的供应商，保存时以完整 `allowed_provider_ids` 列表更新部署
+策略。列表展示供应商类型、启停状态、模型和 API Key 可用性；没有供应商时提供
+前往供应商准入页的入口。`local_only` 模式下允许保留准入选择，但明确提示外部
+模型调用当前禁用。
 
 ## 8. 页面与 API 优先级
 

@@ -81,7 +81,15 @@ def _operation_url(provider_type: str, base_url: str) -> str:
             "INVALID_ARGUMENT",
             "Base URL is required.",
         )
-    parsed = urlsplit(normalized)
+    try:
+        parsed = urlsplit(normalized)
+        parsed.port
+    except ValueError:
+        raise ProviderAdapterError(
+            400,
+            "INVALID_ARGUMENT",
+            "Base URL must be an absolute HTTP or HTTPS URL.",
+        ) from None
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ProviderAdapterError(
             400,

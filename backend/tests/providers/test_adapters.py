@@ -562,3 +562,26 @@ def test_build_provider_adapter_rejects_unsupported_format():
 
     assert caught.value.status_code == 400
     assert caught.value.code == "INVALID_ARGUMENT"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://[::1",
+        "http://gateway.example:bad/v1",
+    ],
+    ids=["malformed-ipv6", "invalid-port"],
+)
+def test_build_provider_adapter_rejects_invalid_base_url(base_url):
+    with pytest.raises(ProviderAdapterError) as caught:
+        build_provider_adapter(
+            "openai_chat_completions",
+            "provider-1",
+            base_url,
+            "sk-test",
+            "model-1",
+        )
+
+    assert caught.value.status_code == 400
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert str(caught.value) == "Base URL must be an absolute HTTP or HTTPS URL."

@@ -551,8 +551,18 @@ def test_start_run_uses_selected_provider_and_persists_model_call(
         assert "sk-evaluation-secret" not in model_call.request_id
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "not-a-url",
+        "http://[::1",
+        "http://evaluation-provider.test:bad/v1",
+    ],
+    ids=["relative-url", "malformed-ipv6", "invalid-port"],
+)
 def test_start_run_rejects_invalid_provider_url_before_deferred_dispatch(
     monkeypatch,
+    base_url,
 ):
     app, factory = _celery_app()
     calls = []
@@ -573,7 +583,7 @@ def test_start_run_rejects_invalid_provider_url_before_deferred_dispatch(
         with factory() as session:
             stored = session.get(ModelProvider, provider["id"])
             assert stored is not None
-            stored.base_url = "not-a-url"
+            stored.base_url = base_url
             session.commit()
 
         response = client.post(

@@ -754,6 +754,53 @@ def test_stream_rejects_malformed_provider_url_with_invalid_argument(
         assert model["external"] is True
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://[::1",
+        "http://provider.test:bad/v1",
+    ],
+    ids=["malformed-ipv6", "invalid-port"],
+)
+def test_chat_ask_rejects_malformed_provider_url_with_invalid_argument(
+    api_client, api_app, admin_headers, base_url
+):
+    team, chat = _setup_chat(api_client, admin_headers)
+    provider = _create_provider(
+        api_client,
+        admin_headers,
+        team["id"],
+        base_url=base_url,
+    )
+    _configure_external_policy(
+        api_client,
+        admin_headers,
+        team["id"],
+        chat["knowledge_base_ids"][0],
+        provider["id"],
+    )
+    _add_generation(api_app, team["id"])
+
+    response = api_client.post(
+        "/api/v1/chats/ask",
+        json={
+            "team_id": team["id"],
+            "chat_id": chat["id"],
+            "question": "Construct a broken adapter.",
+            "provider_id": provider["id"],
+            "model_id": "model-a",
+            "stream": False,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert response.json()["error"]["message"] == (
+        "Base URL must be an absolute HTTP or HTTPS URL."
+    )
+
+
 def test_stream_maps_corrupt_encrypted_key_to_resource_state_conflict(
     api_client, api_app, admin_headers
 ):

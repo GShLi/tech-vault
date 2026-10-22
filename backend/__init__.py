@@ -1,2 +1,0 @@
-"""TechVault backend package."""
-

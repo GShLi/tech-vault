@@ -1,2 +1,0 @@
-"""Index writer implementations."""
-

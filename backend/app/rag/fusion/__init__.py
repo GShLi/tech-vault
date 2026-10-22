@@ -1,2 +1,0 @@
-"""Rank fusion utilities."""
-

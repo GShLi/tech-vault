@@ -1,2 +1,0 @@
-"""Shared RAG domain contracts."""
-

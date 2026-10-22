@@ -1,14 +1,30 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  getAccessToken,
+  normalizeApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+  Empty as AEmpty,
+  Message,
+  Spin as ASpin,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Download, Gauge, Square } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError, getAccessToken } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type { EvaluationReport, EvaluationRun } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 import { readSseEvents } from '@/utils/sse'
 
 const route = useRoute()
@@ -24,7 +40,9 @@ const streaming = ref(false)
 let eventAbort: AbortController | null = null
 let loadVersion = 0
 
-const metricEntries = computed(() => Object.entries(report.value?.metrics ?? {}))
+const metricEntries = computed(() =>
+  Object.entries(report.value?.metrics ?? {}),
+)
 const currentStatus = computed(
   () => streamStatus.value || run.value?.status || '',
 )
@@ -75,7 +93,7 @@ async function load(): Promise<void> {
     report.value = data.report
   } catch (caught) {
     if (version === loadVersion) {
-      error.value = caught instanceof ApiRequestError ? caught : null
+      error.value = normalizeApiError(caught)
     }
   } finally {
     if (version === loadVersion) loading.value = false
@@ -89,7 +107,10 @@ async function load(): Promise<void> {
   }
 }
 
-async function connectEventStream(teamId: string, runId: string): Promise<void> {
+async function connectEventStream(
+  teamId: string,
+  runId: string,
+): Promise<void> {
   abortEventStream()
   const controller = new AbortController()
   eventAbort = controller
@@ -128,14 +149,14 @@ async function connectEventStream(teamId: string, runId: string): Promise<void> 
           report.value = data.report
         } catch (caught) {
           if (eventAbort === controller) {
-            error.value = caught instanceof ApiRequestError ? caught : null
+            error.value = normalizeApiError(caught)
           }
         }
       }
     })
   } catch (caught) {
     if (!controller.signal.aborted && !isAbortError(caught)) {
-      error.value = caught instanceof ApiRequestError ? caught : null
+      error.value = normalizeApiError(caught)
     }
   } finally {
     if (eventAbort === controller) {
@@ -152,12 +173,14 @@ async function cancel(): Promise<void> {
     Message.success('评测已取消')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
 function exportReport(): void {
-  const blob = new Blob([JSON.stringify(report.value, null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(report.value, null, 2)], {
+    type: 'application/json',
+  })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -178,47 +201,123 @@ onBeforeUnmount(() => {
   <div>
     <div class="page-header">
       <div class="heading-with-back">
-        <RouterLink class="icon-button" :to="run ? `/evaluations/${run.dataset_id}` : '/evaluations'" title="返回黄金集">
-          <ArrowLeft :size="18" />
+        <RouterLink
+          :to="run ? `/evaluations/${run.dataset_id}` : '/evaluations'"
+          custom
+          v-slot="{ href, navigate }"
+        >
+          <a-button
+            type="text"
+            :href="href"
+            @click="navigate"
+            title="返回黄金集"
+          >
+            <ArrowLeft :size="18" />
+          </a-button>
         </RouterLink>
-        <div><h2>评测报告</h2><p>{{ run ? shortId(run.id) : '正在读取运行结果' }}</p></div>
+        <div>
+          <h2>评测报告</h2>
+          <p>{{ run ? shortId(run.id) : '正在读取运行结果' }}</p>
+        </div>
       </div>
       <div class="row-actions">
-        <button class="secondary-button" type="button" :disabled="!report" @click="exportReport"><Download :size="16" />导出 JSON</button>
-        <button v-if="run && ['running', 'queued'].includes(run.status)" class="secondary-button danger-text" type="button" @click="cancel"><Square :size="16" />取消</button>
+        <a-button
+          :disabled="!report"
+          @click="exportReport"
+          type="secondary"
+          html-type="button"
+        >
+          <Download :size="16" />
+          导出 JSON
+        </a-button>
+        <a-button
+          v-if="run && ['running', 'queued'].includes(run.status)"
+          @click="cancel"
+          type="secondary"
+          html-type="button"
+          status="danger"
+        >
+          <Square :size="16" />
+          取消
+        </a-button>
       </div>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
-    <div v-if="loading && !run" class="panel loading-state"><a-spin /><span>正在加载评测报告</span></div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
+    <div v-if="loading && !run" class="panel loading-state">
+      <a-spin />
+      <span>正在加载评测报告</span>
+    </div>
     <template v-else-if="run">
-      <section class="panel detail-panel">
+      <a-card class="page-card">
         <div class="detail-heading">
           <div class="detail-icon"><Gauge :size="20" /></div>
-          <div><h3>{{ run.engine_mode }}</h3><p>黄金集 {{ shortId(run.dataset_id) }} · {{ formatDate(run.created_at) }}</p></div>
-          <StatusPill :status="currentStatus" />
+          <div>
+            <h3>{{ run.engine_mode }}</h3>
+            <p>
+              黄金集 {{ shortId(run.dataset_id) }} ·
+              {{ formatDate(run.created_at) }}
+            </p>
+          </div>
+          <a-tag :color="statusColor(currentStatus)">
+            {{ statusLabel(currentStatus) }}
+          </a-tag>
         </div>
-        <div class="detail-grid">
-          <div><dt>基线运行</dt><dd>{{ run.baseline_run_id ? shortId(run.baseline_run_id) : '—' }}</dd></div>
-          <div><dt>供应商</dt><dd>{{ run.provider_id ? shortId(run.provider_id) : '—' }}</dd></div>
-          <div><dt>模型</dt><dd>{{ run.model_id || '—' }}</dd></div>
-          <div><dt>运行状态</dt><dd>{{ currentStatus }}</dd></div>
-          <div><dt>当前阶段</dt><dd>{{ streamStage || (streaming ? '等待事件' : '—') }}</dd></div>
-        </div>
-      </section>
+        <a-descriptions
+          :column="{ xs: 1, sm: 2, lg: 3 }"
+          bordered
+          class="detail-descriptions"
+        >
+          <a-descriptions-item label="基线运行">
+            {{ run.baseline_run_id ? shortId(run.baseline_run_id) : '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="供应商">
+            {{ run.provider_id ? shortId(run.provider_id) : '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="模型">
+            {{ run.model_id || '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="运行状态">
+            {{ currentStatus }}
+          </a-descriptions-item>
+          <a-descriptions-item label="当前阶段">
+            {{ streamStage || (streaming ? '等待事件' : '—') }}
+          </a-descriptions-item>
+        </a-descriptions>
+      </a-card>
 
       <section class="metric-grid" v-if="metricEntries.length">
-        <article v-for="[key, value] in metricEntries" :key="key" class="metric-card">
+        <article
+          v-for="[key, value] in metricEntries"
+          :key="key"
+          class="metric-card"
+        >
           <span>{{ key }}</span>
-          <strong>{{ typeof value === 'number' ? value.toFixed(4) : JSON.stringify(value) }}</strong>
+          <strong>
+            {{
+              typeof value === 'number'
+                ? value.toFixed(4)
+                : JSON.stringify(value)
+            }}
+          </strong>
         </article>
       </section>
 
-      <section class="panel detail-panel">
+      <a-card class="page-card">
         <div class="section-heading"><h3>报告明细</h3></div>
-        <pre v-if="Object.keys(report?.report ?? {}).length" class="json-block">{{ JSON.stringify(report?.report, null, 2) }}</pre>
-        <div v-else class="empty-state compact"><Gauge :size="22" /><span>当前运行尚未生成指标。完成后刷新页面查看报告。</span></div>
-      </section>
+        <pre
+          v-if="Object.keys(report?.report ?? {}).length"
+          class="json-block"
+          >{{ JSON.stringify(report?.report, null, 2) }}</pre
+        >
+        <a-empty v-else class="page-empty">
+          <template #image><Gauge :size="22" /></template>
+          <span>当前运行尚未生成指标。完成后刷新页面查看报告。</span>
+        </a-empty>
+      </a-card>
     </template>
   </div>
 </template>

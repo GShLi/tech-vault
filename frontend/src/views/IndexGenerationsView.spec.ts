@@ -25,7 +25,8 @@ vi.mock('@/api/client', async (importOriginal) => {
   }
 })
 
-vi.mock('@arco-design/web-vue', () => ({
+vi.mock('@arco-design/web-vue', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@arco-design/web-vue')>()),
   Message: {
     success: vi.fn(),
     error: vi.fn(),
@@ -114,12 +115,12 @@ describe('IndexGenerationsView', () => {
     await flushPromises()
 
     expect(apiMocks.reindexGeneration).toHaveBeenCalledWith('team-1')
-    expect(wrapper.find('[data-testid="generation-reindex-status"]').text()).toContain(
-      'active',
-    )
-    expect(wrapper.find('[data-testid="generation-reindex-status"]').text()).toContain(
-      'inline',
-    )
+    expect(
+      wrapper.find('[data-testid="generation-reindex-status"]').text(),
+    ).toContain('active')
+    expect(
+      wrapper.find('[data-testid="generation-reindex-status"]').text(),
+    ).toContain('inline')
   })
 
   it('hides the full rebuild entry from a regular member', async () => {
@@ -135,6 +136,8 @@ describe('IndexGenerationsView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="generation-reindex"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="generation-reindex"]').exists()).toBe(
+      false,
+    )
   })
 })

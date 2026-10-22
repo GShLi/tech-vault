@@ -1,7 +1,7 @@
 # Document Parsing, Semantic Chunking and Vectorization
 
 Date: 2026-10-21
-Status: Approved design, pending implementation
+Status: Implementation in progress; development clean-rebuild baseline
 
 ## Goal
 
@@ -291,6 +291,11 @@ Overlap is applied only between adjacent child chunks inside the same parent:
 - do not duplicate code unless the overlap exists inside the same function or block
 - do not duplicate table headers in child content; table row splits repeat headers
   structurally instead
+- prefer intact table rows; when one row exceeds the token budget, split at safe
+  whitespace or punctuation boundaries, preserving exact parent offsets and all
+  cell text. Repeat the header and the continued row's first-cell label in the
+  embedding context, and mark `source_locator.table_row_split` explicitly. The
+  repeated context counts toward the same token limit; no limit bypass is allowed.
 - cap overlap at 64 prose tokens and 16 code tokens
 
 ## Parent-Child Construction
@@ -391,6 +396,12 @@ The ingestion run stores embedding model, tokenizer model and dimensions.
 
 ## Persistence
 
+### Document
+
+Store the validated source MIME type as `documents.mime_type`. Parser routing uses
+the combination of validated extension, MIME type and detected PDF kind. The MIME
+type is also copied into parse metadata for reproducibility.
+
 ### ChunkRecord
 
 Add:
@@ -408,7 +419,7 @@ Add:
 - `parent_start_offset: int`
 - `parent_end_offset: int`
 
-Parent chunks have empty vectors. Child chunks contain vectors.
+Parent chunks have no vectors. Child vectors are stored in retrieval indexes; PostgreSQL stores their metadata and source content.
 
 ### Parse Metadata
 
@@ -501,16 +512,26 @@ New stable ingestion errors:
 Each error exposes a retryable flag. Parser incompatibility and unsupported PDF kind
 are not retryable without a new file or parser version.
 
-## Compatibility and Rollout
+## Development Baseline and Publication
 
-- Existing chunk rows remain readable.
-- New columns are nullable or receive defaults for legacy rows.
-- Existing active generations remain active until a new generation is validated.
-- Reindex creates new ES and Qdrant generations with the new payload schema.
-- Old generations can be rolled back.
-- Current default character limit is removed from ingestion; `max_chars` remains only
-  as a compatibility argument for legacy tests until all callers migrate.
-- Parser and chunking versions are recorded to make generation comparison possible.
+Historical development data may be discarded. This change requires a fresh database
+and fresh ES/Qdrant indexes; it does not backfill old rows or support old index
+payloads. Cleanup is an explicit operator action, never an application startup side
+effect. After deployment, every new generation must remain internally consistent.
+
+- Build complete team generations without deleting the currently published index.
+- Record independent generation membership and chunk metadata snapshots. Switching
+  the active generation must not move the only copy of an old generation's rows.
+- Validate every ES bulk item, index counts, parent/child integrity and vectors
+  before changing the database routing pointer.
+- Serialize ingestion and index rebuild publication per team using database leases.
+- Completed or cancelled ingestion runs must not execute again on duplicate delivery.
+- Keep logical override keys independent of content hashes and document version IDs.
+- Carry exact source spans through chunk construction. Never infer offsets by
+  searching for normalized child text inside a differently normalized parent.
+- Reject conflicting overlapping edits; disabled child ranges must not reappear in
+  generated parent context.
+- Store child evidence IDs separately from the hydrated parent ID used in generation.
 
 ## Testing
 

@@ -40,6 +40,7 @@ def elasticsearch_bool_query(filters: RetrievalFilters) -> Dict[str, Any]:
         {"term": {"team_id": conditions["team_id"]}},
         {"terms": {"knowledge_base_id": conditions["knowledge_base_ids"]}},
         {"term": {"doc_status": "active"}},
+        {"term": {"chunk_level": "child"}},
         {"term": {"chunk_status": "enabled"}},
         {"bool": {"should": conditions["visibility_should"], "minimum_should_match": 1}},
     ]
@@ -59,6 +60,7 @@ def qdrant_filter(filters: RetrievalFilters) -> Dict[str, Any]:
         {"key": "team_id", "match": {"value": conditions["team_id"]}},
         {"key": "knowledge_base_id", "match": {"any": conditions["knowledge_base_ids"]}},
         {"key": "doc_status", "match": {"value": "active"}},
+        {"key": "chunk_level", "match": {"value": "child"}},
         {"key": "chunk_status", "match": {"value": "enabled"}},
     ]
     if conditions["product"]:

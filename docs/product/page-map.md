@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | 平台管理员 | `admin` | 供应商、系统级模型策略、系统健康 |
 | 团队管理员 | `leader` | 团队资料、成员、知识库、审计、评测、模型策略 |
-| 普通成员 | `member` | 上传文档、添加来源、管理自己的私有文档、问答 |
+| 普通成员 | `member` | 批量上传文档、管理自己的私有文档、问答 |
 | 只读成员 | `viewer` | 查看有权限文档、问答、查看引用，不可修改资料 |
 
 管理员默认不能查看成员私有文档正文。
@@ -118,9 +118,9 @@
 | 项目 | 内容 |
 | --- | --- |
 | 路由 | `/knowledge-bases/:kbId` |
-| 页面目标 | 管理文档、来源、模型策略、索引状态和知识库成员范围 |
-| 主要组件 | 文档列表、上传入口、GitHub 来源、任务状态、知识库策略摘要、成员范围列表与多选编辑器 |
-| 依赖 API | `GET /kbs/detail?team_id=&kb_id=`、`GET /docs?team_id=&kb_id=`、`GET /sources?team_id=&kb_id=`、`GET /ingestions?team_id=`、`GET /kbs/members?team_id=&kb_id=`、`POST /kbs/members/update` |
+| 页面目标 | 管理文档、模型策略、索引状态和知识库成员范围 |
+| 主要组件 | 文档列表、上传入口、批次进度、任务状态、知识库策略摘要、成员范围列表与多选编辑器 |
+| 依赖 API | `GET /kbs/detail?team_id=&kb_id=`、`GET /docs?team_id=&kb_id=`、`GET /ingestions?team_id=&kb_id=`、`GET /kbs/members?team_id=&kb_id=`、`POST /kbs/members/update` |
 
 知识库成员范围对所有有知识库访问权限的成员展示。团队 `leader` 可以从当前团队
 所有 `active` 成员中选择并保存成员范围；`member` 和 `viewer` 仅能查看，不能
@@ -135,14 +135,14 @@
 | 主要组件 | 拖拽上传、文件列表、产品/版本、可见性、数据分类、提交按钮 |
 | 依赖 API | `POST /docs/upload` |
 
-### 4.4 GitHub 来源
+### 4.4 上传批次
 
-| 项目 | 内容 |
+| 项目 | 说明 |
 | --- | --- |
-| 路由 | `/knowledge-bases/:kbId/sources/github` |
-| 页面目标 | 添加仓库、分支、路径白名单和同步策略 |
-| 主要组件 | 仓库 URL、分支、路径规则、扩展名、凭据选择、同步频率 |
-| 依赖 API | `POST /sources/github/create`、`GET /credentials?team_id=` |
+| 路由 | `/upload-batches/:batchId`、`/upload-batches?kbId=` |
+| 页面目标 | 查看持久化批次和逐文件进度，补传缺失文件、重试或取消任务 |
+| 主要组件 | Arco Table、Progress、Tag、Select、Input、Alert |
+| 依赖 API | `/upload-batches/create`、`/upload-batches/seal`、`/upload-batches/detail`、`/upload-batches/retry` |
 
 ### 4.5 文档详情
 
@@ -180,7 +180,7 @@
 | 路由 | `/tasks`、`/tasks/:runId` |
 | 页面目标 | 查看入库、同步、重建和评测任务 |
 | 主要组件 | 任务表格、阶段进度、失败原因、重试、取消、事件流 |
-| 依赖 API | `GET /ingestions?team_id=`、`GET /ingestions/detail?team_id=&run_id=`、`GET /ingestions/events?team_id=&run_id=`、`POST /ingestions/retry`、`POST /ingestions/cancel` |
+| 依赖 API | `GET /ingestions?team_id=&kb_id=`、`GET /ingestions/detail?team_id=&run_id=`、`GET /ingestions/events?team_id=&run_id=`、`POST /ingestions/retry`、`POST /ingestions/cancel` |
 
 ### 5.2 Chunk 管理
 
@@ -295,7 +295,7 @@ QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（L
 
 | 优先级 | 页面 |
 | --- | --- |
-| P0 | 登录与管理员开户、问答工作台、会话历史、知识库列表/详情/策略、文件上传、GitHub 来源、文档版本与恢复、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
+| P0 | 登录与管理员开户、问答工作台、会话历史、知识库列表/详情/策略、文件上传、批次进度、文档版本与恢复、任务中心、Chunk 管理、检索调试、评测列表/详情/报告、团队成员、模型策略、平台设置、审计、索引管理 |
 | P1 | 知识缺口、Trace 回放、评测 A/B 对比、供应商测试、找回密码 |
 | P2 | Confluence/Notion/Slack/Drive 等连接器、源系统 ACL、知识图谱、Agentic Retrieval |
 
@@ -309,3 +309,11 @@ QueryRewrite 区块展示原始问题到检索问题的变化、来源标签（L
 - 所有写操作显示 `request_id`，便于联调时定位日志。
 - SSE 流式问答不得使用轮询替代，除不支持 SSE 的环境外不提供降级实现。
 
+
+### Document processing diagnostics
+
+Document details show parser name/version, PDF kind, parent/child counts, maximum tokens,
+unsafe split count and the stable processing error code. Unsupported PDFs remain visible
+as failed documents and can be replaced with a supported native PDF, DOCX or text file.
+
+知识库列表取消编辑入口；详情标题后可原位编辑名称、描述，成员管理放入独立标签页。上传页固定路由知识库，支持多选队列和完成弹窗，单文件进入任务、多文件进入批次。新建知识库默认允许外部模型，并遵守上级策略。

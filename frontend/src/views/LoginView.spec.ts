@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -64,8 +65,14 @@ describe('LoginView', () => {
       },
     })
 
-    await wrapper.find('[data-testid="login-email"]').setValue('member@example.com')
-    await wrapper.find('[data-testid="login-password"]').setValue('password-123')
+    await setControlValue(
+      control(wrapper, '[data-testid="login-email"]'),
+      'member@example.com',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="login-password"]'),
+      'password-123',
+    )
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 

@@ -9,7 +9,7 @@ import os
 from typing import List
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
@@ -21,7 +21,7 @@ _reranker = None
 
 
 class EmbedRequest(BaseModel):
-    texts: List[str]
+    texts: List[str] = Field(min_length=1, max_length=256)
 
 
 class EmbedResponse(BaseModel):
@@ -81,3 +81,17 @@ def rerank(body: RerankRequest):
     if isinstance(scores, float):
         scores = [scores]
     return RerankResponse(scores=[float(score) for score in scores])
+
+
+class TokenizeResponse(BaseModel):
+    counts: List[int]
+    model: str
+    max_length: int
+
+
+@app.post("/tokenize", response_model=TokenizeResponse)
+def tokenize(body: EmbedRequest):
+    tokenizer = _get_embedder().tokenizer
+    encoded = tokenizer(body.texts, add_special_tokens=True, truncation=False, padding=False)
+    return TokenizeResponse(counts=[len(ids) for ids in encoded["input_ids"]],
+                            model=MODEL_NAME, max_length=8192)

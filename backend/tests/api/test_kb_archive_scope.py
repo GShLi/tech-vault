@@ -40,7 +40,7 @@ def _create_team_and_kb(client, headers, suffix):
     return team, kb
 
 
-def test_archived_kb_is_not_available_to_document_source_or_chat_paths(
+def test_archived_kb_is_not_available_to_document_or_chat_paths(
     strict_api_client,
 ):
     admin = _login(strict_api_client, ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -52,17 +52,6 @@ def test_archived_kb_is_not_available_to_document_source_or_chat_paths(
     kb = strict_api_client.post(
         "/api/v1/kbs/create",
         json={"team_id": team_id, "name": "Archived KB"},
-        headers=admin,
-    ).json()["data"]
-    source = strict_api_client.post(
-        "/api/v1/sources/github/create",
-        json={
-            "team_id": team_id,
-            "kb_id": kb["id"],
-            "repo_url": "https://github.com/acme/archive.git",
-            "branch": "main",
-            "path_filters": ["docs/"],
-        },
         headers=admin,
     ).json()["data"]
     chat = strict_api_client.post(
@@ -89,21 +78,6 @@ def test_archived_kb_is_not_available_to_document_source_or_chat_paths(
             params={"team_id": team_id, "kb_id": kb["id"]},
             headers=admin,
         ),
-        strict_api_client.get(
-            "/api/v1/sources",
-            params={"team_id": team_id, "kb_id": kb["id"]},
-            headers=admin,
-        ),
-        strict_api_client.get(
-            "/api/v1/sources/detail",
-            params={"team_id": team_id, "source_id": source["id"]},
-            headers=admin,
-        ),
-        strict_api_client.post(
-            "/api/v1/sources/sync",
-            json={"team_id": team_id, "source_id": source["id"]},
-            headers=admin,
-        ),
         strict_api_client.post(
             "/api/v1/chats/ask",
             json={
@@ -120,50 +94,3 @@ def test_archived_kb_is_not_available_to_document_source_or_chat_paths(
     assert all(response.status_code == 404 for response in checks), [
         response.text for response in checks
     ]
-
-
-def test_source_access_uses_knowledge_base_member_scope(strict_api_client):
-    admin = _login(strict_api_client, ADMIN_EMAIL, ADMIN_PASSWORD)
-    team = strict_api_client.post(
-        "/api/v1/teams/create",
-        json={"name": "Source Scope Team"},
-        headers=admin,
-    ).json()["data"]
-    alice = _create_user(
-        strict_api_client,
-        admin,
-        team["id"],
-        "source-alice@example.com",
-        role="leader",
-    )
-    bob = _create_user(
-        strict_api_client, admin, team["id"], "source-bob@example.com"
-    )
-    alice_headers = _login(strict_api_client, alice["email"])
-    bob_headers = _login(strict_api_client, bob["email"])
-    kb = strict_api_client.post(
-        "/api/v1/kbs/create",
-        json={"team_id": team["id"], "name": "Scoped Source KB"},
-        headers=alice_headers,
-    ).json()["data"]
-    source = strict_api_client.post(
-        "/api/v1/sources/github/create",
-        json={
-            "team_id": team["id"],
-            "kb_id": kb["id"],
-            "repo_url": "https://github.com/acme/scoped.git",
-        },
-        headers=alice_headers,
-    ).json()["data"]
-
-    assert strict_api_client.get(
-        "/api/v1/sources",
-        params={"team_id": team["id"]},
-        headers=bob_headers,
-    ).json()["data"] == []
-    denied = strict_api_client.get(
-        "/api/v1/sources/detail",
-        params={"team_id": team["id"], "source_id": source["id"]},
-        headers=bob_headers,
-    )
-    assert denied.status_code == 404

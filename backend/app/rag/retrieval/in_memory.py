@@ -50,6 +50,8 @@ class InMemoryRetriever:
         self._embedding = dict(embedding or {})
 
     def _is_visible(self, chunk: Chunk, filters: RetrievalFilters) -> bool:
+        if chunk.chunk_level != "child":
+            return False
         if chunk.team_id != filters.team_id:
             return False
         if chunk.knowledge_base_id not in filters.knowledge_base_ids:
@@ -131,6 +133,8 @@ class InMemoryRetriever:
                 dense_score=dense_scores.get(candidate.chunk_id),
                 rrf_score=candidate.fused_score,
                 source_locator=dict(by_id[candidate.chunk_id].source_locator),
+                parent_chunk_id=by_id[candidate.chunk_id].parent_chunk_id,
+                index_generation=by_id[candidate.chunk_id].index_generation,
             )
             for candidate in fused[: request.final_top_n]
         ]
@@ -143,6 +147,8 @@ class InMemoryRetriever:
                 bm25_rank=rank,
                 bm25_score=bm25_scores.get(chunk_id),
                 source_locator=dict(by_id[chunk_id].source_locator),
+                parent_chunk_id=by_id[chunk_id].parent_chunk_id,
+                index_generation=by_id[chunk_id].index_generation,
             )
             for rank, chunk_id in enumerate(bm25_ids, start=1)
         )
@@ -155,6 +161,8 @@ class InMemoryRetriever:
                 dense_rank=rank,
                 dense_score=dense_scores.get(chunk_id),
                 source_locator=dict(by_id[chunk_id].source_locator),
+                parent_chunk_id=by_id[chunk_id].parent_chunk_id,
+                index_generation=by_id[chunk_id].index_generation,
             )
             for rank, chunk_id in enumerate(dense_ids, start=1)
         )

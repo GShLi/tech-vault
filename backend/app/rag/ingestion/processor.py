@@ -20,7 +20,6 @@ from backend.app.rag.domain.models import (
 )
 from backend.app.rag.chunking.identity import content_fingerprint
 from backend.app.rag.embedding.service import EmbeddingClient
-from backend.app.rag.parsing.documents import UnsupportedDocumentType, parse_document_text
 from backend.app.rag.retrieval.config import EngineMode
 from backend.app.rag.retrieval.factory import build_index_writers
 from backend.app.db.models import (
@@ -114,354 +113,320 @@ def _cancelled(session, run: IngestionRun) -> bool:
     return run.status == "cancelled"
 
 
-def _document_index_chunks(
-    session,
-    document: Document,
-    knowledge_base: KnowledgeBase,
-    generation_id: str,
-):
-    rows = session.scalars(
-        select(ChunkRecord)
-        .where(
-            ChunkRecord.document_id == document.id,
-            ChunkRecord.doc_status == "active",
-        )
-        .order_by(ChunkRecord.created_at.asc(), ChunkRecord.id.asc())
-    ).all()
-    return [
-        Chunk(
-            chunk_id=row.id,
-            document_id=row.document_id,
-            document_version_id=document.current_version_id or document.id,
-            team_id=row.team_id,
-            knowledge_base_id=row.knowledge_base_id,
-            owner_user_id=row.owner_user_id,
-            visibility=Visibility(row.visibility),
-            data_classification=DataClassification(row.data_classification),
-            source_path=row.source_path,
-            heading_path=tuple(json.loads(row.heading_path or "[]")),
-            content=row.content,
-            logical_chunk_key=row.logical_chunk_key,
-            content_hash=row.content_hash,
-            source_locator=json.loads(row.source_locator or "{}"),
-            product=document.product,
-            version_values=tuple(json.loads(row.version_values or "[]")),
-            doc_status=DocumentStatus.ACTIVE,
-            chunk_status=ChunkStatus(row.chunk_status),
-            index_generation=generation_id,
-        )
-        for row in rows
-    ]
+def _chunk_fields():
+    return ("parent_chunk_id", "chunk_level", "child_order", "node_type", "token_count", "page_no",
+            "parse_version", "chunking_version", "embedding_model", "tokenizer_model",
+            "parent_start_offset", "parent_end_offset", "overlap_before_tokens", "unsafe_split")
 
 
-async def _rollback_document_index(
-    writers,
-    settings: Settings,
-    generation_id: str,
-    document_id: str,
-    previous_chunks: List[Chunk],
-    new_only_ids,
-) -> None:
-    if not writers:
-        return
-    previous_vectors = EmbeddingClient(settings.embedding_url).embed(
-        [chunk.content for chunk in previous_chunks]
-    ) if previous_chunks else []
-    previous_chunks = [
-        replace(chunk, content_vector=vector)
-        for chunk, vector in zip(previous_chunks, previous_vectors)
-    ]
-    for writer in writers:
-        try:
-            if previous_chunks:
-                await writer.stage(generation_id, previous_chunks)
-            await writer.delete_chunks(generation_id, new_only_ids)
-            await writer.set_document_status(generation_id, document_id, "active")
-        except Exception:  # noqa: BLE001
-            continue
+def record_to_chunk(record, document, generation_id=""):
+    locator = json.loads(record.source_locator or "{}")
+    return Chunk(
+        chunk_id=record.id, document_id=record.document_id,
+        document_version_id=locator.get("document_version_id") or document.current_version_id or document.id,
+        team_id=record.team_id, knowledge_base_id=record.knowledge_base_id,
+        owner_user_id=record.owner_user_id, visibility=Visibility(record.visibility),
+        data_classification=DataClassification(record.data_classification), source_path=record.source_path,
+        heading_path=tuple(json.loads(record.heading_path or "[]")), content=record.content,
+        logical_chunk_key=record.logical_chunk_key, content_hash=record.content_hash,
+        source_locator=locator, product=document.product,
+        version_values=tuple(json.loads(record.version_values or "[]")),
+        index_generation=generation_id or record.index_generation,
+        doc_status=DocumentStatus.ACTIVE, chunk_status=ChunkStatus(record.chunk_status),
+        **{name: getattr(record, name) for name in _chunk_fields()},
+    )
 
 
-def process_document(
-    document: Document,
-    run: IngestionRun,
-    session,
-    settings: Settings,
-) -> List[str]:
-    if _cancelled(session, run):
+def _prepare_document(document, run, session, settings):
+    from dataclasses import asdict
+    from backend.app.db.models import GenerationChunk
+    from backend.app.rag.parsing.router import parse_document
+    from backend.app.rag.parsing.contracts import ParseError
+    from backend.app.rag.chunking.semantic import SemanticChunker, ChunkBudget, embedding_input
+    from backend.app.rag.chunking.quality import chunk_quality_report
+    from backend.app.rag.embedding.service import validate_vectors
+
+    if _cancelled(session, run) or run.status == "completed":
         return []
-
+    if run.document_version_id != document.current_version_id:
+        raise ParseError("DOCUMENT_VERSION_CHANGED")
+    version = session.get(DocumentVersion, run.document_version_id)
     path = Path(document.source_uri or "")
-    if not path.exists() and document.object_uri:
-        from backend.app.api.storage import (
-            ObjectStorageUnavailable,
-            download_s3_object,
-        )
-
-        destination = Path(settings.upload_dir) / "cache" / (
-            document.id + "-" + document.file_name
-        )
-        try:
-            path = download_s3_object(document.object_uri, destination, settings)
-        except ObjectStorageUnavailable:
-            _fail(run, document, "SOURCE_STORAGE_UNAVAILABLE", True, session)
-            return []
-        document.source_uri = str(path)
-        session.commit()
-    if not path.exists():
-        _fail(run, document, "SOURCE_MISSING", False, session)
-        return []
-
-    knowledge_base = session.get(KnowledgeBase, document.knowledge_base_id)
-    if knowledge_base is None:
-        _fail(run, document, "KNOWLEDGE_BASE_MISSING", False, session)
-        return []
-
+    if not path.is_file() and document.object_uri:
+        from backend.app.api.storage import download_s3_object
+        path = download_s3_object(document.object_uri, Path(settings.upload_dir) / "cache" / (document.id + "-" + document.file_name), settings)
+    if not path.is_file():
+        raise ParseError("SOURCE_MISSING")
+    kb = session.get(KnowledgeBase, document.knowledge_base_id)
     run.current_stage = "parsing"
     run.stage_progress_pct = 20
+    run.status = "running"
     session.commit()
-
-    try:
-        content = parse_document_text(path)
-    except UnsupportedDocumentType:
-        _fail(run, document, "UNSUPPORTED_FILE_TYPE", False, session)
-        return []
-    except Exception:
-        _fail(run, document, "DOCUMENT_PARSE_FAILED", False, session)
-        return []
-
-    if not content.strip():
-        _fail(run, document, "EMPTY_DOCUMENT", False, session)
-        return []
-
-    if _cancelled(session, run):
-        return []
-
-    from backend.app.rag.chunking.markdown import chunk_markdown
-
-    automatic_chunks = chunk_markdown(
-        document_version_id=document.current_version_id or document.id,
-        source_path=document.file_name,
-        content=content,
-        document_id=document.id,
-        team_id=knowledge_base.team_id,
-        knowledge_base_id=document.knowledge_base_id,
-        owner_user_id=document.owner_user_id,
-        visibility=Visibility(document.visibility),
-        data_classification=DataClassification(document.data_classification),
-        product=document.product,
-        version_values=tuple(json.loads(document.version_values or "[]")),
-        document_file_name=document.file_name,
-        source_url="/api/v1/docs/download?{0}".format(
-            urlencode(
-                {
-                    "team_id": knowledge_base.team_id,
-                    "document_id": document.id,
-                }
-            )
-        ),
-    )
-
+    parsed = parse_document(path, file_name=document.file_name, mime_type=document.mime_type,
+                            max_pages=settings.document_max_pages)
+    version.parse_metadata = json.dumps({"parser_name": parsed.parser_name, "parser_version": parsed.parser_version,
+        "pdf_kind": parsed.pdf_kind, "mime_type": document.mime_type, "warnings": list(parsed.warnings),
+        "quality": asdict(parsed.quality), **parsed.metadata}, ensure_ascii=False)
+    if parsed.quality.garbled_ratio > .05:
+        raise ParseError("CHUNK_QUALITY_FAILED", "Extracted text has too many replacement characters.")
+    client = EmbeddingClient(settings.embedding_url, dimension=settings.embedding_dimension,
+        allow_hash_fallback=False, model=settings.embedding_model, batch_size=settings.embedding_batch_size)
     run.current_stage = "chunking"
-    run.stage_progress_pct = 50
+    run.stage_progress_pct = 40
     session.commit()
-
+    result = SemanticChunker(tokenize=client.tokenize, budget=ChunkBudget(
+        child_target=settings.chunk_child_target_tokens, child_max=settings.chunk_child_max_tokens,
+        child_overlap=settings.chunk_child_overlap_tokens, parent_target=settings.chunk_parent_target_tokens,
+        parent_max=settings.chunk_parent_max_tokens,
+    )).chunk(parsed.nodes, document_version_id=version.id, source_path=document.file_name,
+             tokenizer_model=settings.embedding_model, chunking_version=settings.chunking_version)
+    quality = chunk_quality_report(result)
+    version.chunking_metadata = json.dumps({**quality, "chunking_version": settings.chunking_version,
+        "tokenizer_model": settings.embedding_model, "embedding_model": settings.embedding_model})
+    run.quality_metrics = json.dumps(quality)
+    common = dict(document_id=document.id, document_version_id=version.id, team_id=kb.team_id,
+        knowledge_base_id=kb.id, owner_user_id=document.owner_user_id, visibility=Visibility(document.visibility),
+        data_classification=DataClassification(document.data_classification), source_path=document.file_name,
+        product=document.product, version_values=tuple(json.loads(document.version_values or "[]")),
+        parse_version=settings.parse_version, chunking_version=settings.chunking_version,
+        tokenizer_model=settings.embedding_model, embedding_model=settings.embedding_model)
+    def locator(draft):
+        return {**draft.source_locator, "document_id": document.id, "document_version_id": version.id,
+            "file_name": document.file_name, "source_path": document.file_name,
+            "heading_path": list(draft.heading_path), "page_no": getattr(draft, "page_no", getattr(draft, "page_start", None)),
+            "source_url": "/api/v1/docs/download?" + urlencode({"team_id": kb.team_id, "document_id": document.id})}
+    parents = [Chunk(**common, chunk_id=p.parent_id, content=p.content, heading_path=p.heading_path,
+        logical_chunk_key=p.logical_key, content_hash=content_fingerprint(p.content), source_locator=locator(p),
+        chunk_level="parent", child_order=0, token_count=p.token_count, page_no=p.page_start) for p in result.parents]
+    automatic = [Chunk(**common, chunk_id=c.child_id, content=c.content, heading_path=c.heading_path,
+        logical_chunk_key=c.logical_key, content_hash=content_fingerprint(c.content), source_locator=locator(c),
+        parent_chunk_id=c.parent_chunk_id, child_order=c.child_order, node_type=c.node_type,
+        token_count=c.token_count, page_no=c.page_no, parent_start_offset=c.parent_start_offset,
+        parent_end_offset=c.parent_end_offset, overlap_before_tokens=c.overlap_before_tokens,
+        unsafe_split=c.unsafe_split) for c in result.children]
+    children = apply_chunk_overrides(session, document, automatic)
+    auto_content = {chunk.chunk_id: chunk.content for chunk in parents + automatic}
+    chunks = parents + children
+    # Validate overlays before publication, including overlapping edits and disabled evidence.
+    from backend.app.rag.context.parents import effective_parent_text
+    for parent in parents:
+        effective = effective_parent_text(parent.content, [child for child in children if child.parent_chunk_id == parent.chunk_id],
+                                         {child.chunk_id: auto_content[child.chunk_id] for child in children})
+        if client.tokenize([effective])[0] > settings.chunk_parent_max_tokens:
+            raise ParseError("CHUNK_QUALITY_FAILED", "Edited parent exceeds its token budget.")
     if _cancelled(session, run):
         return []
-
-    generation = ""
-    generation_record = None
-    if settings.enable_indexing:
-        generation_record = session.scalar(
-            select(IndexGenerationRecord)
-            .where(
-                IndexGenerationRecord.team_id == knowledge_base.team_id,
-                IndexGenerationRecord.status == "active",
-            )
-            .order_by(IndexGenerationRecord.activated_at.desc())
-        )
-        if generation_record is None:
-            generation_record = IndexGenerationRecord(
-                team_id=knowledge_base.team_id,
-                status="staging",
-                chunk_count=0,
-            )
-            session.add(generation_record)
-            session.flush()
-        generation = generation_record.id
-
-    chunks = apply_chunk_overrides(
-        session,
-        document,
-        automatic_chunks,
-        generation_id=generation,
-    )
-    automatic_content = {
-        chunk.chunk_id: chunk.content for chunk in automatic_chunks
-    }
-    indexable_chunks = [
-        chunk for chunk in chunks if chunk.chunk_status == ChunkStatus.ENABLED
-    ]
-
-    embedder = EmbeddingClient(settings.embedding_url)
-    vectors = embedder.embed([chunk.content for chunk in indexable_chunks])
-    vectors_by_id = {
-        chunk.chunk_id: vector
-        for chunk, vector in zip(indexable_chunks, vectors)
-    }
-    chunks = [
-        replace(chunk, content_vector=vectors_by_id.get(chunk.chunk_id, []))
-        for chunk in chunks
-    ]
-    indexable_chunks = [
-        chunk for chunk in chunks if chunk.chunk_status == ChunkStatus.ENABLED
-    ]
-
-    if _cancelled(session, run):
-        return []
-
-    run.current_stage = "indexing"
-    run.stage_progress_pct = 75
+    from backend.app.rag.embedding.cache import embed_chunks
+    from backend.app.db.models import PreparedIngestion
+    run.current_stage, run.stage_progress_pct = "embedding", 60
     session.commit()
+    vectorized = {chunk.chunk_id: chunk for chunk in embed_chunks(
+        session, [child for child in children if child.chunk_status == ChunkStatus.ENABLED], settings,
+    )}
+    if _cancelled(session, run):
+        return None
+    chunks = [vectorized.get(chunk.chunk_id, chunk) for chunk in chunks]
+    payload = {"chunks": [asdict(chunk) for chunk in chunks], "auto_content": auto_content}
+    prepared = session.get(PreparedIngestion, run.id)
+    if prepared is None:
+        prepared = PreparedIngestion(run_id=run.id)
+        session.add(prepared)
+    prepared.payload = json.dumps(payload)
+    run.status, run.current_stage, run.stage_progress_pct = "prepared", "waiting_publish", 70
+    run.error_code, run.failure_details = None, "{}"
+    session.commit()
+    return payload
 
-    if settings.enable_indexing:
-        staged_chunks = [
-            replace(chunk, doc_status=DocumentStatus.BUILDING)
-            for chunk in indexable_chunks
-        ]
-        previous_chunks = _document_index_chunks(
-            session,
-            document,
-            knowledge_base,
-            generation,
-        )
-        previous_ids = {chunk.chunk_id for chunk in previous_chunks}
-        new_ids = {chunk.chunk_id for chunk in staged_chunks}
-        stale_ids = previous_ids - new_ids
-        new_only_ids = new_ids - previous_ids
 
-        async def index_chunks() -> List[object]:
+def _decode_chunk(value):
+    return Chunk(**{**value, "visibility": Visibility(value["visibility"]),
+        "data_classification": DataClassification(value["data_classification"]),
+        "doc_status": DocumentStatus(value["doc_status"]), "chunk_status": ChunkStatus(value["chunk_status"]),
+        "heading_path": tuple(value["heading_path"]), "version_values": tuple(value["version_values"])})
+
+
+def publish_prepared(session, pairs, settings):
+    """Publish several prepared documents in one team snapshot under its lease."""
+    from backend.app.db.models import PreparedIngestion
+    from backend.app.rag.embedding.cache import embed_chunks
+    from backend.app.rag.parsing.contracts import ParseError
+    from backend.app.rag.indexing.generation import save_generation_members
+
+    prepared_rows = []
+    all_chunks, auto_content = [], {}
+    for document, run in pairs:
+        session.refresh(run)
+        session.refresh(document)
+        if run.status in {"cancelled", "completed"}:
+            continue
+        if document.doc_status in {"deleted", "deleting"}:
+            run.status = run.current_stage = "cancelled"
+            session.commit()
+            continue
+        if run.document_version_id != document.current_version_id:
+            run.status, run.current_stage, run.error_code, run.retryable = "failed", "failed", "DOCUMENT_VERSION_CHANGED", False
+            session.commit()
+            continue
+        payload = session.get(PreparedIngestion, run.id)
+        if payload is None:
+            raise ParseError("PREPARED_DOCUMENT_MISSING")
+        data = json.loads(payload.payload)
+        chunks = [replace(_decode_chunk(value), visibility=Visibility(document.visibility),
+            data_classification=DataClassification(document.data_classification), owner_user_id=document.owner_user_id,
+            product=document.product, version_values=tuple(json.loads(document.version_values or "[]")))
+            for value in data["chunks"]]
+        prepared_rows.append((document, run, chunks, payload))
+        all_chunks.extend(chunks)
+        auto_content.update(data["auto_content"])
+    if not prepared_rows:
+        return []
+    team_id = all_chunks[0].team_id
+    if any(chunk.team_id != team_id for chunk in all_chunks):
+        raise ParseError("BATCH_TEAM_MISMATCH")
+    active = session.scalar(select(IndexGenerationRecord).where(
+        IndexGenerationRecord.team_id == team_id, IndexGenerationRecord.status == "active"))
+    generation = IndexGenerationRecord(team_id=team_id, status="staging") if settings.enable_indexing else None
+    if generation:
+        session.add(generation)
+        session.flush()
+    generation_id = generation.id if generation else ""
+    all_chunks = [replace(chunk, index_generation=generation_id) for chunk in all_chunks]
+    retained = []
+    if generation:
+        document_ids = [document.id for document, _run, _chunks, _payload in prepared_rows]
+        rows = session.execute(select(ChunkRecord, Document).join(Document, ChunkRecord.document_id == Document.id)
+            .where(ChunkRecord.team_id == team_id, ChunkRecord.document_id.not_in(document_ids),
+                   ChunkRecord.doc_status == "active", Document.doc_status == "active")).all()
+        retained = [record_to_chunk(row, doc, generation_id) for row, doc in rows]
+    for _document, run, _chunks, _payload in prepared_rows:
+        run.current_stage, run.stage_progress_pct = "indexing", 80
+        run.failure_details = json.dumps({"staging_generation_id": generation_id})
+    session.commit()
+    indexable = [chunk for chunk in all_chunks + retained
+                 if chunk.chunk_level == "child" and chunk.chunk_status == ChunkStatus.ENABLED]
+    # New vectors and retained vectors are cached by the complete model input.
+    indexable = embed_chunks(session, indexable, settings)
+    if generation:
+        async def publish():
             writers = build_index_writers(settings, EngineMode(settings.engine_mode))
-            try:
-                for writer in writers:
-                    await writer.stage(generation, staged_chunks)
-                for writer in writers:
-                    await writer.delete_chunks(generation, stale_ids)
-                    await writer.set_document_status(
-                        generation,
-                        document.id,
-                        "active",
-                    )
-                for writer in writers:
-                    validation = await writer.validate(generation)
-                    if not validation.passed:
-                        raise RuntimeError(
-                            "index validation failed: "
-                            + ", ".join(validation.errors)
-                        )
-                for writer in writers:
-                    await writer.activate(generation)
-            except Exception:
-                await _rollback_document_index(
-                    writers,
-                    settings,
-                    generation,
-                    document.id,
-                    previous_chunks,
-                    new_only_ids,
-                )
-                raise
-            return writers
-
-        try:
-            asyncio.run(index_chunks())
-        except Exception as error:
-            if generation_record.status != "active":
-                generation_record.status = "failed"
-                generation_record.error_message = str(error)
-                generation_record.validation_errors = json.dumps([str(error)])
-            _fail(run, document, "INDEXING_FAILED", True, session)
-            return []
-        generation_record.status = "active"
-        generation_record.error_message = None
-        generation_record.validation_errors = "[]"
-        generation_record.validated_at = datetime.now(timezone.utc)
-        generation_record.activated_at = generation_record.activated_at or datetime.now(
-            timezone.utc
-        )
-
-    new_chunk_ids = tuple(chunk.chunk_id for chunk in chunks)
-    session.execute(
-        update(ChunkRecord)
-        .where(
-            ChunkRecord.document_id == document.id,
-            ChunkRecord.id.not_in(new_chunk_ids),
-        )
-        .values(
-            doc_status="superseded",
-            status="disabled",
-            chunk_status="disabled",
-            version=ChunkRecord.version + 1,
-        )
-    )
-
-    for chunk in chunks:
-        record = session.get(ChunkRecord, chunk.chunk_id)
-        if record is None:
-            record = ChunkRecord(id=chunk.chunk_id)
-            session.add(record)
-        record.document_id = document.id
-        record.team_id = chunk.team_id
-        record.knowledge_base_id = chunk.knowledge_base_id
-        record.owner_user_id = chunk.owner_user_id
-        record.visibility = chunk.visibility.value
-        record.data_classification = chunk.data_classification.value
-        record.doc_status = "active"
-        record.chunk_status = chunk.chunk_status.value
-        record.content = chunk.content
-        record.auto_content = automatic_content[chunk.chunk_id]
-        record.heading_path = json.dumps(list(chunk.heading_path))
-        record.source_locator = json.dumps(
-            {
-                **dict(chunk.source_locator),
-                "document_version_id": chunk.document_version_id,
-            }
-        )
-        record.version_values = json.dumps(list(chunk.version_values))
-        record.logical_chunk_key = chunk.logical_chunk_key
-        record.content_hash = chunk.content_hash
-        record.source_path = chunk.source_path
-        record.index_generation = generation
-        record.status = chunk.chunk_status.value
-
+            if not writers:
+                raise ParseError("INDEXING_FAILED", "No index writers configured.")
+            for writer in writers:
+                await writer.stage(generation.id, indexable)
+                validation = await writer.validate(generation.id)
+                if not validation.passed or validation.checked_chunks != len(indexable):
+                    raise ParseError("INDEXING_FAILED", "Index validation/count mismatch.")
+            for writer in writers:
+                await writer.activate(generation.id)
+        asyncio.run(publish())
+    vectorized = {chunk.chunk_id: chunk for chunk in indexable}
+    for document, run, chunks, payload in prepared_rows:
+        session.execute(update(ChunkRecord).where(ChunkRecord.document_id == document.id,
+            ChunkRecord.id.not_in([chunk.chunk_id for chunk in chunks])).values(
+                doc_status="superseded", status="disabled", chunk_status="disabled"))
+        for original in chunks:
+            chunk = vectorized.get(original.chunk_id, replace(original, index_generation=generation_id))
+            row = session.get(ChunkRecord, chunk.chunk_id)
+            if row is None:
+                row = ChunkRecord(id=chunk.chunk_id)
+                session.add(row)
+            for name in _chunk_fields():
+                setattr(row, name, getattr(chunk, name))
+            for name in ("document_id", "team_id", "knowledge_base_id", "owner_user_id", "content", "logical_chunk_key", "content_hash", "source_path", "index_generation"):
+                setattr(row, name, getattr(chunk, name))
+            row.visibility, row.data_classification = chunk.visibility.value, chunk.data_classification.value
+            row.doc_status, row.chunk_status, row.status = "active", chunk.chunk_status.value, chunk.chunk_status.value
+            row.auto_content = auto_content[chunk.chunk_id]
+            row.heading_path = json.dumps(list(chunk.heading_path))
+            row.source_locator = json.dumps(dict(chunk.source_locator))
+            row.version_values = json.dumps(list(chunk.version_values))
+        version = session.get(DocumentVersion, run.document_version_id)
+        version.status, version.chunk_count, version.index_generation = "active", sum(c.chunk_level == "child" for c in chunks), generation_id or None
+        run.status, run.current_stage, run.stage_progress_pct = "completed", "completed", 100
+        run.error_code, run.retryable, run.failure_details = None, False, "{}"
+        document.doc_status = "active"
+        session.delete(payload)
     session.flush()
-    if generation_record is not None:
-        generation_record.chunk_count = int(
-            session.scalar(
-                select(func.count())
-                .select_from(ChunkRecord)
-                .where(
-                    ChunkRecord.index_generation == generation_record.id,
-                    ChunkRecord.status == "enabled",
-                )
-            )
-            or 0
-        )
-
-    version = session.get(DocumentVersion, run.document_version_id)
-    if version is not None:
-        version.status = "active"
-        version.chunk_count = len(chunks)
-        version.index_generation = generation or None
-
-    run.current_stage = "completed"
-    run.stage_progress_pct = 100
-    run.status = "completed"
-    run.retryable = False
-    document.doc_status = "active"
+    if generation:
+        rows = session.scalars(select(ChunkRecord).where(ChunkRecord.id.in_([chunk.chunk_id for chunk in all_chunks + retained]))).all()
+        save_generation_members(session, generation.id, rows)
+        if active:
+            active.status = "validated"
+        generation.status, generation.chunk_count = "active", len(indexable)
+        generation.activated_at = generation.validated_at = datetime.now(timezone.utc)
     session.commit()
+    return [chunk.chunk_id for chunk in all_chunks if chunk.chunk_level == "child"]
 
-    return [chunk.chunk_id for chunk in chunks]
 
+def _process_document(document, run, session, settings, prepare_only=False):
+    from backend.app.db.models import PreparedIngestion
+    if _cancelled(session, run) or run.status == "completed":
+        return []
+    prepared = session.get(PreparedIngestion, run.id)
+    if prepared is None:
+        if not _prepare_document(document, run, session, settings):
+            return []
+    if prepare_only:
+        run.status, run.current_stage = "prepared", "waiting_publish"
+        session.commit()
+        return []
+    return publish_prepared(session, [(document, run)], settings)
+
+
+def process_document(document, run, session, settings, *, prepare_only=False):
+    from backend.app.rag.ingestion.leases import IngestionBusy, team_lease
+    from backend.app.rag.embedding.service import EmbeddingError
+    from backend.app.rag.parsing.contracts import ParseError
+    kb = session.get(KnowledgeBase, document.knowledge_base_id)
+    if kb is None:
+        _fail(run, document, "KNOWLEDGE_BASE_MISSING", False, session)
+        return []
+    try:
+        from contextlib import nullcontext
+        with (nullcontext() if prepare_only else team_lease(session, kb.team_id)):
+            session.refresh(run)
+            session.refresh(document)
+            return _process_document(document, run, session, settings, prepare_only)
+    except IngestionBusy:
+        # The worker reschedules contention without marking the document failed.
+        raise
+    except Exception as error:
+        fail_ingestion(document, run, session, error)
+        return []
+
+
+def fail_ingestion(document, run, session, error):
+    from backend.app.rag.embedding.service import EmbeddingError
+    from backend.app.rag.parsing.contracts import ParseError
+    session.rollback()
+    session.refresh(run)
+    if run.status == "cancelled":
+        return []
+    code = getattr(error, "code", "INDEXING_FAILED")
+    retryable = getattr(error, "retryable", code in {"INDEXING_FAILED", "SOURCE_STORAGE_UNAVAILABLE"})
+    staging_id = json.loads(run.failure_details or "{}").get("staging_generation_id")
+    if staging_id:
+        staging = session.get(IndexGenerationRecord, staging_id)
+        if staging and staging.status == "staging":
+            staging.status = "failed"
+            staging.error_message = code
+    version = session.get(DocumentVersion, run.document_version_id)
+    details = getattr(error, "details", {})
+    if version and details.get("pdf_kind"):
+        version.parse_metadata = json.dumps(details)
+    failure = {"code": code, "retryable": retryable,
+               "stage": run.current_stage, "details": details}
+    # Known pipeline errors carry safe explanations; arbitrary exceptions may
+    # include SQL, credentials or source text and must not be exposed to clients.
+    if isinstance(error, (ParseError, EmbeddingError)):
+        failure["message"] = str(error)
+    run.failure_details = json.dumps(failure)
+    # Existing published data stays queryable when a replacement fails.
+    run.status, run.error_code, run.retryable, run.current_stage = "failed", code, retryable, "failed"
+    existing = session.scalar(select(ChunkRecord.id).where(ChunkRecord.document_id == document.id, ChunkRecord.doc_status == "active"))
+    document.doc_status = "active" if existing else "failed"
+    session.commit()
+    return []
 
 def process_markdown(document: Document, run: IngestionRun, session, settings=None) -> List[str]:
     """Compatibility wrapper used by the upload endpoint and worker."""

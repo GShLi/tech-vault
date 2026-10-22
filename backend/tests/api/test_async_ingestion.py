@@ -4,7 +4,7 @@ from backend.app.core.config import Settings
 from backend.app.db.models import Document, IngestionRun
 from backend.app.db.session import build_engine, build_session_factory, create_schema
 from backend.app.main import create_app
-from backend.app.workers.dispatch import ingest_document, sync_github_source_task
+from backend.app.workers.dispatch import ingest_document
 from backend.tests.api.conftest import admin_headers_for
 
 
@@ -249,35 +249,3 @@ def test_chunk_regenerate_queues_a_new_ingestion_run(monkeypatch):
         assert run is not None
         assert run.status == "queued"
         assert run.current_stage == "queued"
-
-
-def test_source_sync_queues_celery_task(monkeypatch):
-    app, _factory = _celery_client()
-    calls = []
-    monkeypatch.setattr(
-        sync_github_source_task,
-        "apply_async",
-        lambda **kwargs: calls.append(kwargs),
-    )
-
-    with TestClient(app) as client:
-        headers = _headers(client, "async-source@example.com")
-        team, kb = _team_and_kb(client, headers)
-        source = client.post(
-            "/api/v1/sources/github/create",
-            json={
-                "team_id": team["id"],
-                "kb_id": kb["id"],
-                "repo_url": "https://github.com/acme/queued.git",
-            },
-            headers=headers,
-        ).json()["data"]
-        response = client.post(
-            "/api/v1/sources/sync",
-            json={"team_id": team["id"], "source_id": source["id"]},
-            headers=headers,
-        )
-
-    assert response.status_code == 202, response.text
-    assert response.json()["data"]["status"] == "queued"
-    assert calls == [{"args": [source["id"]], "retry": False}]

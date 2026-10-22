@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -81,7 +82,10 @@ describe('SettingsView', () => {
     const wrapper = mountPage()
     const auth = useAuthStore()
 
-    await wrapper.get('[data-testid="profile-display-name"]').setValue('  New Leader  ')
+    await setControlValue(
+      control(wrapper, '[data-testid="profile-display-name"]'),
+      '  New Leader  ',
+    )
     await wrapper.get('[data-testid="profile-form"]').trigger('submit')
     await flushPromises()
 

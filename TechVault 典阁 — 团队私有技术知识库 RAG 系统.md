@@ -3,7 +3,7 @@
 > 文档版本：V2.0  
 > 编制日期：2026-10-18  
 > 文档状态：PoC 设计基线  
-> 建设目标：构建面向研发团队的私有技术知识库，支持文件与 GitHub 文档接入、权限隔离、结构感知分块、混合检索、多轮问答、可验证引用、拒答、反馈和索引回滚。  
+> 建设目标：构建面向研发团队的私有技术知识库，支持批量文件接入、权限隔离、结构感知分块、混合检索、多轮问答、可验证引用、拒答、反馈和索引回滚。
 > 核心原则：单一产品主链路；权限在召回阶段生效；默认数据不出域；检索质量由离线黄金集和发布门禁验证。
 
 ## 目录
@@ -34,11 +34,11 @@
 
 团队内部存在大量技术文档、手册、API 参考资料和私有研发资料，包括 JDK、Spring Boot、OpenAI 官方文档、内部设计文档、部署手册和代码仓库说明。当前资料分散在文件系统、GitHub 和成员个人目录中，查找成本高，答案难以追溯，成员离职后知识资产也缺少明确的转移和治理机制。
 
-TechVault 典阁用于统一管理团队技术知识，支持文件上传和 GitHub 仓库同步，通过关键词与向量混合检索提供带引用的技术问答。系统同时承担知识质量控制职责：不仅展示“能回答什么”，还要能判断解析、分块、召回、重排和生成分别出了什么问题。
+TechVault 典阁用于统一管理团队技术知识，支持批量文件上传与持久化处理进度，通过关键词与向量混合检索提供带引用的技术问答。系统同时承担知识质量控制职责：不仅展示“能回答什么”，还要能判断解析、分块、召回、重排和生成分别出了什么问题。
 
 ### 1.2 项目目标
 
-1. 统一管理团队技术文档，支持 PDF、Markdown、TXT、DOCX 和 GitHub 仓库接入。
+1. 统一管理团队技术文档，支持 PDF、Markdown、TXT、DOCX 批量文件接入。
 2. 实现个人私有、团队共享和受限资料的分级隔离，权限条件进入检索过滤。
 3. 支持 BM25 与 Dense Retrieval 混合召回、RRF 融合和 Rerank。
 4. 支持中文问题检索英文技术文档、精确 API 名称检索、产品与版本过滤。
@@ -55,7 +55,7 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 | --- | --- |
 | `admin` | 管理系统级模型策略、系统供应商准入和系统健康 |
 | `leader` | 管理成员、团队策略、知识库、模型策略、审计和评测配置 |
-| `member` | 上传文档、添加 GitHub 仓库、管理自己的私有文档、问答和反馈 |
+| `member` | 上传文档、管理自己的私有文档、问答和反馈 |
 | `viewer` | 查看有权限的共享文档、问答和查看引用，不能上传或修改资料 |
 
 `admin` 和 `leader` 默认不能查看成员私有文档正文。权限规则详见第 7 章。
@@ -65,7 +65,7 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 #### PoC 范围
 
 - 1 个团队，1 至 3 个知识库空间。
-- 文件上传和单个 GitHub 仓库接入。
+- 批量文件上传和按文件处理进度。
 - Markdown 技术文档、PDF 手册和代码片段三类代表性语料。
 - 文档解析、结构感知分块、Embedding、双索引写入、混合检索和 Rerank。
 - 多轮问答、引用、拒答和基础反馈。
@@ -75,7 +75,7 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 #### MVP 范围
 
 - 团队、角色和知识库空间管理。
-- 文件与 GitHub 增量同步、失败恢复和索引 generation 回滚。
+- 批量文档入库、失败恢复和索引 generation 回滚。
 - 文档版本、chunk 管理、权限生命周期和审计日志。
 - 多轮问答、版本过滤、流式回答、引用跳转、拒答和反馈。
 - 模型出境策略、供应商准入、调用审计和本地模型回退。
@@ -114,14 +114,13 @@ TechVault 典阁用于统一管理团队技术知识，支持文件上传和 Git
 
 ### 2.2 知识库与文档管理
 
-一个团队可以创建多个知识库空间，每个空间有独立的成员范围、默认数据分类和模型策略。
+一个团队可以创建多个知识库空间，每个空间有独立的成员范围、默认数据分类和模型策略。新知识库默认允许外部模型，仍受平台/团队策略和数据分级限制。
 
 1. 知识库空间支持新建、编辑、归档和删除。
 2. 文档接入支持：
    - PDF、Markdown、TXT、DOCX 文件上传。
-   - GitHub 仓库地址、分支和路径过滤。
-   - Markdown、TXT、HTML 和允许的源码文件。
-   - GitHub 增量同步、checkpoint、分支快照和内容指纹。
+   - 多选与拖拽上传，默认每批最多 200 个文件，按文件显示进度并支持失败重试。
+   - 持久化批次、幂等接收、解析 checkpoint 和合并索引发布。
 3. 文档可见性支持：
    - `private`：仅上传者本人和明确授权用户可见。
    - `team_shared`：知识库成员范围内可见。
@@ -226,7 +225,7 @@ FastAPI 业务后端
 └─ Redis（缓存 + Celery Broker）
     |
 Celery 异步任务集群
-├─ 文件与 GitHub 接入
+├─ 批量文件接入
 ├─ 解析、清洗、结构感知分块
 ├─ BGE-M3 Embedding
 ├─ IndexWriter 写入与校验
@@ -251,7 +250,7 @@ Celery 异步任务集群
 
 | 模块 | 是否共享 | 责任 |
 | --- | --- | --- |
-| 文档接入与解析 | 共享 | 文件、GitHub、源 revision、内容指纹和失败重试 |
+| 文档接入与解析 | 共享 | 批量文件、源 revision、内容指纹和失败重试 |
 | 清洗、分块与 Embedding | 共享 | 稳定 chunk 标识、结构信息、BGE-M3 向量和模型版本 |
 | `IndexWriter` | 分别实现 | 双引擎写 ES + Qdrant；单引擎写 ES 混合索引 |
 | `Retriever` | 分别实现 | 双路召回 + 应用层 RRF；ES 混合检索 + ES RRF |
@@ -333,7 +332,7 @@ class IndexWriter:
 
 ```text
 backend/app/rag/
-  ingestion/              # 文件、GitHub、解析、清洗
+  ingestion/              # 批量文件、解析、清洗
   chunking/               # 结构感知分块与稳定标识
   embedding/              # BGE-M3 调用与向量版本
   indexing/
@@ -386,7 +385,7 @@ backend/app/rag/
 - Pydantic v2。
 - JWT + OAuth2。
 - Unstructured、Trafilatura 分别处理 PDF、DOCX、TXT 和 HTML。
-- GitPython + PyGitHub 处理仓库克隆、文件遍历和增量同步。
+- 上传批次记录预期文件清单，每个文件使用稳定标识防止重试产生重复文档。
 - 分块优先使用项目自研结构感知策略，可复用 LangChain 的 Markdown 和递归切分工具。
 - RAG 编排使用项目内显式检索链路，核心接口由 `Retriever`、`IndexWriter` 和 `LlmGateway` 约束。
 
@@ -400,7 +399,7 @@ backend/app/rag/
 ### 5.4 存储与检索
 
 1. PostgreSQL：业务数据、权限、版本、chunk 元数据、任务、Trace 和审计。
-2. MinIO：原始文件、GitHub 源快照和可选短期调试快照。
+2. MinIO：原始文件和可选短期调试快照。
 3. Elasticsearch 8.x：
    - BM25 关键词检索。
    - `dense_vector` 与 kNN。
@@ -434,7 +433,7 @@ backend/app/rag/
 ### 6.1 文档接入与入库
 
 ```text
-上传文件 / 同步 GitHub
+批量上传文件
   -> 身份与知识库权限校验
   -> 创建 document_version 和 ingestion_run
   -> 保存原始文件或源快照到 MinIO
@@ -526,7 +525,7 @@ backend/app/rag/
 - 私有文档支持转移给指定成员、团队知识库或归档。
 - 账号删除前必须完成私有文档处理，不能留下不可管理的孤儿资料。
 - 团队被移除后，成员不能再访问共享文档和对话。
-- GitHub Token、模型 Key 和对象存储凭据按团队隔离并支持轮换。
+- 模型 Key 和对象存储凭据按团队隔离并支持轮换。
 
 ### 7.4 检索过滤条件
 
@@ -931,7 +930,8 @@ techvault-b-es-hybrid-<generation>
 | `teams` | 团队、创建者、状态和默认策略 |
 | `team_member` | 团队成员、角色、加入时间、禁用时间 |
 | `knowledge_base` | 知识库、团队、默认数据分类和模型策略 |
-| `source_connection` | GitHub 等来源、凭据引用、分支、路径和同步游标 |
+| `upload_batches` / `upload_batch_files` | 批次清单、文件接收、独立任务关联及重试次数 |
+| `prepared_ingestions` / `embedding_cache` | 可恢复解析结果及按团队/模型隔离的短期向量缓存 |
 | `document` | 文档主记录、知识库、所有者、可见性和当前版本 |
 | `document_version` | 内容指纹、来源 revision、产品版本、有效性和解析状态 |
 | `chunk` | chunk 内容、结构路径、来源定位、质量标记和启用状态 |
@@ -979,7 +979,6 @@ techvault-b-es-hybrid-<generation>
 存储：
 
 - 原始上传文件。
-- GitHub 源快照。
 - 可选短期 Prompt 调试快照，必须加密并设置期限。
 
 对象路径不能直接返回给普通前端用户，下载使用带权限校验的短期签名。
@@ -1013,7 +1012,9 @@ techvault-b-es-hybrid-<generation>
 | `POST` | `/api/v1/teams/create` | 创建团队 |
 | `GET` | `/api/v1/kbs?team_id=` | 知识库列表 |
 | `POST` | `/api/v1/docs/upload` | 上传文件 |
-| `POST` | `/api/v1/sources/github/create` | 添加 GitHub 来源 |
+| `POST` | `/api/v1/upload-batches/create` | 创建上传批次 |
+| `POST` | `/api/v1/upload-batches/seal` | 完成上传并调度处理 |
+| `GET` | `/api/v1/upload-batches/detail?team_id=&batch_id=` | 查看批次进度 |
 | `GET` | `/api/v1/docs/versions?team_id=&document_id=` | 查看文档版本 |
 | `GET` | `/api/v1/chunks/detail?team_id=&chunk_id=` | 查看 chunk |
 | `POST` | `/api/v1/chunks/update` | 编辑 chunk |
@@ -1084,7 +1085,7 @@ techvault-b-es-hybrid-<generation>
 
 `INSUFFICIENT_EVIDENCE` 是 SSE `refused.reason_code`，不是 HTTP 错误码；
 `degraded` 是 Trace 和 `done` 事件中的布尔状态，不是错误码。完整 HTTP 错误码、
-GitHub 来源错误和 SSE 错误语义以 API 契约第 2 节和第 9 节为准。
+批次上传错误和 SSE 错误语义以 API 契约为准。
 
 ---
 
@@ -1182,7 +1183,7 @@ PoC 使用真实语料测量：
 交付：
 
 - 单团队、单知识库或少量知识库。
-- 文件上传和一个 GitHub 仓库同步。
+- 批量文件上传、持久化批次和按文件处理进度。
 - 解析、结构感知分块、Embedding、索引和混合检索。
 - 多轮 Query Rewrite、引用、拒答和反馈入口。
 - 150 至 300 条黄金集和离线评测。
@@ -1203,7 +1204,7 @@ PoC 使用真实语料测量：
 交付：
 
 - 团队、角色、知识库和成员生命周期。
-- GitHub 增量同步、checkpoint 和索引回滚。
+- 批次失败恢复、checkpoint 和索引回滚。
 - chunk 预览、编辑、禁用和重建继承。
 - LLM 数据出境策略、供应商准入和审计。
 - 流式回答、停止生成、引用跳转和知识缺口。

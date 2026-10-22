@@ -1,3 +1,4 @@
+import { control, setControlValue, selectOptions } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import ProviderCreateForm from './ProviderCreateForm.vue'
@@ -15,7 +16,10 @@ const messageMocks = vi.hoisted(() => ({
   warning: vi.fn(),
 }))
 
-vi.mock('@arco-design/web-vue', () => ({ Message: messageMocks }))
+vi.mock('@arco-design/web-vue', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@arco-design/web-vue')>()),
+  Message: messageMocks,
+}))
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
@@ -38,18 +42,20 @@ describe('ProviderCreateForm', () => {
     apiMocks.createProvider.mockResolvedValue({ id: 'provider-1' })
   })
 
-  it('offers the three supported upstream formats', () => {
+  it('offers the three supported upstream formats', async () => {
     const wrapper = mount(ProviderCreateForm, {
       props: { teamId: 'team-1', canManage: true },
     })
-    const options = wrapper.get('[data-testid="provider-type"]').findAll('option')
+    const options = await selectOptions(
+      control(wrapper, '[data-testid="provider-type"]'),
+    )
 
-    expect(options.map((option) => option.attributes('value'))).toEqual([
+    expect(options.map((option) => option.value)).toEqual([
       'openai_responses',
       'openai_chat_completions',
       'anthropic_messages',
     ])
-    expect(options.map((option) => option.text())).toEqual([
+    expect(options.map((option) => option.label)).toEqual([
       'OpenAI Responses',
       'OpenAI Chat Completions',
       'Anthropic Messages',
@@ -61,14 +67,22 @@ describe('ProviderCreateForm', () => {
       props: { teamId: 'team-1', canManage: true },
     })
 
-    await wrapper.get('[data-testid="provider-name"]').setValue('Gateway')
-    await wrapper
-      .get('[data-testid="provider-type"]')
-      .setValue('openai_chat_completions')
-    await wrapper
-      .get('[data-testid="provider-base-url"]')
-      .setValue('https://gateway.example/v1/chat/completions')
-    await wrapper.get('[data-testid="provider-api-key"]').setValue('sk-secret')
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-name"]'),
+      'Gateway',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-type"]'),
+      'openai_chat_completions',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-base-url"]'),
+      'https://gateway.example/v1/chat/completions',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-api-key"]'),
+      'sk-secret',
+    )
     await wrapper.get('[data-testid="provider-fetch-models"]').trigger('click')
     await flushPromises()
 
@@ -86,19 +100,28 @@ describe('ProviderCreateForm', () => {
       props: { teamId: 'team-1', canManage: true },
     })
 
-    await wrapper.get('[data-testid="provider-name"]').setValue('Gateway')
-    await wrapper
-      .get('[data-testid="provider-base-url"]')
-      .setValue('https://gateway.example/v1')
-    await wrapper.get('[data-testid="provider-api-key"]').setValue('sk-secret')
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-name"]'),
+      'Gateway',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-base-url"]'),
+      'https://gateway.example/v1',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-api-key"]'),
+      'sk-secret',
+    )
     await wrapper.get('[data-testid="provider-fetch-models"]').trigger('click')
     await flushPromises()
-    await wrapper
-      .get('[data-testid="provider-model-gpt-b"]')
-      .setValue(false)
-    await wrapper
-      .get('[data-testid="provider-manual-models"]')
-      .setValue('manual-model')
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-model-gpt-b"]'),
+      false,
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="provider-manual-models"]'),
+      'manual-model',
+    )
     await wrapper.get('[data-testid="provider-create"]').trigger('submit')
     await flushPromises()
 

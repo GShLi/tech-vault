@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -18,7 +19,8 @@ const messageMocks = vi.hoisted(() => ({
   success: vi.fn(),
 }))
 
-vi.mock('@arco-design/web-vue', () => ({
+vi.mock('@arco-design/web-vue', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@arco-design/web-vue')>()),
   Message: messageMocks,
 }))
 
@@ -153,10 +155,17 @@ describe('ChatHistoryView', () => {
     await wrapper.get('[data-testid="chat-history-load-more"]').trigger('click')
     await flushPromises()
 
-    expect(apiMocks.listChats).toHaveBeenLastCalledWith('team-1', 'cursor-2', 20)
+    expect(apiMocks.listChats).toHaveBeenLastCalledWith(
+      'team-1',
+      'cursor-2',
+      20,
+    )
     expect(wrapper.text()).toContain('Spring Boot')
 
-    await wrapper.get('[data-testid="chat-history-kb-filter"]').setValue('kb-2')
+    await setControlValue(
+      control(wrapper, '[data-testid="chat-history-kb-filter"]'),
+      'kb-2',
+    )
     expect(wrapper.text()).toContain('Spring Boot')
     expect(wrapper.text()).not.toContain('Java 线程')
   })
@@ -164,11 +173,15 @@ describe('ChatHistoryView', () => {
   it('requires confirmation before deleting a chat', async () => {
     const wrapper = await mountPage()
 
-    await wrapper.get(`[data-testid="chat-history-delete-${firstChat.id}"]`).trigger('click')
+    await wrapper
+      .get(`[data-testid="chat-history-delete-${firstChat.id}"]`)
+      .trigger('click')
     expect(apiMocks.deleteChat).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('确认删除')
 
-    await wrapper.get('[data-testid="chat-history-delete-confirm"]').trigger('click')
+    await wrapper
+      .get('[data-testid="chat-history-delete-confirm"]')
+      .trigger('click')
     await flushPromises()
 
     expect(apiMocks.deleteChat).toHaveBeenCalledWith('team-1', firstChat.id)
@@ -187,7 +200,10 @@ describe('ChatHistoryView', () => {
       })
     const wrapper = await mountPage()
 
-    await wrapper.get('[data-testid="chat-history-kb-filter"]').setValue('kb-2')
+    await setControlValue(
+      control(wrapper, '[data-testid="chat-history-kb-filter"]'),
+      'kb-2',
+    )
     expect(wrapper.text()).toContain('当前筛选下暂无会话')
     await wrapper.get('[data-testid="chat-history-load-more"]').trigger('click')
     await flushPromises()

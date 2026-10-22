@@ -1,14 +1,31 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  getAccessToken,
+  normalizeApiError as toApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+  Empty as AEmpty,
+  Message,
+  Progress as AProgress,
+  Spin as ASpin,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Activity, ArrowLeft, RefreshCw, Radio, XCircle } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError, getAccessToken } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type { IngestionRun } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 import { readSseEvents, type ParsedSseEvent } from '@/utils/sse'
 
 const route = useRoute()
@@ -18,23 +35,22 @@ const loading = ref(false)
 const error = ref<ApiRequestError | null>(null)
 const events = ref<string[]>([])
 const readingEvents = ref(false)
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(
+  /\/$/,
+  '',
+)
 
 let activeStreamController: AbortController | null = null
 let loadVersion = 0
 
 const canCancel = computed(
-  () => run.value != null && !['completed', 'failed', 'cancelled'].includes(run.value.status),
+  () =>
+    run.value != null &&
+    !['completed', 'failed', 'cancelled'].includes(run.value.status),
 )
 
 function currentRunId(): string {
   return String(route.params.runId ?? '')
-}
-
-function toApiError(caught: unknown, fallback: string): ApiRequestError {
-  return caught instanceof ApiRequestError
-    ? caught
-    : new ApiRequestError(caught instanceof Error ? caught.message : fallback, 'UNKNOWN_ERROR')
 }
 
 function stopEventStream(): void {
@@ -94,15 +110,18 @@ async function cancel(): Promise<void> {
 }
 
 function applyEvent(event: ParsedSseEvent): boolean {
-  if (!['progress', 'completed', 'failed', 'cancelled'].includes(event.event)) return false
+  if (!['progress', 'completed', 'failed', 'cancelled'].includes(event.event))
+    return false
   const current = run.value
   if (!current) return false
 
   const data = event.data
-  if (typeof data.run_id === 'string' && data.run_id !== current.id) return false
+  if (typeof data.run_id === 'string' && data.run_id !== current.id)
+    return false
   const status = typeof data.status === 'string' ? data.status : event.event
   const stage = typeof data.stage === 'string' ? data.stage : null
-  const rawPercent = typeof data.percent === 'number' ? data.percent : current.stage_progress_pct
+  const rawPercent =
+    typeof data.percent === 'number' ? data.percent : current.stage_progress_pct
   const percent = Math.min(100, Math.max(0, Math.round(rawPercent)))
   const errorCode = typeof data.error_code === 'string' ? data.error_code : null
   const retryable =
@@ -138,16 +157,26 @@ async function readEvents(): Promise<void> {
       signal: controller.signal,
     })
     if (!response.ok) {
-      throw new ApiRequestError('无法读取任务事件流。', 'SSE_ERROR', '', response.status)
+      throw new ApiRequestError(
+        '无法读取任务事件流。',
+        'SSE_ERROR',
+        '',
+        response.status,
+      )
     }
     await readSseEvents(response, (event) => {
-      if (activeStreamController !== controller || run.value?.id !== currentRun.id) return
+      if (
+        activeStreamController !== controller ||
+        run.value?.id !== currentRun.id
+      )
+        return
       if (applyEvent(event) && activeStreamController === controller) {
         readingEvents.value = false
       }
     })
   } catch (caught) {
-    const aborted = controller.signal.aborted ||
+    const aborted =
+      controller.signal.aborted ||
       (caught instanceof DOMException && caught.name === 'AbortError')
     if (!aborted && activeStreamController === controller) {
       error.value = toApiError(caught, '任务事件流读取失败。')
@@ -180,8 +209,15 @@ onBeforeUnmount(() => {
   <div>
     <div class="page-header">
       <div class="heading-with-back">
-        <RouterLink class="icon-button" to="/tasks" title="返回任务中心">
-          <ArrowLeft :size="18" />
+        <RouterLink to="/tasks" custom v-slot="{ href, navigate }">
+          <a-button
+            type="text"
+            :href="href"
+            @click="navigate"
+            title="返回任务中心"
+          >
+            <ArrowLeft :size="18" />
+          </a-button>
         </RouterLink>
         <div>
           <h2>任务详情</h2>
@@ -189,68 +225,107 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-if="run" class="row-actions">
-        <button class="secondary-button" type="button" @click="refresh">
+        <a-button @click="refresh" type="secondary" html-type="button">
           <RefreshCw :size="16" />
           {{ readingEvents ? '连接中' : '刷新' }}
-        </button>
-        <button
-          v-if="run.retryable || ['failed', 'cancelled'].includes(run.status)"
-          class="secondary-button"
-          type="button"
+        </a-button>
+        <a-button
+          v-if="['failed', 'cancelled'].includes(run.status)"
           @click="retry"
+          type="secondary"
+          html-type="button"
         >
           <RefreshCw :size="16" />
           重试
-        </button>
-        <button v-if="canCancel" class="secondary-button danger-text" type="button" @click="cancel">
+        </a-button>
+        <a-button
+          v-if="canCancel"
+          @click="cancel"
+          type="secondary"
+          html-type="button"
+          status="danger"
+        >
           <XCircle :size="16" />
           取消
-        </button>
+        </a-button>
       </div>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-    </div>
+    </a-alert>
 
     <div v-if="loading && !run" class="panel loading-state">
       <a-spin />
       <span>正在加载任务</span>
     </div>
     <template v-else-if="run">
-      <section class="panel detail-panel">
+      <a-alert v-if="run.current_stage === 'waiting_index'" type="info" class="page-alert">
+        同一团队正在处理其他文档，本任务会自动继续，无需重新上传。
+      </a-alert>
+      <a-card class="page-card">
         <div class="detail-heading">
           <div class="detail-icon"><Activity :size="20" /></div>
           <div>
-            <h3>{{ run.current_stage || '等待调度' }}</h3>
+            <h3>{{ run.current_stage ? statusLabel(run.current_stage) : '等待调度' }}</h3>
             <p>文档版本 {{ shortId(run.document_version_id) }}</p>
           </div>
-          <StatusPill :status="run.status" />
+          <a-tag :color="statusColor(run.status)">
+            {{ statusLabel(run.status) }}
+          </a-tag>
         </div>
-        <div class="progress-track large" aria-hidden="true">
-          <span :style="{ width: `${Math.min(100, Math.max(0, run.stage_progress_pct))}%` }" />
-        </div>
-        <dl class="detail-grid">
-          <div><dt>进度</dt><dd>{{ run.stage_progress_pct }}%</dd></div>
-          <div><dt>失败原因</dt><dd>{{ run.error_code || '—' }}</dd></div>
-          <div><dt>可重试</dt><dd>{{ run.retryable ? '是' : '否' }}</dd></div>
-          <div><dt>创建时间</dt><dd>{{ formatDate(run.created_at) }}</dd></div>
-          <div><dt>更新时间</dt><dd>{{ formatDate(run.updated_at) }}</dd></div>
-        </dl>
-      </section>
+        <a-progress
+          :percent="
+            Math.max(
+              0,
+              Math.min(
+                1,
+                Math.min(100, Math.max(0, run.stage_progress_pct)) / 100,
+              ),
+            )
+          "
+          :show-text="false"
+          size="small"
+        ></a-progress>
+        <a-descriptions
+          :column="{ xs: 1, sm: 2, lg: 3 }"
+          bordered
+          class="detail-descriptions"
+        >
+          <a-descriptions-item label="进度">
+            {{ run.stage_progress_pct }}%
+          </a-descriptions-item>
+          <a-descriptions-item label="失败原因">
+            {{ run.error_code || '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="可重试">
+            {{ run.retryable ? '是' : '否' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="创建时间">
+            {{ formatDate(run.created_at) }}
+          </a-descriptions-item>
+          <a-descriptions-item label="更新时间">
+            {{ formatDate(run.updated_at) }}
+          </a-descriptions-item>
+        </a-descriptions>
+      </a-card>
 
-      <section class="panel detail-panel">
+      <a-card class="page-card">
         <div class="section-heading">
           <h3>事件流</h3>
-          <span class="muted-text">{{ readingEvents ? '实时更新中' : '连接已结束' }}</span>
+          <span class="muted-text">
+            {{ readingEvents ? '实时更新中' : '连接已结束' }}
+          </span>
         </div>
-        <pre v-if="events.length" class="event-log">{{ events.join('\n') }}</pre>
-        <div v-else class="empty-state compact">
-          <Radio :size="22" />
+        <pre v-if="events.length" class="event-log">{{
+          events.join('\n')
+        }}</pre>
+        <a-empty v-else class="page-empty">
+          <template #image><Radio :size="22" /></template>
           <span>尚未收到任务阶段事件。</span>
-        </div>
-      </section>
+        </a-empty>
+      </a-card>
     </template>
   </div>
 </template>

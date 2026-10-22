@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -71,6 +72,73 @@ def _non_raising_client(api_app):
     return TestClient(api_app, raise_server_exceptions=False)
 
 
+@pytest.mark.parametrize("endpoint", ["/chunks", "/docs/chunks"])
+def test_semantic_chunk_pages_cover_all_rows_without_duplicates(
+    api_client, api_app, endpoint
+):
+    headers = admin_headers_for(api_client)
+    team, kb = _create_team_and_kb(api_client, headers)
+    upload = _upload(api_client, headers, team["id"], kb["id"], "pages.md",
+                     "# Records\n\nRecords generate accessors.\n\n"
+                     "# Threads\n\nVirtual threads must not be pooled.")
+    document_id = upload["document"]["id"]
+    with api_app.state.session_factory() as session:
+        query = select(ChunkRecord).where(ChunkRecord.document_id == document_id)
+        if endpoint == "/chunks":
+            query = query.where(ChunkRecord.chunk_level == "child")
+        rows = session.scalars(query).all()
+        expected = {row.id for row in rows}
+    assert len(expected) > 1
+    assert all(item.startswith(("chd_", "par_")) for item in expected)
+    if endpoint == "/docs/chunks":
+        assert any(item.startswith("par_") for item in expected)
+
+    seen = []
+    cursor = None
+    with _non_raising_client(api_app) as client:
+        for _ in range(len(expected) + 1):
+            params = {"team_id": team["id"], "document_id": document_id, "limit": 1}
+            if cursor:
+                params["cursor"] = cursor
+            response = client.get("/api/v1" + endpoint, params=params, headers=headers)
+            assert response.status_code == 200, response.text
+            page = response.json()
+            seen.extend(item["id"] for item in page["data"])
+            cursor = page["meta"]["next_cursor"]
+            assert page["meta"]["has_more"] == bool(cursor)
+            if cursor is None:
+                break
+    assert cursor is None
+    assert len(seen) == len(set(seen))
+    assert set(seen) == expected
+
+
+def test_bulk_accepts_semantic_child_id_and_preserves_parent_guard(api_client, api_app):
+    headers = admin_headers_for(api_client)
+    team, kb = _create_team_and_kb(api_client, headers)
+    upload = _upload(api_client, headers, team["id"], kb["id"], "bulk.md",
+                     "# Records\n\nRecords generate accessors.")
+    with api_app.state.session_factory() as session:
+        rows = session.scalars(select(ChunkRecord).where(
+            ChunkRecord.document_id == upload["document"]["id"]
+        )).all()
+        child_id = next(row.id for row in rows if row.chunk_level == "child")
+        parent_id = next(row.id for row in rows if row.chunk_level == "parent")
+    assert child_id.startswith("chd_") and len(child_id) == 68
+    for action, status in [("disable", "disabled"), ("enable", "enabled")]:
+        response = api_client.post("/api/v1/chunks/bulk", headers=headers, json={
+            "team_id": team["id"], "chunk_ids": [child_id], "action": action,
+        })
+        assert response.status_code == 200, response.text
+        with api_app.state.session_factory() as session:
+            assert session.get(ChunkRecord, child_id).chunk_status == status
+    response = api_client.post("/api/v1/chunks/bulk", headers=headers, json={
+        "team_id": team["id"], "chunk_ids": [parent_id], "action": "disable",
+    })
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
 def test_chunk_update_rejects_non_numeric_if_match_without_server_error(
     api_client, api_app
 ):
@@ -121,7 +189,7 @@ def test_chunk_update_rejects_non_string_content_without_server_error(
     )
     with api_app.state.session_factory() as session:
         chunk = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == upload["document"]["id"]
             )
         )
@@ -193,7 +261,7 @@ def test_manual_edit_is_inherited_by_logical_key_and_auto_content_is_separate(
     )
     with api_app.state.session_factory() as session:
         chunk = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == upload["document"]["id"]
             )
         )
@@ -225,7 +293,7 @@ def test_manual_edit_is_inherited_by_logical_key_and_auto_content_is_separate(
 
         old_chunk = session.get(ChunkRecord, chunk_id)
         inherited = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == document.id,
                 ChunkRecord.logical_chunk_key == logical_chunk_key,
                 ChunkRecord.status == "enabled",
@@ -265,7 +333,7 @@ def test_unmatched_override_is_kept_pending_instead_of_deleted(
     )
     with api_app.state.session_factory() as session:
         chunk = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == upload["document"]["id"]
             )
         )
@@ -315,7 +383,7 @@ def test_manual_disable_is_inherited_by_new_version(api_client, api_app, tmp_pat
     )
     with api_app.state.session_factory() as session:
         chunk = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == upload["document"]["id"]
             )
         )
@@ -338,7 +406,7 @@ def test_manual_disable_is_inherited_by_new_version(api_client, api_app, tmp_pat
         document = session.get(Document, upload["document"]["id"])
         _process_new_version(session, document, new_path)
         inherited = session.scalar(
-            select(ChunkRecord).where(
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(
                 ChunkRecord.document_id == document.id,
                 ChunkRecord.logical_chunk_key == logical_chunk_key,
                 ChunkRecord.doc_status == "active",

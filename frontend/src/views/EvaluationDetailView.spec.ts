@@ -1,3 +1,4 @@
+import { control, setControlValue, selectOptions } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -19,7 +20,8 @@ const messageMocks = vi.hoisted(() => ({
   success: vi.fn(),
 }))
 
-vi.mock('@arco-design/web-vue', () => ({
+vi.mock('@arco-design/web-vue', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@arco-design/web-vue')>()),
   Message: messageMocks,
 }))
 
@@ -164,15 +166,22 @@ describe('EvaluationDetailView provider selection', () => {
     const submit = wrapper.get('[data-testid="run-start-submit"]')
     expect(submit.attributes('disabled')).toBeDefined()
     expect(
-      wrapper
-        .get('[data-testid="run-provider-select"]')
-        .findAll('option')
-        .map((option) => option.text()),
+      (
+        await selectOptions(
+          control(wrapper, '[data-testid="run-provider-select"]'),
+        )
+      ).map((option) => option.label),
     ).toEqual(['选择供应商', 'Provider One'])
 
-    await wrapper.get('[data-testid="run-provider-select"]').setValue('provider-1')
+    await setControlValue(
+      control(wrapper, '[data-testid="run-provider-select"]'),
+      'provider-1',
+    )
     await flushPromises()
-    await wrapper.get('[data-testid="run-model-select"]').setValue('gpt-a')
+    await setControlValue(
+      control(wrapper, '[data-testid="run-model-select"]'),
+      'gpt-a',
+    )
     await flushPromises()
 
     expect(submit.attributes('disabled')).toBeUndefined()
@@ -201,10 +210,11 @@ describe('EvaluationDetailView provider selection', () => {
     await flushPromises()
 
     expect(
-      wrapper
-        .get('[data-testid="run-provider-select"]')
-        .findAll('option')
-        .map((option) => option.text()),
+      (
+        await selectOptions(
+          control(wrapper, '[data-testid="run-provider-select"]'),
+        )
+      ).map((option) => option.label),
     ).toEqual(['选择供应商', 'Provider One'])
   })
 })

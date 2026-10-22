@@ -66,7 +66,10 @@ async function mountPage() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/evaluations', component: { template: '<div>evaluations</div>' } },
+      {
+        path: '/evaluations',
+        component: { template: '<div>evaluations</div>' },
+      },
       {
         path: '/evaluations/:datasetId',
         component: { template: '<div>dataset</div>' },
@@ -91,7 +94,9 @@ async function mountPage() {
   return wrapper
 }
 
-function sseResponse(events: Array<{ event: string; data: unknown }>): Response {
+function sseResponse(
+  events: Array<{ event: string; data: unknown }>,
+): Response {
   const encoder = new TextEncoder()
   const chunks = events.map(
     ({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
@@ -110,7 +115,10 @@ function sseResponse(events: Array<{ event: string; data: unknown }>): Response 
 describe('EvaluationRunView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    apiMocks.cancelEvalRun.mockResolvedValue({ id: 'run-1', status: 'cancelled' })
+    apiMocks.cancelEvalRun.mockResolvedValue({
+      id: 'run-1',
+      status: 'cancelled',
+    })
     vi.stubGlobal('fetch', vi.fn())
   })
 

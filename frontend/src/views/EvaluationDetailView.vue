@@ -1,11 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { useProviderSelection } from '@/composables/useProviderSelection'
+import {
+  ApiRequestError,
+  api,
+  loadAllPages,
+  normalizeApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Message,
+  Modal as AModal,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+  Textarea as ATextarea,
+} from '@arco-design/web-vue'
+
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, FileJson, Play, Plus, Upload } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError, loadAllPages } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type {
   EvaluationCase,
@@ -13,7 +37,7 @@ import type {
   EvaluationRun,
   ModelProvider,
 } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,41 +67,15 @@ const relevantChunkIds = ref('')
 const importContent = ref('')
 const engineMode = ref('dual_engine')
 const baselineRunId = ref('')
-const selectedProviderId = ref('')
-const selectedModelId = ref('')
+const {
+  selectedProviderId,
+  selectedModelId,
+  eligibleProviders,
+  selectedProvider,
+  modelOptions,
+  hasProviderAndModel,
+} = useProviderSelection(providers, allowedProviderIds)
 let providerOptionsRequestGeneration = 0
-
-const eligibleProviders = computed(() => {
-  const allowedIds = new Set(allowedProviderIds.value)
-  return providers.value.filter(
-    (provider) =>
-      provider.status === 'active' &&
-      provider.has_api_key === true &&
-      allowedIds.has(provider.id) &&
-      Array.isArray(provider.model_ids) &&
-      provider.model_ids.length > 0,
-  )
-})
-
-const selectedProvider = computed(
-  () =>
-    eligibleProviders.value.find(
-      (provider) => provider.id === selectedProviderId.value,
-    ) ?? null,
-)
-
-const modelOptions = computed(() =>
-  Array.isArray(selectedProvider.value?.model_ids)
-    ? selectedProvider.value?.model_ids ?? []
-    : [],
-)
-
-const hasProviderAndModel = computed(
-  () =>
-    Boolean(selectedProvider.value) &&
-    Boolean(selectedModelId.value) &&
-    modelOptions.value.includes(selectedModelId.value),
-)
 
 function currentDatasetId(): string {
   return String(route.params.datasetId ?? '')
@@ -101,7 +99,7 @@ async function load(): Promise<void> {
     casesHasMore.value = casePage.meta.has_more
     runsHasMore.value = runPage.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -144,7 +142,7 @@ async function loadProviderOptions(): Promise<void> {
     }
     providers.value = []
     allowedProviderIds.value = []
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     if (requestGeneration === providerOptionsRequestGeneration) {
       loadingProviders.value = false
@@ -170,7 +168,7 @@ async function loadMoreCases(): Promise<void> {
     casesNextCursor.value = page.meta.next_cursor
     casesHasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMoreCases.value = false
   }
@@ -189,7 +187,7 @@ async function loadMoreRuns(): Promise<void> {
     runsNextCursor.value = page.meta.next_cursor
     runsHasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMoreRuns.value = false
   }
@@ -206,7 +204,10 @@ async function createCase(): Promise<void> {
       query_id: queryId.value.trim(),
       query_type: queryType.value,
       query: query.value.trim(),
-      relevant_chunk_ids: relevantChunkIds.value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean),
+      relevant_chunk_ids: relevantChunkIds.value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
       filters: {},
       relevance: {},
     })
@@ -214,7 +215,7 @@ async function createCase(): Promise<void> {
     showCase.value = false
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -225,13 +226,17 @@ async function importCases(): Promise<void> {
   saving.value = true
   error.value = null
   try {
-    const result = await api.importEvalCases(team.selectedTeamId, currentDatasetId(), importContent.value)
+    const result = await api.importEvalCases(
+      team.selectedTeamId,
+      currentDatasetId(),
+      importContent.value,
+    )
     Message.success(`已导入 ${result.imported} 条样本`)
     showImport.value = false
     importContent.value = ''
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -244,7 +249,7 @@ async function deleteCase(item: EvaluationCase): Promise<void> {
     Message.success('样本已删除')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -265,7 +270,7 @@ async function startRun(): Promise<void> {
     showRun.value = false
     router.push(`/evaluations/runs/${created.id}`)
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -296,8 +301,15 @@ watch(() => route.params.datasetId, load)
   <div>
     <div class="page-header">
       <div class="heading-with-back">
-        <RouterLink class="icon-button" to="/evaluations" title="返回评测列表">
-          <ArrowLeft :size="18" />
+        <RouterLink to="/evaluations" custom v-slot="{ href, navigate }">
+          <a-button
+            type="text"
+            :href="href"
+            @click="navigate"
+            title="返回评测列表"
+          >
+            <ArrowLeft :size="18" />
+          </a-button>
         </RouterLink>
         <div>
           <h2>{{ dataset?.name || '黄金集详情' }}</h2>
@@ -305,150 +317,370 @@ watch(() => route.params.datasetId, load)
         </div>
       </div>
       <div v-if="team.canManage" class="row-actions">
-        <button class="secondary-button" type="button" @click="showImport = true">
+        <a-button
+          @click="showImport = true"
+          type="secondary"
+          html-type="button"
+        >
           <Upload :size="16" />
           导入
-        </button>
-        <button class="secondary-button" type="button" @click="showCase = true">
+        </a-button>
+        <a-button @click="showCase = true" type="secondary" html-type="button">
           <Plus :size="16" />
           新增样本
-        </button>
-        <button
-          class="primary-button"
-          type="button"
+        </a-button>
+        <a-button
           data-testid="open-evaluation-run"
           @click="openRunModal"
+          type="primary"
+          html-type="button"
         >
           <Play :size="16" />
           启动评测
-        </button>
+        </a-button>
       </div>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-    </div>
+    </a-alert>
 
-    <div v-if="loading && !dataset" class="panel loading-state"><a-spin /><span>正在加载黄金集</span></div>
+    <div v-if="loading && !dataset" class="panel loading-state">
+      <a-spin />
+      <span>正在加载黄金集</span>
+    </div>
     <template v-else-if="dataset">
       <div class="metric-grid">
-        <article class="metric-card"><span>样本数量</span><strong>{{ dataset.case_count }}</strong></article>
-        <article class="metric-card"><span>数据集版本</span><strong>v{{ dataset.version }}</strong></article>
-        <article class="metric-card"><span>运行次数</span><strong>{{ runs.length }}</strong></article>
+        <article class="metric-card">
+          <span>样本数量</span>
+          <strong>{{ dataset.case_count }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>数据集版本</span>
+          <strong>v{{ dataset.version }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>运行次数</span>
+          <strong>{{ runs.length }}</strong>
+        </article>
       </div>
 
-      <section class="panel detail-panel">
-        <div class="section-heading"><h3>查询样本</h3><span class="muted-text">相关 Chunk 用于计算检索指标</span></div>
+      <a-card class="page-card">
+        <div class="section-heading">
+          <h3>查询样本</h3>
+          <span class="muted-text">相关 Chunk 用于计算检索指标</span>
+        </div>
         <div v-if="cases.length" class="table-wrap">
-          <table>
-            <thead><tr><th>Query ID</th><th>类型</th><th>查询</th><th>相关 Chunk</th><th v-if="team.canManage">操作</th></tr></thead>
-            <tbody>
-              <tr v-for="item in cases" :key="item.id">
-                <td>{{ item.query_id || shortId(item.id) }}</td>
-                <td>{{ item.query_type }}</td>
-                <td>{{ item.query }}</td>
-                <td>{{ item.relevant_chunk_ids.length }}</td>
-                <td v-if="team.canManage">
-                  <button class="ghost-button danger-text" type="button" @click="deleteCase(item)">删除</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <a-table
+            :data="cases"
+            :pagination="false"
+            row-key="id"
+            :bordered="false"
+            :scroll="{ x: 960 }"
+          >
+            <template #columns>
+              <a-table-column title="Query ID">
+                <template #cell="{ record: item }">
+                  {{ item.query_id || shortId(item.id) }}
+                </template>
+              </a-table-column>
+              <a-table-column title="类型">
+                <template #cell="{ record: item }">
+                  {{ item.query_type }}
+                </template>
+              </a-table-column>
+              <a-table-column title="查询">
+                <template #cell="{ record: item }">{{ item.query }}</template>
+              </a-table-column>
+              <a-table-column title="相关 Chunk">
+                <template #cell="{ record: item }">
+                  {{ item.relevant_chunk_ids.length }}
+                </template>
+              </a-table-column>
+              <a-table-column v-if="team.canManage" title="操作" :width="180">
+                <template #cell="{ record: item }">
+                  <a-button
+                    @click="deleteCase(item)"
+                    type="text"
+                    html-type="button"
+                    status="danger"
+                  >
+                    删除
+                  </a-button>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
         </div>
-        <div v-else class="empty-state compact"><FileJson :size="22" /><span>暂无评测样本</span></div>
+        <a-empty v-else class="page-empty">
+          <template #image><FileJson :size="22" /></template>
+          <span>暂无评测样本</span>
+        </a-empty>
         <div v-if="casesHasMore" class="load-more">
-          <button class="secondary-button" type="button" :disabled="loadingMoreCases" @click="loadMoreCases">
+          <a-button
+            :disabled="loadingMoreCases"
+            @click="loadMoreCases"
+            type="secondary"
+            html-type="button"
+          >
             {{ loadingMoreCases ? '加载中' : '加载更多样本' }}
-          </button>
+          </a-button>
         </div>
-      </section>
+      </a-card>
 
-      <section class="panel detail-panel">
+      <a-card class="page-card">
         <div class="section-heading"><h3>运行记录</h3></div>
         <div v-if="runs.length" class="table-wrap">
-          <table>
-            <thead><tr><th>运行</th><th>引擎</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="runItem in runs" :key="runItem.id">
-                <td>{{ shortId(runItem.id) }}</td>
-                <td>{{ runItem.engine_mode }}</td>
-                <td><StatusPill :status="runItem.status" /></td>
-                <td>{{ formatDate(runItem.created_at) }}</td>
-                <td><RouterLink class="ghost-button" :to="`/evaluations/runs/${runItem.id}`">查看报告</RouterLink></td>
-              </tr>
-            </tbody>
-          </table>
+          <a-table
+            :data="runs"
+            :pagination="false"
+            row-key="id"
+            :bordered="false"
+            :scroll="{ x: 960 }"
+          >
+            <template #columns>
+              <a-table-column title="运行">
+                <template #cell="{ record: runItem }">
+                  {{ shortId(runItem.id) }}
+                </template>
+              </a-table-column>
+              <a-table-column title="引擎">
+                <template #cell="{ record: runItem }">
+                  {{ runItem.engine_mode }}
+                </template>
+              </a-table-column>
+              <a-table-column title="状态" :width="100">
+                <template #cell="{ record: runItem }">
+                  <a-tag :color="statusColor(runItem.status)">
+                    {{ statusLabel(runItem.status) }}
+                  </a-tag>
+                </template>
+              </a-table-column>
+              <a-table-column title="开始时间" :width="180">
+                <template #cell="{ record: runItem }">
+                  {{ formatDate(runItem.created_at) }}
+                </template>
+              </a-table-column>
+              <a-table-column title="操作" :width="180">
+                <template #cell="{ record: runItem }">
+                  <RouterLink
+                    :to="`/evaluations/runs/${runItem.id}`"
+                    custom
+                    v-slot="{ href, navigate }"
+                  >
+                    <a-button type="text" :href="href" @click="navigate">
+                      查看报告
+                    </a-button>
+                  </RouterLink>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
         </div>
-        <div v-else class="empty-state compact"><Play :size="22" /><span>尚未运行评测</span></div>
+        <a-empty v-else class="page-empty">
+          <template #image><Play :size="22" /></template>
+          <span>尚未运行评测</span>
+        </a-empty>
         <div v-if="runsHasMore" class="load-more">
-          <button class="secondary-button" type="button" :disabled="loadingMoreRuns" @click="loadMoreRuns">
+          <a-button
+            :disabled="loadingMoreRuns"
+            @click="loadMoreRuns"
+            type="secondary"
+            html-type="button"
+          >
             {{ loadingMoreRuns ? '加载中' : '加载更多运行' }}
-          </button>
+          </a-button>
         </div>
-      </section>
+      </a-card>
     </template>
 
-    <div v-if="showCase" class="modal-backdrop" @click.self="showCase = false">
-      <div class="modal-panel">
-        <div class="modal-heading"><h3>新增评测样本</h3><button class="icon-button" type="button" @click="showCase = false">×</button></div>
-        <form class="form-stack" @submit.prevent="createCase">
-          <label class="field"><span>Query ID</span><input v-model="queryId" type="text" required /></label>
-          <label class="field"><span>查询类型</span><select v-model="queryType"><option value="concept">概念</option><option value="comparison">对比</option><option value="troubleshooting">排障</option></select></label>
-          <label class="field"><span>查询</span><textarea v-model="query" rows="3" required /></label>
-          <label class="field"><span>相关 Chunk ID（逗号或换行分隔）</span><textarea v-model="relevantChunkIds" rows="3" /></label>
-          <div class="modal-actions"><button class="ghost-button" type="button" @click="showCase = false">取消</button><button class="primary-button" type="submit" :disabled="saving">保存</button></div>
-        </form>
-      </div>
-    </div>
+    <a-modal
+      v-if="showCase"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="showCase = false"
+      width="520px"
+    >
+      <template #title>新增评测样本</template>
+      <a-form
+        class="form-stack"
+        :model="{ queryId, queryType, query, relevantChunkIds }"
+        layout="vertical"
+        @submit-success="createCase"
+      >
+        <a-form-item
+          field="queryId"
+          :rules="[{ required: true, message: '请填写Query ID' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>Query ID</template>
+          <a-input
+            v-model="queryId"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item field="queryType">
+          <template #label>查询类型</template>
+          <a-select v-model="queryType">
+            <a-option value="concept">概念</a-option>
+            <a-option value="comparison">对比</a-option>
+            <a-option value="troubleshooting">排障</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          field="query"
+          :rules="[{ required: true, message: '请填写查询' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>查询</template>
+          <a-textarea
+            v-model="query"
+            :textarea-attrs="{ required: true, rows: '3' }"
+          ></a-textarea>
+        </a-form-item>
+        <a-form-item field="relevantChunkIds">
+          <template #label>相关 Chunk ID（逗号或换行分隔）</template>
+          <a-textarea
+            v-model="relevantChunkIds"
+            :textarea-attrs="{ rows: '3' }"
+          ></a-textarea>
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="showCase = false" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button :disabled="saving" type="primary" html-type="submit">
+            保存
+          </a-button>
+        </div>
+      </a-form>
+    </a-modal>
 
-    <div v-if="showImport" class="modal-backdrop" @click.self="showImport = false">
-      <div class="modal-panel">
-        <div class="modal-heading"><h3>导入 JSONL</h3><button class="icon-button" type="button" @click="showImport = false">×</button></div>
-        <form class="form-stack" @submit.prevent="importCases">
-          <label class="field"><span>每行一个评测样本</span><textarea v-model="importContent" rows="10" placeholder='{"query_id":"q-1","query_type":"concept","query":"如何配置检索？","relevant_chunk_ids":[]}' /></label>
-          <div class="modal-actions"><button class="ghost-button" type="button" @click="showImport = false">取消</button><button class="primary-button" type="submit" :disabled="saving || !importContent.trim()">导入</button></div>
-        </form>
-      </div>
-    </div>
+    <a-modal
+      v-if="showImport"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="showImport = false"
+      width="520px"
+    >
+      <template #title>导入 JSONL</template>
+      <a-form
+        class="form-stack"
+        :model="{ importContent }"
+        layout="vertical"
+        @submit-success="importCases"
+      >
+        <a-form-item field="importContent">
+          <template #label>每行一个评测样本</template>
+          <a-textarea
+            v-model="importContent"
+            placeholder='{"query_id":"q-1","query_type":"concept","query":"如何配置检索？","relevant_chunk_ids":[]}'
+            :textarea-attrs="{ rows: '10' }"
+          ></a-textarea>
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="showImport = false" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button
+            :disabled="saving || !importContent.trim()"
+            type="primary"
+            html-type="submit"
+          >
+            导入
+          </a-button>
+        </div>
+      </a-form>
+    </a-modal>
 
-    <div v-if="showRun" class="modal-backdrop" @click.self="showRun = false">
-      <div class="modal-panel">
-        <div class="modal-heading"><h3>启动评测</h3><button class="icon-button" type="button" @click="showRun = false">×</button></div>
-        <form class="form-stack" @submit.prevent="startRun">
-          <label class="field">
-            <span>供应商</span>
-            <select
-              v-model="selectedProviderId"
-              data-testid="run-provider-select"
-              :disabled="loadingProviders || !eligibleProviders.length"
-              required
+    <a-modal
+      v-if="showRun"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="showRun = false"
+      width="520px"
+    >
+      <template #title>启动评测</template>
+      <a-form
+        class="form-stack"
+        :model="{
+          selectedProviderId,
+          selectedModelId,
+          engineMode,
+          baselineRunId,
+        }"
+        layout="vertical"
+        @submit-success="startRun"
+      >
+        <a-form-item
+          field="selectedProviderId"
+          :rules="[{ required: true, message: '请填写供应商' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>供应商</template>
+          <a-select
+            v-model="selectedProviderId"
+            data-testid="run-provider-select"
+            :disabled="loadingProviders || !eligibleProviders.length"
+          >
+            <a-option value="">选择供应商</a-option>
+            <a-option
+              v-for="provider in eligibleProviders"
+              :key="provider.id"
+              :value="provider.id"
             >
-              <option value="">选择供应商</option>
-              <option v-for="provider in eligibleProviders" :key="provider.id" :value="provider.id">
-                {{ provider.name }}
-              </option>
-            </select>
-          </label>
-          <label class="field">
-            <span>模型</span>
-            <select
-              v-model="selectedModelId"
-              data-testid="run-model-select"
-              :disabled="!selectedProvider"
-              required
-            >
-              <option value="">选择模型</option>
-              <option v-for="model in modelOptions" :key="model" :value="model">
-                {{ model }}
-              </option>
-            </select>
-          </label>
-          <label class="field"><span>检索引擎</span><select v-model="engineMode"><option value="dual_engine">ES + Qdrant 双引擎</option><option value="elastic_single">Elasticsearch 单引擎</option></select></label>
-          <label class="field"><span>基线运行 ID（可选）</span><input v-model="baselineRunId" type="text" /></label>
-          <div class="modal-actions"><button class="ghost-button" type="button" @click="showRun = false">取消</button><button class="primary-button" type="submit" data-testid="run-start-submit" :disabled="saving || !hasProviderAndModel"><Play :size="16" />启动</button></div>
-        </form>
-      </div>
-    </div>
+              {{ provider.name }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          field="selectedModelId"
+          :rules="[{ required: true, message: '请填写模型' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>模型</template>
+          <a-select
+            v-model="selectedModelId"
+            data-testid="run-model-select"
+            :disabled="!selectedProvider"
+          >
+            <a-option value="">选择模型</a-option>
+            <a-option v-for="model in modelOptions" :key="model" :value="model">
+              {{ model }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="engineMode">
+          <template #label>检索引擎</template>
+          <a-select v-model="engineMode">
+            <a-option value="dual_engine">ES + Qdrant 双引擎</a-option>
+            <a-option value="elastic_single">Elasticsearch 单引擎</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="baselineRunId">
+          <template #label>基线运行 ID（可选）</template>
+          <a-input v-model="baselineRunId" type="text"></a-input>
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="showRun = false" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button
+            data-testid="run-start-submit"
+            :disabled="saving || !hasProviderAndModel"
+            type="primary"
+            html-type="submit"
+          >
+            <Play :size="16" />
+            启动
+          </a-button>
+        </div>
+      </a-form>
+    </a-modal>
   </div>
 </template>

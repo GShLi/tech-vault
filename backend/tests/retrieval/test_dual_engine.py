@@ -231,3 +231,23 @@ def test_qdrant_retriever_preserves_vector_score():
     result = asyncio.run(retriever.search(_request()))
 
     assert result.chunks[0].dense_score == 0.9234
+
+
+def test_fusion_preserves_parent_generation_evidence_and_lexical_highlights():
+    from dataclasses import replace
+
+    shared = _chunk(
+        "shared", 1, bm25_rank=1, matched_terms=("Java",),
+        parent_chunk_id="parent", index_generation="generation",
+        evidence_chunk_ids=("evidence",), source_locator={"page_no": 2},
+    )
+    dense_only = replace(shared, chunk_id="dense-only", matched_terms=(), dense_rank=2)
+    lexical = SearchResult([shared], {}, False, "trace")
+    dense = SearchResult([replace(shared, matched_terms=(), dense_rank=1), dense_only], {}, False, "dense")
+    result = asyncio.run(DualEngineRetriever(_FakeRetriever(lexical), _FakeRetriever(dense)).search(_request()))
+    assert result.chunks[0].matched_terms == ("Java",)
+    for chunk in result.chunks:
+        assert chunk.parent_chunk_id == "parent"
+        assert chunk.index_generation == "generation"
+        assert chunk.evidence_chunk_ids == ("evidence",)
+        assert chunk.source_locator == {"page_no": 2}

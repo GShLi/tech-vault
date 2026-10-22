@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -202,19 +203,28 @@ describe('DocumentDetailPage lifecycle actions', () => {
   it('offers restore for a soft-deleted document', async () => {
     const wrapper = await mountPage({ status: 'deleted' })
 
-    expect(wrapper.get('[data-testid="document-deleted-notice"]').text()).toContain('停止召回')
-    const restore = wrapper.findAll('button').find((button) => button.text().includes('恢复文档'))
+    expect(
+      wrapper.get('[data-testid="document-deleted-notice"]').text(),
+    ).toContain('停止召回')
+    const restore = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('恢复文档'))
     expect(restore).toBeDefined()
     await restore?.trigger('click')
     await flushPromises()
 
-    expect(apiMocks.restoreDocument).toHaveBeenCalledWith('team-1', 'document-1')
+    expect(apiMocks.restoreDocument).toHaveBeenCalledWith(
+      'team-1',
+      'document-1',
+    )
   })
 
   it('confirms and deletes an active document', async () => {
     const wrapper = await mountPage({ status: 'active' })
 
-    const remove = wrapper.findAll('button').find((button) => button.text().includes('删除文档'))
+    const remove = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('删除文档'))
     expect(remove).toBeDefined()
     await remove?.trigger('click')
     await flushPromises()
@@ -247,12 +257,20 @@ describe('DocumentDetailPage lifecycle actions', () => {
       ownerUserId: 'user-2',
     })
 
-    const edit = wrapper.findAll('button').find((button) => button.text().includes('编辑元数据'))
+    const edit = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('编辑元数据'))
     expect(edit).toBeDefined()
     await edit?.trigger('click')
 
-    await wrapper.get('[data-testid="document-metadata-file-name"]').setValue('guide-v2.md')
-    await wrapper.get('[data-testid="document-metadata-product"]').setValue('TechVault')
+    await setControlValue(
+      control(wrapper, '[data-testid="document-metadata-file-name"]'),
+      'guide-v2.md',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="document-metadata-product"]'),
+      'TechVault',
+    )
     await wrapper.get('form.metadata-editor').trigger('submit')
     await flushPromises()
 
@@ -272,7 +290,9 @@ describe('DocumentDetailPage lifecycle actions', () => {
 
   it('loads every grant page and lets a manager add and revoke grants', async () => {
     apiMocks.listDocumentGrants
-      .mockResolvedValueOnce(pageEnvelope([grant('grant-1', 'user-2')], 'cursor-1'))
+      .mockResolvedValueOnce(
+        pageEnvelope([grant('grant-1', 'user-2')], 'cursor-1'),
+      )
       .mockResolvedValueOnce(pageEnvelope([grant('grant-2', 'user-3')]))
 
     const wrapper = await mountPage({ status: 'active' })
@@ -297,7 +317,10 @@ describe('DocumentDetailPage lifecycle actions', () => {
     expect(wrapper.text()).toContain('Member')
     expect(wrapper.text()).toContain('Reader')
 
-    await wrapper.get('[data-testid="document-grant-user"]').setValue('user-4')
+    await setControlValue(
+      control(wrapper, '[data-testid="document-grant-user"]'),
+      'user-4',
+    )
     await wrapper.get('form.inline-form').trigger('submit')
     await flushPromises()
 
@@ -309,9 +332,14 @@ describe('DocumentDetailPage lifecycle actions', () => {
     expect(apiMocks.listDocumentGrants).toHaveBeenCalledTimes(3)
     expect(wrapper.text()).toContain('Member')
 
-    await wrapper.get('[data-testid="document-grant-revoke-grant-1"]').trigger('click')
+    await wrapper
+      .get('[data-testid="document-grant-revoke-grant-1"]')
+      .trigger('click')
     await flushPromises()
 
-    expect(apiMocks.revokeDocumentGrant).toHaveBeenCalledWith('team-1', 'grant-1')
+    expect(apiMocks.revokeDocumentGrant).toHaveBeenCalledWith(
+      'team-1',
+      'grant-1',
+    )
   })
 })

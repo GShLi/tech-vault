@@ -60,7 +60,7 @@ class ChunkBulkBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     team_id: Identifier
-    chunk_ids: list[Identifier] = Field(min_length=1)
+    chunk_ids: list[ChunkIdentifier] = Field(min_length=1)
     action: Literal["enable", "disable"]
 
     @field_validator("chunk_ids")
@@ -163,6 +163,8 @@ def _chunks_or_error(
             user,
             manage=manage,
         )
+        if manage and chunk.chunk_level != "child":
+            raise ApiError(400, "INVALID_ARGUMENT", "Only child chunks can be edited.")
     return rows
 
 
@@ -180,7 +182,7 @@ def list_chunks(
     _document_or_error(session, team_id, document_id, user)
     return paginate_scalars(
         session,
-        select(ChunkRecord).where(ChunkRecord.document_id == document_id),
+        select(ChunkRecord).where(ChunkRecord.document_id == document_id, ChunkRecord.chunk_level == "child"),
         timestamp_column=ChunkRecord.created_at,
         id_column=ChunkRecord.id,
         cursor=cursor,
@@ -267,6 +269,12 @@ def disable_chunks(
         details={"chunk_count": len(chunk_ids), "chunk_ids": chunk_ids},
     )
     _refresh_generation_count(session, generation_id)
+    session.flush()
+    active_id = _active_generation_id(session, team_id)
+    if active_id:
+        from backend.app.rag.indexing.generation import save_generation_members
+        active_rows = session.scalars(select(ChunkRecord).where(ChunkRecord.team_id == team_id, ChunkRecord.doc_status == "active")).all()
+        save_generation_members(session, active_id, active_rows)
     session.commit()
     return envelope({"disabled": len(chunk_ids)}, request.state.request_id)
 
@@ -332,6 +340,12 @@ def enable_chunks(
         details={"chunk_count": len(chunk_ids), "chunk_ids": chunk_ids},
     )
     _refresh_generation_count(session, generation_id)
+    session.flush()
+    active_id = _active_generation_id(session, team_id)
+    if active_id:
+        from backend.app.rag.indexing.generation import save_generation_members
+        active_rows = session.scalars(select(ChunkRecord).where(ChunkRecord.team_id == team_id, ChunkRecord.doc_status == "active")).all()
+        save_generation_members(session, active_id, active_rows)
     session.commit()
     return envelope({"enabled": len(chunk_ids)}, request.state.request_id)
 
@@ -369,7 +383,33 @@ def update_chunk(
         )
     if expected_version != chunk.version:
         raise ApiError(409, "VERSION_CONFLICT", "Resource version has changed.")
-    generation_id = chunk.index_generation or _active_generation_id(session, team_id)
+    generation_id = _active_generation_id(session, team_id) or chunk.index_generation
+    if chunk.chunk_level != "child":
+        raise ApiError(400, "INVALID_ARGUMENT", "Only child chunks can be edited.")
+    if chunk.parent_chunk_id:
+        from backend.app.rag.context.parents import effective_parent_text
+        from backend.app.rag.parsing.contracts import ParseError
+        parent = session.get(ChunkRecord, chunk.parent_chunk_id)
+        family = session.scalars(select(ChunkRecord).where(ChunkRecord.parent_chunk_id == chunk.parent_chunk_id)).all()
+        previous_content = chunk.content
+        chunk.content = content
+        try:
+            if parent is None:
+                raise ParseError("PARENT_CHILD_INTEGRITY_FAILED")
+            effective = effective_parent_text(parent.content, family, {row.id: row.auto_content for row in family})
+            from backend.app.rag.chunking.semantic import embedding_input
+            from backend.app.rag.embedding.service import EmbeddingError
+            settings = request.app.state.settings
+            checker = EmbeddingClient(settings.embedding_url, dimension=settings.embedding_dimension,
+                allow_hash_fallback=False, model=settings.embedding_model, batch_size=settings.embedding_batch_size)
+            counts = checker.tokenize([effective, embedding_input(chunk.source_path, json.loads(chunk.heading_path or "[]"),
+                content, json.loads(chunk.source_locator or "{}").get("table_header", ""))])
+            if counts[0] > settings.chunk_parent_max_tokens or counts[1] > (160 if chunk.node_type == "code" else settings.chunk_child_max_tokens):
+                raise ParseError("CHUNK_QUALITY_FAILED", "Edited content exceeds its token budget.")
+        except (ParseError, EmbeddingError) as error:
+            raise ApiError(409, error.code, str(error)) from error
+        finally:
+            chunk.content = previous_content
     current_manual_status = (
         "disabled"
         if "disabled" in {chunk.chunk_status, chunk.status}
@@ -398,13 +438,17 @@ def update_chunk(
         and generation_id
         and current_manual_status == "enabled"
     ):
-        vector = EmbeddingClient(
-            request.app.state.settings.embedding_url
-        ).embed([content])[0]
+        from backend.app.rag.chunking.semantic import embedding_input
+        settings = request.app.state.settings
+        embedder = EmbeddingClient(settings.embedding_url, dimension=settings.embedding_dimension,
+            allow_hash_fallback=False, model=settings.embedding_model, batch_size=settings.embedding_batch_size)
+        heading = json.loads(chunk.heading_path or "[]")
+        header = json.loads(chunk.source_locator or "{}").get("table_header", "")
         try:
-            previous_vector = EmbeddingClient(
-                request.app.state.settings.embedding_url
-            ).embed([chunk.content])[0]
+            vector, previous_vector = embedder.embed([
+                embedding_input(chunk.source_path, heading, content, header),
+                embedding_input(chunk.source_path, heading, chunk.content, header),
+            ])
             asyncio.run(
                 update_chunk_in_indexes(
                     request.app.state.settings,
@@ -439,6 +483,12 @@ def update_chunk(
             "content_changed": True,
         },
     )
+    session.flush()
+    active_id = _active_generation_id(session, team_id)
+    if active_id:
+        from backend.app.rag.indexing.generation import save_generation_members
+        active_rows = session.scalars(select(ChunkRecord).where(ChunkRecord.team_id == team_id, ChunkRecord.doc_status == "active")).all()
+        save_generation_members(session, active_id, active_rows)
     session.commit()
     return envelope(_chunk_view(chunk), request.state.request_id)
 
@@ -467,6 +517,12 @@ def regenerate_chunks(
         resource_id=document.id,
         details={"run_id": run.id},
     )
+    session.flush()
+    active_id = _active_generation_id(session, team_id)
+    if active_id:
+        from backend.app.rag.indexing.generation import save_generation_members
+        active_rows = session.scalars(select(ChunkRecord).where(ChunkRecord.team_id == team_id, ChunkRecord.doc_status == "active")).all()
+        save_generation_members(session, active_id, active_rows)
     session.commit()
     _dispatch_ingestion(
         document,

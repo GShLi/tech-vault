@@ -12,6 +12,7 @@ from backend.app.db.models import (
     ChunkRecord,
     Document,
     IndexGenerationRecord,
+    GenerationChunk,
 )
 from backend.app.rag.domain.models import (
     Chunk,
@@ -22,7 +23,9 @@ from backend.app.rag.domain.models import (
     Visibility,
 )
 from backend.app.rag.embedding.service import EmbeddingClient
-from backend.app.rag.ingestion.processor import apply_chunk_overrides
+from backend.app.rag.ingestion.processor import apply_chunk_overrides, record_to_chunk
+from backend.app.rag.chunking.semantic import embedding_input
+from backend.app.rag.embedding.service import validate_vectors
 from backend.app.rag.retrieval.config import EngineMode
 from backend.app.rag.retrieval.factory import build_index_writers
 
@@ -139,102 +142,48 @@ def _load_enabled_chunks(
     if not rows:
         return []
 
-    chunks_by_document: Dict[str, List[Chunk]] = {}
-    documents: Dict[str, Document] = {}
-    for record, document in rows:
-        source_locator = _decode_json(record.source_locator, {})
-        chunk = Chunk(
-            chunk_id=record.id,
-            document_id=record.document_id,
-            document_version_id=str(
-                source_locator.get("document_version_id")
-                or document.current_version_id
-                or ""
-            ),
-            team_id=record.team_id,
-            knowledge_base_id=record.knowledge_base_id,
-            owner_user_id=record.owner_user_id,
-            visibility=Visibility(record.visibility),
-            data_classification=DataClassification(record.data_classification),
-            source_path=record.source_path,
-            heading_path=tuple(_decode_json(record.heading_path, [])),
-            content=record.auto_content or record.content,
-            logical_chunk_key=record.logical_chunk_key,
-            content_hash=record.content_hash,
-            source_locator=source_locator,
-            product=document.product,
-            version_values=tuple(_decode_json(record.version_values, [])),
-            doc_status=DocumentStatus(record.doc_status),
-            chunk_status=ChunkStatus(record.chunk_status),
-            index_generation=generation_id,
-        )
-        chunks_by_document.setdefault(record.document_id, []).append(chunk)
-        documents[record.document_id] = document
-
-    effective_chunks: List[Chunk] = []
-    for document_id, document_chunks in chunks_by_document.items():
-        effective_chunks.extend(
-            apply_chunk_overrides(
-                session,
-                documents[document_id],
-                document_chunks,
-                generation_id=generation_id,
-            )
-        )
-    effective_chunks = [
-        chunk
-        for chunk in effective_chunks
-        if chunk.chunk_status == ChunkStatus.ENABLED
-    ]
-
-    vectors = EmbeddingClient(settings.embedding_url).embed(
-        [chunk.content for chunk in effective_chunks]
-    )
-    if len(vectors) != len(effective_chunks):
-        raise ValueError("embedding count does not match enabled chunk count")
-
-    return [
-        Chunk(
-            chunk_id=chunk.chunk_id,
-            document_id=chunk.document_id,
-            document_version_id=chunk.document_version_id,
-            team_id=chunk.team_id,
-            knowledge_base_id=chunk.knowledge_base_id,
-            owner_user_id=chunk.owner_user_id,
-            visibility=chunk.visibility,
-            data_classification=chunk.data_classification,
-            source_path=chunk.source_path,
-            heading_path=chunk.heading_path,
-            content=chunk.content,
-            logical_chunk_key=chunk.logical_chunk_key,
-            content_hash=chunk.content_hash,
-            source_locator=chunk.source_locator,
-            content_vector=list(vector),
-            product=chunk.product,
-            version_values=chunk.version_values,
-            doc_status=chunk.doc_status,
-            chunk_status=chunk.chunk_status,
-            index_generation=chunk.index_generation,
-        )
-        for chunk, vector in zip(effective_chunks, vectors)
-    ]
+    chunks = [record_to_chunk(record, document, generation_id) for record, document in rows
+              if record.chunk_level == "child"]
+    grouped = {}
+    documents = {document.id: document for _, document in rows}
+    for chunk in chunks:
+        grouped.setdefault(chunk.document_id, []).append(chunk)
+    chunks = [chunk for document_id, group in grouped.items()
+              for chunk in apply_chunk_overrides(session, documents[document_id], group, generation_id)
+              if chunk.chunk_status == ChunkStatus.ENABLED]
+    client = EmbeddingClient(settings.embedding_url, dimension=settings.embedding_dimension,
+        allow_hash_fallback=False, model=settings.embedding_model, batch_size=settings.embedding_batch_size)
+    inputs = [embedding_input(chunk.source_path, chunk.heading_path, chunk.content,
+                             chunk.source_locator.get("table_header", "")) for chunk in chunks]
+    counts = client.tokenize(inputs)
+    if any(count > (160 if chunk.node_type == "code" else settings.chunk_child_max_tokens)
+           for chunk, count in zip(chunks, counts)):
+        raise ValueError("CHUNK_QUALITY_FAILED")
+    vectors = client.embed(inputs)
+    validate_vectors(vectors, len(chunks), settings.embedding_dimension)
+    from dataclasses import replace
+    return [replace(chunk, content_vector=vector, token_count=count) for chunk, vector, count in zip(chunks, vectors, counts)]
 
 
 def _generation_chunks(
     session: Session,
     generation: IndexGenerationRecord,
 ) -> List[ChunkRecord]:
-    return list(
-        session.scalars(
-            select(ChunkRecord).where(
-                ChunkRecord.team_id == generation.team_id,
-                ChunkRecord.index_generation == generation.id,
-                ChunkRecord.status == "enabled",
-                ChunkRecord.chunk_status == "enabled",
-                ChunkRecord.doc_status == "active",
-            )
-        ).all()
-    )
+    members = session.scalars(select(GenerationChunk).where(GenerationChunk.generation_id == generation.id)).all()
+    return [ChunkRecord(**json.loads(member.snapshot)) for member in members
+            if json.loads(member.snapshot).get("chunk_level") == "child"
+            and json.loads(member.snapshot).get("chunk_status") == "enabled"]
+
+
+def save_generation_members(session, generation_id, rows):
+    for row in rows:
+        snapshot = {column.name: getattr(row, column.name) for column in ChunkRecord.__table__.columns
+                    if column.name not in {"created_at", "updated_at"}}
+        member = session.get(GenerationChunk, (generation_id, row.id))
+        if member is None:
+            member = GenerationChunk(generation_id=generation_id, chunk_id=row.id)
+            session.add(member)
+        member.snapshot = json.dumps(snapshot)
 
 
 def _writer_name(writer) -> str:
@@ -351,7 +300,7 @@ def _activate_database_generation(
     generation.activated_at = datetime.now(timezone.utc)
 
 
-async def activate_existing_generation(
+async def _activate_existing_generation(
     session: Session,
     generation: IndexGenerationRecord,
     settings: Settings,
@@ -385,7 +334,7 @@ async def activate_existing_generation(
     return result
 
 
-async def rebuild_generation(
+async def _rebuild_generation(
     session: Session,
     generation: IndexGenerationRecord,
     settings: Settings,
@@ -474,12 +423,23 @@ async def rebuild_generation(
         session.commit()
         return validation
 
-    for chunk_id in (chunk.chunk_id for chunk in chunks):
-        record = session.get(ChunkRecord, chunk_id)
-        if record is not None:
-            record.index_generation = generation.id
+    rows = session.scalars(select(ChunkRecord).where(ChunkRecord.team_id == generation.team_id,
+        ChunkRecord.doc_status == "active")).all()
+    save_generation_members(session, generation.id, rows)
     _activate_database_generation(session, generation)
     session.commit()
     validation["status"] = generation.status
     return validation
 
+
+
+async def rebuild_generation(session, generation, settings):
+    from backend.app.rag.ingestion.leases import team_lease
+    with team_lease(session, generation.team_id):
+        return await _rebuild_generation(session, generation, settings)
+
+
+async def activate_existing_generation(session, generation, settings):
+    from backend.app.rag.ingestion.leases import team_lease
+    with team_lease(session, generation.team_id):
+        return await _activate_existing_generation(session, generation, settings)

@@ -1,9 +1,19 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Modal as AModal,
+  Textarea as ATextarea,
+} from '@arco-design/web-vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight, Plus, Users } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
 
@@ -45,7 +55,7 @@ async function createTeam(): Promise<void> {
     showCreate.value = false
     router.push('/knowledge-bases')
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     creating.value = false
   }
@@ -58,22 +68,22 @@ async function createTeam(): Promise<void> {
       <div>
         <p>当前账号可访问的团队与角色。</p>
       </div>
-      <button
+      <a-button
         v-if="auth.me?.user.is_super_admin"
-        class="secondary-button"
         data-testid="team-create-open"
-        type="button"
         @click="showCreate = true"
+        type="secondary"
+        html-type="button"
       >
         <Plus :size="16" />
         创建团队
-      </button>
+      </a-button>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-    </div>
+    </a-alert>
 
     <div v-if="memberships.length" class="team-grid">
       <article
@@ -85,66 +95,85 @@ async function createTeam(): Promise<void> {
           <div class="team-icon"><Users :size="18" /></div>
           <div>
             <h3>{{ membership.team_name }}</h3>
-            <span class="muted-text">{{ roleLabels[membership.role] ?? membership.role }}</span>
+            <span class="muted-text">
+              {{ roleLabels[membership.role] ?? membership.role }}
+            </span>
           </div>
         </div>
-        <button
-          class="ghost-button"
-          type="button"
+        <a-button
           data-testid="team-card-enter"
           @click="enterTeam(membership.team_id)"
+          type="text"
+          html-type="button"
         >
           进入团队
           <ArrowRight :size="16" />
-        </button>
+        </a-button>
       </article>
     </div>
-    <div v-else class="panel empty-state">
-      <Users :size="28" />
+    <a-empty v-else class="page-empty">
+      <template #image><Users :size="28" /></template>
       <h3>还没有加入团队</h3>
       <p>
-        {{ auth.me?.user.is_super_admin ? '创建一个团队后即可开始管理知识库。' : '请联系平台管理员创建团队。' }}
+        {{
+          auth.me?.user.is_super_admin
+            ? '创建一个团队后即可开始管理知识库。'
+            : '请联系平台管理员创建团队。'
+        }}
       </p>
-    </div>
+    </a-empty>
 
-    <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
-      <div class="modal-panel">
-        <div class="modal-heading">
-          <h3>创建团队</h3>
-          <button class="icon-button" type="button" title="关闭" @click="showCreate = false">
-            ×
-          </button>
+    <a-modal
+      v-if="showCreate"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="showCreate = false"
+      width="520px"
+    >
+      <template #title>创建团队</template>
+      <a-form
+        class="form-stack"
+        :model="{ name, description }"
+        layout="vertical"
+        @submit-success="createTeam"
+      >
+        <a-form-item
+          field="name"
+          :rules="[{ required: true, message: '请填写团队名称' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>团队名称</template>
+          <a-input
+            v-model="name"
+            data-testid="team-name-input"
+            placeholder="例如：平台工程"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item field="description">
+          <template #label>描述</template>
+          <a-textarea
+            v-model="description"
+            placeholder="团队技术资料范围"
+            :textarea-attrs="{ rows: '3' }"
+          ></a-textarea>
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="showCreate = false" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button
+            data-testid="team-create-submit"
+            :disabled="creating"
+            type="primary"
+            html-type="submit"
+          >
+            {{ creating ? '创建中' : '创建团队' }}
+          </a-button>
         </div>
-        <form class="form-stack" @submit.prevent="createTeam">
-          <label class="field">
-            <span>团队名称</span>
-            <input
-              v-model="name"
-              data-testid="team-name-input"
-              type="text"
-              required
-              placeholder="例如：平台工程"
-            />
-          </label>
-          <label class="field">
-            <span>描述</span>
-            <textarea v-model="description" rows="3" placeholder="团队技术资料范围" />
-          </label>
-          <div class="modal-actions">
-            <button class="ghost-button" type="button" @click="showCreate = false">
-              取消
-            </button>
-            <button
-              class="primary-button"
-              data-testid="team-create-submit"
-              type="submit"
-              :disabled="creating"
-            >
-              {{ creating ? '创建中' : '创建团队' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </a-form>
+    </a-modal>
   </div>
 </template>

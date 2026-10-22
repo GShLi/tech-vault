@@ -109,7 +109,7 @@ Authorization: Bearer <access_token>
 | `GET /members` | `joined_at desc, user_id desc` |
 | `GET /kbs`、`GET /docs`、`GET /docs/versions`、`GET /docs/grants` | `created_at desc, id desc` |
 | `GET /kbs/members` | `created_at desc, user_id desc` |
-| `GET /sources`、`GET /credentials`、`GET /ingestions`、`GET /docs/tasks` | `created_at desc, id desc` |
+| `GET /ingestions`、`GET /docs/tasks` | `created_at desc, id desc` |
 | `GET /chunks`、`GET /chunks/history` | `created_at desc, id desc` |
 | `GET /docs/chunks` | `created_at asc, id asc` |
 | `GET /chats` | `updated_at desc, id desc` |
@@ -165,11 +165,6 @@ offset cursor 也是不透明字符串；其他接口使用基于排序时间与
 | 422 | `VALIDATION_FAILED` | 字段级校验失败 |
 | 429 | `RATE_LIMITED` | 保留错误码；P0 未启用自动限流中间件 |
 | 500 | `INTERNAL_ERROR` | 未分类服务端错误 |
-| 502 | `SOURCE_AUTH_FAILED` | GitHub 凭据无效或无法解密 |
-| 502 | `SOURCE_GITHUB_UNAVAILABLE` | GitHub 不可达或返回异常响应 |
-| 502 | `SOURCE_INVALID_GITHUB_RESPONSE` | GitHub 响应结构不符合预期 |
-| 502 | `SOURCE_INVALID_FILE_CONTENT` | GitHub 文件内容无法解码 |
-| 502 | `SOURCE_SYNC_FAILED` | GitHub 来源同步失败 |
 | 503 | `SERVICE_UNAVAILABLE` | 索引、模型或依赖服务不可用 |
 | 503 | `INDEX_NOT_READY` | 当前索引 generation 未激活 |
 | 503 | `INDEX_MAINTENANCE_UNAVAILABLE` | chunk 或文档索引维护失败 |
@@ -178,13 +173,6 @@ offset cursor 也是不透明字符串；其他接口使用基于排序时间与
 | 503 | `OBJECT_STORAGE_UNAVAILABLE` | 原始文件无法写入或读取对象存储 |
 | 503 | `STORAGE_PRESIGN_UNAVAILABLE` | 对象存储下载签名不可用 |
 | 503 | `TASK_QUEUE_UNAVAILABLE` | 后台任务队列不可用 |
-| 503 | `SOURCE_RATE_LIMITED` | GitHub API 触发限流 |
-| 503 | `SOURCE_INDEX_CLEANUP_FAILED` | 来源删除时无法清理索引 |
-
-GitHub 来源校验还会返回 `400` + `SOURCE_INVALID_REPOSITORY`、
-`400` + `SOURCE_INVALID_PATH_FILTER`；`413` + `SOURCE_TREE_TRUNCATED`、
-`413` + `SOURCE_TOO_MANY_FILES`、`413` + `SOURCE_FILE_TOO_LARGE` 表示来源内容
-超过限制；`404` + `SOURCE_REPOSITORY_NOT_FOUND` 表示仓库、分支或 Git 对象不存在。
 
 `INSUFFICIENT_EVIDENCE` 是成功完成受控拒答时的 `reason_code`，不是 HTTP 错误码。
 流式问答中的 `STREAM_ERROR`、`POLICY_DENIED`、`RESOURCE_STATE_CONFLICT`、
@@ -303,7 +291,7 @@ message_status: generating | completed | refused | cancelled | failed
 
 `user_ids` 必须全部是当前团队的有效成员；该接口使用完整替换语义而不是增量追加。
 
-## 6. 文档与来源
+## 6. 文档与批量上传
 
 | 方法 | 路径 | 说明 | 优先级 |
 | --- | --- | --- | --- |
@@ -321,19 +309,10 @@ message_status: generating | completed | refused | cancelled | failed
 | `GET` | `/docs/grants?team_id=&document_id=` | 私有文档显式授权列表 | P0 |
 | `POST` | `/docs/grants/create` | 添加显式授权 | P0 |
 | `POST` | `/docs/grants/revoke` | 撤销显式授权 | P0 |
-| `GET` | `/sources?team_id=&kb_id=` | 来源列表 | P0 |
-| `POST` | `/sources/github/create` | 添加 GitHub 来源 | P0 |
-| `GET` | `/sources/detail?team_id=&source_id=` | 来源详情 | P0 |
-| `POST` | `/sources/update` | 修改分支、路径和同步设置 | P0 |
-| `POST` | `/sources/delete` | 删除来源 | P0 |
-| `POST` | `/sources/sync` | 触发增量同步 | P0 |
-| `POST` | `/sources/pause` | 暂停同步 | P0 |
-| `POST` | `/sources/resume` | 恢复同步 | P0 |
-| `GET` | `/credentials?team_id=` | 来源凭据列表 | P0 |
-| `POST` | `/credentials/create` | 创建只写凭据 | P0 |
-| `POST` | `/credentials/delete` | 删除凭据 | P0 |
 
 文件上传：
+
+- `batch_id`、`batch_file_id`：批量上传时必须同时传入，来自批次清单；同一文件标识重复请求返回原文档和任务，不重复入库。
 
 ```http
 POST /api/v1/docs/upload
@@ -876,3 +855,33 @@ URI、bucket、签名参数或内部存储键。任何 Document 列表、详情�
 6. SSE 事件必须向前兼容：新增事件类型时旧前端忽略未知事件。
 7. 涉及权限、策略、索引和删除的测试必须同时覆盖成功、拒绝和冲突状态。
 
+
+## Structured parsing diagnostics
+
+`GET /docs/detail` includes `parse_metadata`, `chunking_metadata`, `quality_metrics`
+and `failure_details` objects. `GET /ingestions` and `/ingestions/detail` expose per-run
+quality metrics and structured failure details. Document parse metadata records parser
+name/version, PDF kind, MIME type, warnings and parse quality; chunking metadata records
+parent/child counts, token distribution and model versions.
+
+Stable errors include `PDF_SCANNED_UNSUPPORTED`, `PDF_MIXED_UNSUPPORTED`,
+`DOCUMENT_TYPE_MISMATCH`, `DOCUMENT_LIMIT_EXCEEDED`, `TOKENIZER_UNAVAILABLE`,
+`TOKENIZER_RESPONSE_INVALID`, `EMBEDDING_UNAVAILABLE`, `EMBEDDING_DIMENSION_MISMATCH`,
+`EMBEDDING_RESPONSE_INVALID`, `CHUNK_QUALITY_FAILED`, `PARENT_CHILD_INTEGRITY_FAILED`
+and retryable `INGESTION_BUSY`.
+
+Chunk list/edit operations target children. Chat candidates retain child IDs; hydrated
+parent contexts carry `evidence_chunk_ids` so generated citations can be traced to retrieval.
+
+## 批量上传与合并发布
+
+- `GET /upload-batches/limits` 返回批次数量、总大小、单文件上限和上传并发数。默认 200 文件、2 GiB 总量、单文件 50 MiB、上传并发 3。
+- `POST /upload-batches/create` 接收 `client_id`、`team_id`、`kb_id`、文件清单 `files[{client_id,file_name,size_bytes}]` 以及共同元数据。重复 `client_id` 的相同请求返回原批次；不同内容返回 `409 IDEMPOTENCY_CONFLICT`。
+- 每个文件通过原 `/docs/upload` 接口传输。服务端以清单文件标识关联文档和任务，批次设置为共同元数据的唯一来源。
+- `POST /upload-batches/seal` 接收 `team_id`、`batch_id`，结束上传并启动处理；可重复调用。队列不可用返回 503，但已接收的文件保留。
+- `GET /upload-batches/detail?team_id=&batch_id=` 返回批次、逐文件状态、任务 ID 和统计；`GET /upload-batches?team_id=&kb_id=` 返回当前用户最近 100 个批次。批次仅上传者可见，同时必须仍有知识库访问权限。
+- `POST /upload-batches/retry` 重试处理失败项；缺失上传文件需在补传页重新选择本地文件并沿用原标识。取消的任务只通过单任务重试接口恢复。
+- 任务状态新增 `prepared`，阶段 `waiting_publish` 表示文档准备完成、等待合并发布；发布完成才变为 `completed`。`waiting_index` 为正常等待，不是处理失败。
+- 每次处理最多准备 20 个文件后合并发布团队快照；可通过 `TECHVAULT_INGESTION_PUBLISH_GROUP_SIZE` 调整。向量缓存按团队、模型、维度和完整输入隔离复用。
+- 必须运行 Celery Beat 的 `recover-upload-batches` 周期任务：浏览器中断后 2 分钟未更新的批次会自动结束上传并调度已接收文件。
+- GitHub 来源与其专用凭据接口已移除，返回 404。

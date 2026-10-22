@@ -79,6 +79,20 @@ class Chunk:
     doc_status: DocumentStatus = DocumentStatus.ACTIVE
     chunk_status: ChunkStatus = ChunkStatus.ENABLED
     index_generation: str = ""
+    parent_chunk_id: Optional[str] = None
+    chunk_level: str = "child"
+    child_order: int = 1
+    node_type: str = "paragraph"
+    token_count: int = 0
+    page_no: Optional[int] = None
+    parse_version: str = "2"
+    chunking_version: str = "2"
+    embedding_model: str = ""
+    tokenizer_model: str = ""
+    parent_start_offset: int = 0
+    parent_end_offset: int = 0
+    overlap_before_tokens: int = 0
+    unsafe_split: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,6 +131,9 @@ class RetrievedChunk:
     rerank_score: Optional[float] = None
     matched_terms: Tuple[str, ...] = ()
     source_locator: Dict[str, Any] = field(default_factory=dict)
+    parent_chunk_id: Optional[str] = None
+    evidence_chunk_ids: Tuple[str, ...] = ()
+    index_generation: str = ""
 
 
 @dataclass(frozen=True)

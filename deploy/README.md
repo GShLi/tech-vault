@@ -123,3 +123,23 @@ docker compose down -v
 - `TECHVAULT_JWT_SECRET` in Compose is a local value. Production must inject a unique 32+ byte secret.
 - The PoC creates and bridges the schema on startup. Alembic migrations remain required before production.
 - Secrets are write-only through the API. Responses and audit records expose only masks.
+
+## Structured parsing baseline
+
+Start with a fresh database and index namespace for the Parent-Child release.
+The application never deletes old databases, object storage or volumes automatically.
+Rebuild the `ml` image before ingestion: the BGE-M3 service must expose both
+`POST /tokenize` and `POST /embed`, reporting the same model identity. Model artifacts
+are downloaded on first use; warm the service before accepting uploads.
+
+The parser uses PyMuPDF for native PDFs. Scanned/mixed documents are rejected explicitly.
+Review PyMuPDF's AGPL/commercial licensing for the intended deployment.
+Token/vector service failure blocks publication and leaves the previous generation available.
+
+### Batch upload scheduling
+
+Keep both Worker and Beat running against the same database and Redis as the API. Beat recovers idle upload batches every minute and performs hourly retention/cache cleanup. A browser closing before the completion request does not strand files already received by the server.
+
+Batch defaults: 200 files, 2 GiB total, 50 MiB per file, three browser uploads concurrently, and 20 prepared documents per index publication. Configure `TECHVAULT_UPLOAD_BATCH_MAX_FILES`, `TECHVAULT_UPLOAD_BATCH_MAX_BYTES`, and `TECHVAULT_INGESTION_PUBLISH_GROUP_SIZE` consistently for API and Worker. Vectors are cached within a team/model for seven days; physical document purge invalidates that team's cache.
+
+For the existing development PostgreSQL database, stop API/Worker/Beat and run `python -m scripts.migrate_upload_batches` with the application's environment before restarting. This removes deprecated GitHub tables and obsolete cache data. A fresh database uses the current schema directly. Use versioned, reviewed migrations before a production rollout.

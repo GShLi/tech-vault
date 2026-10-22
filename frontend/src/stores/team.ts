@@ -8,6 +8,7 @@ export const TEAM_STORAGE_KEY = 'techvault.team_id'
 
 export const useTeamStore = defineStore('team', () => {
   const auth = useAuthStore()
+  const beforeChange = ref<(() => Promise<boolean>) | null>(null)
   const selectedTeamId = ref<string | null>(
     window.localStorage.getItem(TEAM_STORAGE_KEY),
   )
@@ -51,6 +52,7 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   return {
+    beforeChange,
     selectedTeamId,
     memberships,
     currentMembership,

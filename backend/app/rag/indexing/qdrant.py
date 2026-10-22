@@ -58,6 +58,7 @@ class QdrantIndexWriter:
 
         for field in (
             "team_id",
+            "chunk_level",
             "knowledge_base_id",
             "owner_user_id",
             "visibility",
@@ -84,6 +85,8 @@ class QdrantIndexWriter:
 
         points: List[dict] = []
         for chunk in chunks:
+            if chunk.chunk_level != "child":
+                continue
             vector = getattr(chunk, "content_vector", None) or [0.0] * self._dimension
             points.append(
                 {
@@ -105,6 +108,10 @@ class QdrantIndexWriter:
                         "index_generation": chunk.index_generation or generation_id,
                         "content": chunk.content,
                         "source_locator": dict(chunk.source_locator),
+                        **{name: getattr(chunk, name) for name in (
+                            "parent_chunk_id", "chunk_level", "child_order", "node_type", "token_count", "page_no",
+                            "parse_version", "chunking_version", "embedding_model", "tokenizer_model",
+                        )},
                     },
                 }
             )

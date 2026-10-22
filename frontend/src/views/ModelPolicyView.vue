@@ -1,10 +1,25 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Checkbox as ACheckbox,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Message,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
+import { statusLabel } from '@/utils/format'
 import { onMounted, ref, watch } from 'vue'
 import { Save, ShieldCheck } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type { ModelPolicy, ModelProvider } from '@/types/api'
 
@@ -42,7 +57,7 @@ async function load(): Promise<void> {
     allowChatHistory.value = policyView.allow_chat_history
     allowDocumentMetadata.value = policyView.allow_document_metadata
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -52,12 +67,15 @@ async function loadMoreProviders(): Promise<void> {
   if (!team.selectedTeamId || !providersNextCursor.value) return
   loadingMoreProviders.value = true
   try {
-    const page = await api.listProviders(team.selectedTeamId, providersNextCursor.value)
+    const page = await api.listProviders(
+      team.selectedTeamId,
+      providersNextCursor.value,
+    )
     providers.value = [...providers.value, ...page.data]
     providersNextCursor.value = page.meta.next_cursor
     providersHasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMoreProviders.value = false
   }
@@ -84,7 +102,7 @@ async function save(): Promise<void> {
     })
     Message.success('团队模型策略已更新')
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -96,36 +114,128 @@ watch(() => team.selectedTeamId, load)
 
 <template>
   <div>
-    <div class="page-header"><div><h2>团队模型策略</h2><p>控制数据分类、外部供应商和对话上下文的使用边界。</p></div><StatusPill v-if="policy" :status="policy.mode" /></div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
-    <div v-if="loading && !policy" class="panel loading-state"><a-spin /><span>正在加载模型策略</span></div>
+    <div class="page-header">
+      <div>
+        <h2>团队模型策略</h2>
+        <p>控制数据分类、外部供应商和对话上下文的使用边界。</p>
+      </div>
+      <a-tag v-if="policy" :color="statusColor(policy.mode)">
+        {{ statusLabel(policy.mode) }}
+      </a-tag>
+    </div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
+    <div v-if="loading && !policy" class="panel loading-state">
+      <a-spin />
+      <span>正在加载模型策略</span>
+    </div>
     <div v-else class="split-grid">
-      <section class="panel detail-panel">
-        <div class="detail-heading"><div class="detail-icon"><ShieldCheck :size="20" /></div><div><h3>调用边界</h3><p>策略版本 v{{ policy?.version || 1 }}</p></div></div>
-        <form class="form-stack" @submit.prevent="save">
-          <label class="field"><span>模型模式</span><select v-model="mode" :disabled="!team.canManage"><option value="local_only">仅本地模型</option><option value="external_allowed">允许外部模型</option><option value="external_required">仅外部模型</option></select></label>
-          <label class="field"><span>允许发送的最大数据分类</span><select v-model="maxClassification" :disabled="!team.canManage"><option value="public">公开</option><option value="internal">内部</option><option value="private">私有</option><option value="restricted">受限</option></select></label>
-          <label class="check-field"><input v-model="allowChatHistory" type="checkbox" :disabled="!team.canManage" /><span>允许向模型发送会话历史</span></label>
-          <label class="check-field"><input v-model="allowDocumentMetadata" type="checkbox" :disabled="!team.canManage" /><span>允许向模型发送文档元数据</span></label>
-          <button v-if="team.canManage" class="primary-button" type="submit" :disabled="saving"><Save :size="16" />{{ saving ? '保存中' : '保存策略' }}</button>
-        </form>
-      </section>
-      <section class="panel detail-panel">
-        <div class="section-heading"><h3>允许的供应商</h3><span class="muted-text">{{ allowedProviderIds.length }} 个</span></div>
+      <a-card class="page-card">
+        <div class="detail-heading">
+          <div class="detail-icon"><ShieldCheck :size="20" /></div>
+          <div>
+            <h3>调用边界</h3>
+            <p>策略版本 v{{ policy?.version || 1 }}</p>
+          </div>
+        </div>
+        <a-form
+          class="form-stack"
+          :model="{
+            mode,
+            maxClassification,
+            allowChatHistory,
+            allowDocumentMetadata,
+          }"
+          layout="vertical"
+          @submit-success="save"
+        >
+          <a-form-item field="mode">
+            <template #label>模型模式</template>
+            <a-select v-model="mode" :disabled="!team.canManage">
+              <a-option value="local_only">仅本地模型</a-option>
+              <a-option value="external_allowed">允许外部模型</a-option>
+              <a-option value="external_required">仅外部模型</a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item field="maxClassification">
+            <template #label>允许发送的最大数据分类</template>
+            <a-select v-model="maxClassification" :disabled="!team.canManage">
+              <a-option value="public">公开</a-option>
+              <a-option value="internal">内部</a-option>
+              <a-option value="private">私有</a-option>
+              <a-option value="restricted">受限</a-option>
+            </a-select>
+          </a-form-item>
+          <a-checkbox
+            class="check-field"
+            v-model="allowChatHistory"
+            :disabled="!team.canManage"
+          >
+            <span>允许向模型发送会话历史</span>
+          </a-checkbox>
+          <a-checkbox
+            class="check-field"
+            v-model="allowDocumentMetadata"
+            :disabled="!team.canManage"
+          >
+            <span>允许向模型发送文档元数据</span>
+          </a-checkbox>
+          <a-button
+            v-if="team.canManage"
+            :disabled="saving"
+            type="primary"
+            html-type="submit"
+          >
+            <Save :size="16" />
+            {{ saving ? '保存中' : '保存策略' }}
+          </a-button>
+        </a-form>
+      </a-card>
+      <a-card class="page-card">
+        <div class="section-heading">
+          <h3>允许的供应商</h3>
+          <span class="muted-text">{{ allowedProviderIds.length }} 个</span>
+        </div>
         <div v-if="providers.length" class="stack-list">
-          <label v-for="provider in providers" :key="provider.id" class="check-card">
-            <input type="checkbox" :checked="allowedProviderIds.includes(provider.id)" :disabled="!team.canManage || mode === 'local_only'" @change="toggleProvider(provider.id)" />
-            <div><strong>{{ provider.name }}</strong><span class="cell-subtitle">{{ provider.provider_type }} · {{ provider.status }}</span></div>
-          </label>
+          <a-checkbox
+            v-for="provider in providers"
+            :key="provider.id"
+            class="check-card"
+            :disabled="!team.canManage || mode === 'local_only'"
+            @change="toggleProvider(provider.id)"
+            :model-value="allowedProviderIds.includes(provider.id)"
+          >
+            <div>
+              <strong>{{ provider.name }}</strong>
+              <span class="cell-subtitle">
+                {{ provider.provider_type }} · {{ provider.status }}
+              </span>
+            </div>
+          </a-checkbox>
         </div>
-        <div v-else class="empty-state compact"><ShieldCheck :size="22" /><span>暂无可选供应商，请先在供应商页面添加。</span></div>
+        <a-empty v-else class="page-empty">
+          <template #image><ShieldCheck :size="22" /></template>
+          <span>暂无可选供应商，请先在供应商页面添加。</span>
+        </a-empty>
         <div v-if="providersHasMore" class="load-more">
-          <button class="secondary-button" type="button" :disabled="loadingMoreProviders" @click="loadMoreProviders">
+          <a-button
+            :disabled="loadingMoreProviders"
+            @click="loadMoreProviders"
+            type="secondary"
+            html-type="button"
+          >
             {{ loadingMoreProviders ? '加载中' : '加载更多供应商' }}
-          </button>
+          </a-button>
         </div>
-        <div class="notice-box"><strong>本地模型模式</strong><span>`local_only` 模式下不会向外部供应商发送任何内容，供应商勾选不生效。</span></div>
-      </section>
+        <a-alert type="info" class="page-alert">
+          <strong>本地模型模式</strong>
+          <span>
+            `local_only` 模式下不会向外部供应商发送任何内容，供应商勾选不生效。
+          </span>
+        </a-alert>
+      </a-card>
     </div>
   </div>
 </template>

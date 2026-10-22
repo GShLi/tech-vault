@@ -1,15 +1,35 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Message,
+  Spin as ASpin,
+  Tag as ATag,
+  Textarea as ATextarea,
+  Timeline as ATimeline,
+  TimelineItem as ATimelineItem,
+} from '@arco-design/web-vue'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, History, RefreshCw, Save } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
-import type { ChunkHistoryView, ChunkView, DocumentDetailView } from '@/types/api'
-import { formatDate } from '@/utils/format'
+import type {
+  ChunkHistoryView,
+  ChunkView,
+  DocumentDetailView,
+} from '@/types/api'
+import { formatDate, statusLabel } from '@/utils/format'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -45,7 +65,10 @@ async function load(): Promise<void> {
       api.getChunk(team.selectedTeamId, chunkId()),
       api.getChunkHistory(team.selectedTeamId, chunkId()),
     ])
-    const documentView = await api.getDoc(team.selectedTeamId, chunkView.document_id)
+    const documentView = await api.getDoc(
+      team.selectedTeamId,
+      chunkView.document_id,
+    )
     chunk.value = chunkView
     document.value = documentView
     content.value = chunkView.content
@@ -53,7 +76,7 @@ async function load(): Promise<void> {
     historyNextCursor.value = historyPage.meta.next_cursor
     historyHasMore.value = historyPage.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -72,7 +95,7 @@ async function loadMoreHistory(): Promise<void> {
     historyNextCursor.value = page.meta.next_cursor
     historyHasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMoreHistory.value = false
   }
@@ -83,11 +106,16 @@ async function save(): Promise<void> {
   saving.value = true
   error.value = null
   try {
-    chunk.value = await api.updateChunk(team.selectedTeamId, chunk.value.id, content.value, chunk.value.version)
+    chunk.value = await api.updateChunk(
+      team.selectedTeamId,
+      chunk.value.id,
+      content.value,
+      chunk.value.version,
+    )
     Message.success('Chunk 已保存')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -96,22 +124,26 @@ async function save(): Promise<void> {
 async function toggle(): Promise<void> {
   if (!team.selectedTeamId || !chunk.value) return
   try {
-    if (chunk.value.status === 'enabled') await api.disableChunks(team.selectedTeamId, [chunk.value.id])
+    if (chunk.value.status === 'enabled')
+      await api.disableChunks(team.selectedTeamId, [chunk.value.id])
     else await api.enableChunks(team.selectedTeamId, [chunk.value.id])
     Message.success('Chunk 状态已更新')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
 async function regenerate(): Promise<void> {
   if (!team.selectedTeamId || !chunk.value) return
   try {
-    const result = await api.regenerateChunks(team.selectedTeamId, chunk.value.document_id)
+    const result = await api.regenerateChunks(
+      team.selectedTeamId,
+      chunk.value.document_id,
+    )
     Message.success(`已提交重建任务：${result.run_id}`)
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -123,38 +155,130 @@ watch(() => route.params.chunkId, load)
   <div>
     <div class="page-header">
       <div class="heading-with-back">
-        <RouterLink class="icon-button" to="/chunks" title="返回 Chunk 管理"><ArrowLeft :size="18" /></RouterLink>
-        <div><h2>Chunk 详情</h2><p>{{ chunk ? chunk.id : '正在读取 Chunk' }}</p></div>
+        <RouterLink to="/chunks" custom v-slot="{ href, navigate }">
+          <a-button
+            type="text"
+            :href="href"
+            @click="navigate"
+            title="返回 Chunk 管理"
+          >
+            <ArrowLeft :size="18" />
+          </a-button>
+        </RouterLink>
+        <div>
+          <h2>Chunk 详情</h2>
+          <p>{{ chunk ? chunk.id : '正在读取 Chunk' }}</p>
+        </div>
       </div>
       <div v-if="chunk && canManageChunk" class="row-actions">
-        <button class="secondary-button" type="button" @click="toggle">{{ chunk.status === 'enabled' ? '禁用' : '启用' }}</button>
-        <button class="secondary-button" type="button" @click="regenerate"><RefreshCw :size="16" />重建文档 Chunk</button>
+        <a-button @click="toggle" type="secondary" html-type="button">
+          {{ chunk.status === 'enabled' ? '禁用' : '启用' }}
+        </a-button>
+        <a-button @click="regenerate" type="secondary" html-type="button">
+          <RefreshCw :size="16" />
+          重建文档 Chunk
+        </a-button>
       </div>
     </div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
-    <div v-if="loading && !chunk" class="panel loading-state"><a-spin /><span>正在加载 Chunk</span></div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
+    <div v-if="loading && !chunk" class="panel loading-state">
+      <a-spin />
+      <span>正在加载 Chunk</span>
+    </div>
     <template v-else-if="chunk">
       <div class="split-grid">
-        <section class="panel detail-panel">
-          <div class="detail-heading"><div class="detail-icon"><History :size="20" /></div><div><h3>分块内容</h3><p>{{ chunk.heading_path.join(' / ') || '无结构路径' }}</p></div><StatusPill :status="chunk.status" /></div>
-          <form class="form-stack" @submit.prevent="save">
-            <label class="field"><span>内容</span><textarea v-model="content" rows="16" :disabled="!canManageChunk" /></label>
-            <button v-if="chunk && canManageChunk" class="primary-button" type="submit" :disabled="saving || content === chunk.content"><Save :size="16" />{{ saving ? '保存中' : '保存修改' }}</button>
-          </form>
-          <dl class="detail-grid"><div><dt>文档</dt><dd>{{ chunk.document_id }}</dd></div><div><dt>来源定位</dt><dd><code>{{ JSON.stringify(chunk.source_locator) }}</code></dd></div><div><dt>版本</dt><dd>v{{ chunk.version }}</dd></div><div><dt>更新时间</dt><dd>{{ formatDate(chunk.updated_at) }}</dd></div></dl>
-        </section>
-        <section class="panel detail-panel">
-          <div class="section-heading"><h3>变更历史</h3><span class="muted-text">{{ history.length }} 条</span></div>
-          <div v-if="history.length" class="timeline">
-            <article v-for="item in history" :key="item.id" class="timeline-item"><div class="timeline-dot" /><div><strong>{{ item.action }}</strong><span class="cell-subtitle">{{ formatDate(item.created_at) }} · {{ item.actor_id }}</span><p class="pre-wrap">{{ item.new_content || '—' }}</p></div></article>
+        <a-card class="page-card">
+          <div class="detail-heading">
+            <div class="detail-icon"><History :size="20" /></div>
+            <div>
+              <h3>分块内容</h3>
+              <p>{{ chunk.heading_path.join(' / ') || '无结构路径' }}</p>
+            </div>
+            <a-tag :color="statusColor(chunk.status)">
+              {{ statusLabel(chunk.status) }}
+            </a-tag>
           </div>
-          <div v-else class="empty-state compact"><History :size="22" /><span>暂无变更记录</span></div>
-          <div v-if="historyHasMore" class="load-more" data-testid="chunk-history-load-more">
-            <button class="secondary-button" type="button" :disabled="loadingMoreHistory" @click="loadMoreHistory">
+          <a-form
+            class="form-stack"
+            :model="{ content }"
+            layout="vertical"
+            @submit-success="save"
+          >
+            <a-form-item field="content">
+              <template #label>内容</template>
+              <a-textarea
+                v-model="content"
+                :disabled="!canManageChunk"
+                :textarea-attrs="{ rows: '16' }"
+              ></a-textarea>
+            </a-form-item>
+            <a-button
+              v-if="chunk && canManageChunk"
+              :disabled="saving || content === chunk.content"
+              type="primary"
+              html-type="submit"
+            >
+              <Save :size="16" />
+              {{ saving ? '保存中' : '保存修改' }}
+            </a-button>
+          </a-form>
+          <a-descriptions
+            :column="{ xs: 1, sm: 2, lg: 3 }"
+            bordered
+            class="detail-descriptions"
+          >
+            <a-descriptions-item label="文档">
+              {{ chunk.document_id }}
+            </a-descriptions-item>
+            <a-descriptions-item label="来源定位">
+              <code>{{ JSON.stringify(chunk.source_locator) }}</code>
+            </a-descriptions-item>
+            <a-descriptions-item label="版本">
+              v{{ chunk.version }}
+            </a-descriptions-item>
+            <a-descriptions-item label="更新时间">
+              {{ formatDate(chunk.updated_at) }}
+            </a-descriptions-item>
+          </a-descriptions>
+        </a-card>
+        <a-card class="page-card">
+          <div class="section-heading">
+            <h3>变更历史</h3>
+            <span class="muted-text">{{ history.length }} 条</span>
+          </div>
+          <a-timeline v-if="history.length">
+            <a-timeline-item v-for="item in history" :key="item.id">
+              <div>
+                <strong>{{ item.action }}</strong>
+                <span class="cell-subtitle">
+                  {{ formatDate(item.created_at) }} · {{ item.actor_id }}
+                </span>
+                <p class="pre-wrap">{{ item.new_content || '—' }}</p>
+              </div>
+            </a-timeline-item>
+          </a-timeline>
+          <a-empty v-else class="page-empty">
+            <template #image><History :size="22" /></template>
+            <span>暂无变更记录</span>
+          </a-empty>
+          <div
+            v-if="historyHasMore"
+            class="load-more"
+            data-testid="chunk-history-load-more"
+          >
+            <a-button
+              :disabled="loadingMoreHistory"
+              @click="loadMoreHistory"
+              type="secondary"
+              html-type="button"
+            >
               {{ loadingMoreHistory ? '加载中' : '加载更多记录' }}
-            </button>
+            </a-button>
           </div>
-        </section>
+        </a-card>
       </div>
     </template>
   </div>

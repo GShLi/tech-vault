@@ -1,4 +1,5 @@
 import base64
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -87,8 +88,26 @@ def test_decode_cursor_rejects_noncanonical_payload():
     )
 
 
-def test_cursor_round_trips_deterministic_chunk_id():
+@pytest.mark.parametrize("prefix", ["chd_", "par_"])
+def test_cursor_round_trips_deterministic_chunk_id(prefix):
     created_at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
-    chunk_id = "chk_" + "a" * 64
+    chunk_id = prefix + "a" * 64
 
     assert decode_cursor(encode_cursor(created_at, chunk_id)) == (created_at, chunk_id)
+
+
+@pytest.mark.parametrize("chunk_id", [
+    "chk_" + "a" * 64,
+    "chd_" + "a" * 63,
+    "par_" + "a" * 65,
+    "chd_" + "g" * 64,
+    "par_" + "A" * 64,
+    "chd_" + "a" * 64 + "\n",
+])
+def test_cursor_rejects_obsolete_or_malformed_chunk_ids(chunk_id):
+    created_at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="cursor id is invalid"):
+        encode_cursor(created_at, chunk_id)
+    _assert_invalid(_encoded(json.dumps({
+        "created_at": created_at.isoformat(), "id": chunk_id,
+    }, separators=(",", ":"))))

@@ -71,7 +71,30 @@ class Settings:
     task_execution_mode: str = _DEFAULT_TASK_EXECUTION_MODE
     object_storage_enabled: bool = _DEFAULT_OBJECT_STORAGE_ENABLED
 
+    parse_version: str = "2"
+    chunking_version: str = "2"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dimension: int = 1024
+    embedding_batch_size: int = 64
+    document_max_pages: int = 1000
+    upload_batch_max_files: int = 200
+    upload_batch_max_bytes: int = 2 * 1024 * 1024 * 1024
+    ingestion_publish_group_size: int = 20
+    chunk_child_target_tokens: int = 480
+    chunk_child_max_tokens: int = 512
+    chunk_child_overlap_tokens: int = 64
+    chunk_parent_target_tokens: int = 1200
+    chunk_parent_max_tokens: int = 1400
+
     def __post_init__(self) -> None:
+        if not 1 <= self.upload_batch_max_files <= 1000 or self.upload_batch_max_bytes <= 0 or not 1 <= self.ingestion_publish_group_size <= 200:
+            raise ValueError("Invalid upload batch limits")
+        if self.embedding_dimension <= 0 or not 1 <= self.embedding_batch_size <= 256 or self.document_max_pages <= 0:
+            raise ValueError("Invalid document processing limits")
+        from backend.app.rag.chunking.semantic import ChunkBudget
+        ChunkBudget(child_target=self.chunk_child_target_tokens, child_max=self.chunk_child_max_tokens,
+                    child_overlap=self.chunk_child_overlap_tokens, parent_target=self.chunk_parent_target_tokens,
+                    parent_max=self.chunk_parent_max_tokens)
         if self.access_token_ttl_seconds <= 0:
             raise ValueError("access token TTL must be positive")
         if self.refresh_token_ttl_seconds <= 0:
@@ -104,9 +127,28 @@ class Settings:
             raise ValueError(
                 "JWT secret must be at least 32 bytes outside development"
             )
+        if self.environment not in {"development", "test"} and (
+            self.admin_password.strip() == _DEFAULT_ADMIN_PASSWORD
+            or len(self.admin_password.strip()) < 12
+        ):
+            raise ValueError(
+                "Production admin password must be unique and at least 12 characters"
+            )
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
+            parse_version=os.getenv("TECHVAULT_PARSE_VERSION", "2"),
+            chunking_version=os.getenv("TECHVAULT_CHUNKING_VERSION", "2"),
+            embedding_model=os.getenv("TECHVAULT_EMBEDDING_MODEL", "BAAI/bge-m3"),
+            **{name: int(os.getenv("TECHVAULT_" + name.upper(), str(default))) for name, default in {
+                "embedding_dimension": 1024, "embedding_batch_size": 64, "document_max_pages": 1000,
+                "upload_batch_max_files": 200, "upload_batch_max_bytes": 2147483648,
+                "ingestion_publish_group_size": 20,
+                "chunk_child_target_tokens": 480, "chunk_child_max_tokens": 512,
+                "chunk_child_overlap_tokens": 64, "chunk_parent_target_tokens": 1200,
+                "chunk_parent_max_tokens": 1400,
+            }.items()},
             database_url=os.getenv("TECHVAULT_DATABASE_URL", _DEFAULT_DATABASE_URL),
             jwt_secret=os.getenv("TECHVAULT_JWT_SECRET", _DEFAULT_JWT_SECRET),
             jwt_algorithm=os.getenv(

@@ -229,6 +229,10 @@ class DocumentView(BaseModel):
 
 
 class DocumentDetailView(DocumentView):
+    parse_metadata: dict = Field(default_factory=dict)
+    chunking_metadata: dict = Field(default_factory=dict)
+    quality_metrics: dict = Field(default_factory=dict)
+    failure_details: dict = Field(default_factory=dict)
     owner_user_id: str
     current_version_id: Optional[str]
     source_uri: Optional[str]
@@ -236,6 +240,9 @@ class DocumentDetailView(DocumentView):
 
 
 class IngestionRunView(BaseModel):
+    file_name: Optional[str] = None
+    quality_metrics: dict = Field(default_factory=dict)
+    failure_details: dict = Field(default_factory=dict)
     id: str
     document_version_id: str
     status: str

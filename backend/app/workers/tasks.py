@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 
 from celery import Celery
 
@@ -30,8 +31,13 @@ celery_app.conf.update(
     task_time_limit=3600,
     worker_max_tasks_per_child=50,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     beat_schedule={
+        "recover-upload-batches": {
+            "task": "techvault.recover_upload_batches",
+            "schedule": 60.0,
+        },
         "purge-expired-documents": {
             "task": "techvault.purge_expired_documents",
             "schedule": 3600.0,
@@ -40,14 +46,74 @@ celery_app.conf.update(
 )
 
 
-@celery_app.task(name="techvault.ingest_document", bind=True, max_retries=3)
-def ingest_document(self, document_id: str, run_id: str | None = None) -> dict:
+MAX_PROCESSING_RETRIES = 3
+
+
+@celery_app.task(name="techvault.ingest_upload_batch", bind=True, max_retries=None)
+def ingest_upload_batch(self, batch_id: str, processing_retries: int = 0) -> dict:
+    from backend.app.db.session import build_engine, build_session_factory
+    from backend.app.modules.documents.batch_processing import process_upload_batch
+    settings = Settings.from_env()
+    engine = build_engine(settings.database_url)
+    try:
+        with build_session_factory(engine)() as session:
+            try:
+                result = process_upload_batch(session, batch_id, settings)
+            except Exception as error:
+                if processing_retries >= MAX_PROCESSING_RETRIES:
+                    raise
+                raise self.retry(exc=error, args=[batch_id, processing_retries + 1], countdown=30)
+            if result.get("deferred"):
+                raise self.retry(args=[batch_id, processing_retries], countdown=random.randint(15, 30))
+            return result
+    finally:
+        engine.dispose()
+
+
+@celery_app.task(name="techvault.recover_upload_batches")
+def recover_upload_batches() -> dict:
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from backend.app.db.models import UploadBatch
+    from backend.app.db.session import build_engine, build_session_factory
+    settings = Settings.from_env()
+    engine = build_engine(settings.database_url)
+    count = 0
+    try:
+        with build_session_factory(engine)() as session:
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+            rows = session.scalars(select(UploadBatch).where(
+                UploadBatch.status.in_(("uploading", "queued", "processing")),
+                UploadBatch.updated_at < cutoff,
+            ).order_by(UploadBatch.updated_at).limit(100)).all()
+            for batch in rows:
+                # Closing the browser before sealing must not strand saved files.
+                batch.sealed_at = batch.sealed_at or datetime.now(timezone.utc)
+                batch.status = "queued"
+                batch.updated_at = datetime.now(timezone.utc)
+                session.commit()
+                ingest_upload_batch.apply_async(args=[batch.id])
+                count += 1
+    finally:
+        engine.dispose()
+    return {"dispatched": count}
+
+
+@celery_app.task(name="techvault.ingest_document", bind=True, max_retries=None)
+def ingest_document(
+    self, document_id: str, run_id: str | None = None, *, processing_retries: int = 0,
+) -> dict:
     """Parse, chunk, embed and index a document version."""
     from backend.app.db.session import build_engine, build_session_factory
 
     settings = Settings.from_env()
     engine = build_engine(settings.database_url)
     factory = build_session_factory(engine)
+    retry_kwargs = {
+        "document_id": document_id,
+        "run_id": run_id,
+        "processing_retries": processing_retries,
+    }
 
     try:
         with factory() as session:
@@ -59,9 +125,25 @@ def ingest_document(self, document_id: str, run_id: str | None = None) -> dict:
                     run_id=run_id,
                 )
             except Exception as exc:  # noqa: BLE001
-                raise self.retry(exc=exc, countdown=30) from exc
+                if processing_retries >= MAX_PROCESSING_RETRIES:
+                    raise
+                raise self.retry(
+                    exc=exc, countdown=30, args=(),
+                    kwargs={**retry_kwargs, "processing_retries": processing_retries + 1},
+                ) from exc
+            if result.get("deferred"):
+                # Celery's delivery retry counter includes lock waits. Keep the
+                # bounded processing error budget separate from that counter.
+                raise self.retry(
+                    countdown=random.randint(15, 30), args=(), kwargs=retry_kwargs,
+                )
             if result["status"] == "failed" and result.get("retryable"):
-                raise self.retry(countdown=30)
+                if processing_retries >= MAX_PROCESSING_RETRIES:
+                    raise self.MaxRetriesExceededError("Document processing retry limit reached.")
+                raise self.retry(
+                    countdown=30, args=(),
+                    kwargs={**retry_kwargs, "processing_retries": processing_retries + 1},
+                )
             return result
     finally:
         engine.dispose()
@@ -76,7 +158,9 @@ def ingest_document_record(
 ) -> dict:
     """Run one document ingestion against an existing database session."""
     from backend.app.db.models import Document, IngestionRun
+    from backend.app.rag.ingestion.leases import IngestionBusy
     from backend.app.rag.ingestion.processor import process_markdown
+    from sqlalchemy import update
 
     document = session.get(Document, document_id)
     if document is None:
@@ -95,16 +179,34 @@ def ingest_document_record(
         )
     if run is None:
         return {"document_id": document_id, "status": "no_run", "chunks": 0}
-    if run.status == "cancelled":
+    if run.status in {"cancelled", "completed"}:
         return {
             "document_id": document_id,
             "run_id": run.id,
-            "status": "cancelled",
+            "status": run.status,
             "chunks": 0,
         }
 
     try:
         chunk_ids = process_markdown(document, run, session, settings)
+    except IngestionBusy:
+        session.rollback()
+        # A duplicate delivery must not reset a run that is already processing.
+        # The conditional update also preserves concurrent cancellation/completion.
+        session.execute(
+            update(IngestionRun)
+            .where(IngestionRun.id == run.id, IngestionRun.status.in_(("queued", "failed")))
+            .values(
+                status="queued", current_stage="waiting_index", stage_progress_pct=0,
+                error_code=None, failure_details="{}", retryable=False,
+            )
+        )
+        session.commit()
+        session.refresh(run)
+        return {
+            "document_id": document_id, "run_id": run.id, "status": run.status,
+            "deferred": run.status not in {"cancelled", "completed"}, "chunks": 0,
+        }
     except Exception:
         if run.status != "cancelled":
             run.status = "failed"
@@ -122,50 +224,6 @@ def ingest_document_record(
         "retryable": run.retryable,
         "chunks": len(chunk_ids),
     }
-
-
-@celery_app.task(name="techvault.sync_github_source", bind=True, max_retries=3)
-def sync_github_source_task(self, source_id: str) -> dict:
-    """Synchronize a GitHub source in the background."""
-    from backend.app.db.session import build_engine, build_session_factory
-
-    settings = Settings.from_env()
-    engine = build_engine(settings.database_url)
-    factory = build_session_factory(engine)
-    try:
-        with factory() as session:
-            try:
-                return sync_github_source_record(session, source_id, settings)
-            except Exception as exc:  # noqa: BLE001
-                raise self.retry(exc=exc, countdown=60) from exc
-    finally:
-        engine.dispose()
-
-
-def sync_github_source_record(session, source_id: str, settings: Settings) -> dict:
-    """Run one source synchronization against an existing database session."""
-    from backend.app.db.models import SourceConnection
-    from backend.app.modules.sources.github import sync_github_source
-    from backend.app.modules.audit.service import write_audit
-
-    source = session.get(SourceConnection, source_id)
-    if source is None:
-        return {"source_id": source_id, "status": "not_found"}
-    if source.status == "paused":
-        return {"source_id": source_id, "status": "paused"}
-    result = sync_github_source(source, session, settings)
-    payload = result.as_dict()
-    write_audit(
-        session,
-        team_id=source.team_id,
-        actor_id=source.created_by,
-        action="source.sync.completed",
-        resource_type="source_connection",
-        resource_id=source.id,
-        details=payload,
-    )
-    session.commit()
-    return payload
 
 
 @celery_app.task(name="techvault.reindex_generation")

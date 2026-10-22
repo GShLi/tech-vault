@@ -67,7 +67,10 @@ describe('InviteView', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/invite/:token', component: InviteView },
-        { path: '/knowledge-bases', component: { template: '<div>knowledge bases</div>' } },
+        {
+          path: '/knowledge-bases',
+          component: { template: '<div>knowledge bases</div>' },
+        },
         { path: '/login', component: { template: '<div>login</div>' } },
       ],
     })

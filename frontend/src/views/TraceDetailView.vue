@@ -1,4 +1,20 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+  Drawer as ADrawer,
+  Empty as AEmpty,
+  Progress as AProgress,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -12,14 +28,14 @@ import {
   Search,
 } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type { JsonRecord, TraceChunkDetail, TraceView } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 import {
   formatTraceDuration,
   traceStageMeta,
+  traceStageParent,
   traceTotalDuration,
 } from '@/utils/trace'
 
@@ -38,16 +54,19 @@ const stages = computed(() => {
     (entry): entry is [string, number] =>
       typeof entry[1] === 'number' && Number.isFinite(entry[1]),
   )
-  const total = entries.reduce((sum, [, value]) => sum + Math.max(0, value), 0)
+  const total = traceTotalDuration(trace.value?.stage_latency_ms ?? {})
   return entries.map(([key, value]) => {
     const meta = traceStageMeta(key)
+    const parent = traceStageParent(key, trace.value?.stage_latency_ms ?? {})
     return {
       key,
       value,
+      parentLabel: parent ? traceStageMeta(parent).label : null,
       ...meta,
       formatted: formatTraceDuration(value),
-      width: total > 0 ? Math.max(value > 0 ? 1.5 : 0, (value / total) * 100) : 0,
-      tooltip: `${key}：${meta.description}；原始耗时 ${value} ms`,
+      width:
+        total > 0 ? Math.max(value > 0 ? 1.5 : 0, (value / total) * 100) : 0,
+      tooltip: `${key}：${meta.description}；原始耗时 ${value} ms${parent ? `；包含在${traceStageMeta(parent).label}中，不重复计入总耗时` : ''}`,
     }
   })
 })
@@ -98,7 +117,11 @@ const chunkFields = computed(() => {
     { label: '状态', value: chunk.chunk_status || '—', block: false },
     { label: '文档状态', value: chunk.doc_status || '—', block: false },
     { label: '可见性', value: chunk.visibility || '—', block: false },
-    { label: '数据分级', value: chunk.data_classification || '—', block: false },
+    {
+      label: '数据分级',
+      value: chunk.data_classification || '—',
+      block: false,
+    },
     { label: '索引代次', value: chunk.index_generation || '—', block: false },
     {
       label: '版本',
@@ -240,7 +263,7 @@ async function load(): Promise<void> {
   try {
     trace.value = await api.getTrace(team.selectedTeamId, traceId)
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -248,7 +271,9 @@ async function load(): Promise<void> {
 
 function exportSnapshot(): void {
   if (!trace.value) return
-  const blob = new Blob([JSON.stringify(trace.value, null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(trace.value, null, 2)], {
+    type: 'application/json',
+  })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -268,30 +293,75 @@ onBeforeUnmount(() => {
   <div>
     <div class="page-header">
       <div class="heading-with-back">
-        <RouterLink class="icon-button" to="/traces" title="返回 Trace 列表"><ArrowLeft :size="18" /></RouterLink>
-        <div><h2>Trace 详情</h2><p>{{ trace ? trace.trace_id : '正在读取检索链路' }}</p></div>
+        <RouterLink to="/traces" custom v-slot="{ href, navigate }">
+          <a-button
+            type="text"
+            :href="href"
+            @click="navigate"
+            title="返回 Trace 列表"
+          >
+            <ArrowLeft :size="18" />
+          </a-button>
+        </RouterLink>
+        <div>
+          <h2>Trace 详情</h2>
+          <p>{{ trace ? trace.trace_id : '正在读取检索链路' }}</p>
+        </div>
       </div>
-      <button class="secondary-button" type="button" :disabled="!trace" @click="exportSnapshot"><Download :size="16" />导出快照</button>
+      <a-button
+        :disabled="!trace"
+        @click="exportSnapshot"
+        type="secondary"
+        html-type="button"
+      >
+        <Download :size="16" />
+        导出快照
+      </a-button>
     </div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
-    <div v-if="loading && !trace" class="panel loading-state"><a-spin /><span>正在加载 Trace</span></div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
+    <div v-if="loading && !trace" class="panel loading-state">
+      <a-spin />
+      <span>正在加载 Trace</span>
+    </div>
     <template v-else-if="trace">
-      <section class="panel detail-panel">
+      <a-card class="page-card">
         <div class="detail-heading">
           <div class="detail-icon"><Layers3 :size="20" /></div>
-          <div><h3>{{ trace.original_query }}</h3><p>{{ trace.engine_mode }} · {{ formatDate(trace.created_at) }}</p></div>
-          <StatusPill :status="trace.degraded ? 'degraded' : 'completed'" :label="trace.degraded ? '降级' : '正常'" />
+          <div>
+            <h3>{{ trace.original_query }}</h3>
+            <p>{{ trace.engine_mode }} · {{ formatDate(trace.created_at) }}</p>
+          </div>
+          <a-tag
+            :color="statusColor(trace.degraded ? 'degraded' : 'completed')"
+          >
+            {{ trace.degraded ? '降级' : '正常' }}
+          </a-tag>
         </div>
-        <dl class="detail-grid">
-          <div><dt>改写查询</dt><dd>{{ trace.rewritten_query || '—' }}</dd></div>
-          <div><dt>会话</dt><dd>{{ shortId(trace.chat_id) }}</dd></div>
-          <div><dt>消息</dt><dd>{{ shortId(trace.message_id) }}</dd></div>
-          <div><dt>错误码</dt><dd>{{ trace.error_code || '—' }}</dd></div>
-        </dl>
+        <a-descriptions
+          :column="{ xs: 1, sm: 2, lg: 3 }"
+          bordered
+          class="detail-descriptions"
+        >
+          <a-descriptions-item label="改写查询">
+            {{ trace.rewritten_query || '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="会话">
+            {{ shortId(trace.chat_id) }}
+          </a-descriptions-item>
+          <a-descriptions-item label="消息">
+            {{ shortId(trace.message_id) }}
+          </a-descriptions-item>
+          <a-descriptions-item label="错误码">
+            {{ trace.error_code || '—' }}
+          </a-descriptions-item>
+        </a-descriptions>
         <div v-if="rewrite" class="rewrite-summary" data-testid="trace-rewrite">
           <div class="rewrite-summary-head">
             <strong>QueryRewrite</strong>
-            <span class="rewrite-source">{{ rewriteSourceLabel }}</span>
+            <a-tag>{{ rewriteSourceLabel }}</a-tag>
           </div>
           <div class="rewrite-query-flow">
             <span>{{ rewrite.original_query || '—' }}</span>
@@ -299,18 +369,15 @@ onBeforeUnmount(() => {
             <span>{{ rewrite.rewritten_query || '—' }}</span>
           </div>
           <div v-if="rewriteFilters.length" class="rewrite-filter-list">
-            <span
-              v-for="filter in rewriteFilters"
-              :key="filter"
-              class="rewrite-filter"
-            >
+            <a-tag v-for="filter in rewriteFilters" :key="filter">
               {{ filter }}
-            </span>
+            </a-tag>
           </div>
           <p class="muted-text">
             {{ rewrite.model_id || '未知模型' }}
-            · {{ formatTraceDuration(rewrite.latency_ms ?? 0) }}
-            · {{ rewrite.input_tokens ?? 0 }} / {{ rewrite.output_tokens ?? 0 }} tokens
+            · {{ formatTraceDuration(rewrite.latency_ms ?? 0) }} ·
+            {{ rewrite.input_tokens ?? 0 }} /
+            {{ rewrite.output_tokens ?? 0 }} tokens
           </p>
           <p v-if="rewrite.fallback_reason" class="muted-text">
             回退原因：{{ rewrite.fallback_reason }}
@@ -323,12 +390,14 @@ onBeforeUnmount(() => {
           <div class="stage-chart-heading">
             <div>
               <strong>阶段耗时</strong>
-              <span>按总耗时占比展示</span>
+              <span>按去重后的总耗时占比展示；子调用已包含在所属阶段中</span>
             </div>
             <span
               class="stage-chart-total"
-              :title="`所有阶段耗时合计，原始值 ${totalStageLatency} ms`"
-            >总耗时 {{ formatTraceDuration(totalStageLatency) }}</span>
+              :title="`阶段去重后耗时合计，原始值 ${totalStageLatency} ms`"
+            >
+              总耗时 {{ formatTraceDuration(totalStageLatency) }}
+            </span>
           </div>
           <div v-if="stages.length" class="stage-chart-list">
             <div
@@ -339,79 +408,160 @@ onBeforeUnmount(() => {
               :title="stage.tooltip"
               :aria-label="stage.tooltip"
             >
-              <span class="stage-chart-label" :title="stage.tooltip">{{ stage.label }}</span>
-              <span class="stage-chart-track" aria-hidden="true">
-                <span :style="{ width: `${stage.width}%` }"></span>
+              <span class="stage-chart-label" :title="stage.tooltip">
+                {{ stage.label }}
+                <small v-if="stage.parentLabel" class="stage-parent-label">
+                  包含在{{ stage.parentLabel }}
+                </small>
               </span>
-              <strong class="stage-chart-value" :title="stage.tooltip">{{ stage.formatted }}</strong>
+              <a-progress
+                :percent="Math.max(0, Math.min(1, stage.width / 100))"
+                :show-text="false"
+                size="small"
+              ></a-progress>
+              <strong class="stage-chart-value" :title="stage.tooltip">
+                {{ stage.formatted }}
+              </strong>
             </div>
           </div>
-          <div v-else class="empty-state compact"><span>暂无阶段耗时数据</span></div>
+          <a-empty v-else class="page-empty">
+            <span>暂无阶段耗时数据</span>
+          </a-empty>
         </div>
-      </section>
+      </a-card>
 
       <div class="split-grid">
-        <section class="panel detail-panel"><div class="section-heading"><h3>过滤条件</h3><Braces :size="16" /></div><pre class="json-block">{{ JSON.stringify(trace.filters, null, 2) }}</pre></section>
-        <section class="panel detail-panel"><div class="section-heading"><h3>模型信息</h3><Braces :size="16" /></div><pre class="json-block">{{ JSON.stringify(trace.model, null, 2) }}</pre></section>
+        <a-card class="page-card">
+          <div class="section-heading">
+            <h3>过滤条件</h3>
+            <Braces :size="16" />
+          </div>
+          <pre class="json-block">{{
+            JSON.stringify(trace.filters, null, 2)
+          }}</pre>
+        </a-card>
+        <a-card class="page-card">
+          <div class="section-heading">
+            <h3>模型信息</h3>
+            <Braces :size="16" />
+          </div>
+          <pre class="json-block">{{
+            JSON.stringify(trace.model, null, 2)
+          }}</pre>
+        </a-card>
       </div>
 
-      <section class="panel detail-panel">
-        <div class="section-heading"><h3>用户反馈</h3><span class="muted-text">{{ trace.feedback.length }} 条</span></div>
+      <a-card class="page-card">
+        <div class="section-heading">
+          <h3>用户反馈</h3>
+          <span class="muted-text">{{ trace.feedback.length }} 条</span>
+        </div>
         <div v-if="trace.feedback.length" class="feedback-list">
-          <article v-for="item in trace.feedback" :key="item.id" class="feedback-item">
-            <div><StatusPill :status="item.feedback_type" :label="feedbackLabels[item.feedback_type] ?? item.feedback_type" /><span class="muted-text">{{ formatDate(item.created_at) }}</span></div>
+          <article
+            v-for="item in trace.feedback"
+            :key="item.id"
+            class="feedback-item"
+          >
+            <div>
+              <a-tag :color="statusColor(item.feedback_type)">
+                {{ feedbackLabels[item.feedback_type] ?? item.feedback_type }}
+              </a-tag>
+              <span class="muted-text">{{ formatDate(item.created_at) }}</span>
+            </div>
             <p>{{ item.comment || '未填写补充说明' }}</p>
           </article>
         </div>
-        <div v-else class="empty-state compact"><span>该次问答暂无用户反馈</span></div>
-      </section>
+        <a-empty v-else class="page-empty">
+          <span>该次问答暂无用户反馈</span>
+        </a-empty>
+      </a-card>
 
-      <section v-for="group in [
-        { title: 'BM25 候选', scoreKey: 'bm25_score', rows: trace.bm25_candidates },
-        { title: 'Dense 候选', scoreKey: 'dense_score', rows: trace.dense_candidates },
-        { title: 'RRF 融合', scoreKey: 'rrf_score', rows: trace.rrf_candidates },
-        { title: 'Rerank 结果', scoreKey: 'rerank_score', rows: trace.rerank_candidates },
-        { title: '最终上下文', scoreKey: 'rerank_score', rows: trace.final_context },
-      ]" :key="group.title" class="panel detail-panel">
+      <a-card
+        v-for="group in [
+          {
+            title: 'BM25 候选',
+            scoreKey: 'bm25_score',
+            rows: trace.bm25_candidates,
+          },
+          {
+            title: 'Dense 候选',
+            scoreKey: 'dense_score',
+            rows: trace.dense_candidates,
+          },
+          {
+            title: 'RRF 融合',
+            scoreKey: 'rrf_score',
+            rows: trace.rrf_candidates,
+          },
+          {
+            title: 'Rerank 结果',
+            scoreKey: 'rerank_score',
+            rows: trace.rerank_candidates,
+          },
+          {
+            title: '最终上下文',
+            scoreKey: 'rerank_score',
+            rows: trace.final_context,
+          },
+        ]"
+        :key="group.title"
+        class="page-card"
+      >
         <div class="section-heading">
           <h3>{{ group.title }}</h3>
           <span class="muted-text">{{ group.rows.length }} 条</span>
         </div>
         <div v-if="group.rows.length" class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Chunk</th><th>分数</th><th>Chunk 内容</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, index) in group.rows" :key="`${group.title}-${index}`">
-                <td>{{ rowId(row) }}</td>
-                <td>{{ rowScore(row, group.scoreKey) }}</td>
-                <td>
-                  <button
-                    class="chunk-content-trigger"
-                    type="button"
+          <a-table
+            :data="group.rows"
+            :pagination="false"
+            :bordered="false"
+            :scroll="{ x: 960 }"
+          >
+            <template #columns>
+              <a-table-column title="Chunk" :width="180">
+                <template #cell="{ record: row, rowIndex: index }">
+                  {{ rowId(row) }}
+                </template>
+              </a-table-column>
+              <a-table-column title="分数" :width="100">
+                <template #cell="{ record: row, rowIndex: index }">
+                  {{ rowScore(row, group.scoreKey) }}
+                </template>
+              </a-table-column>
+              <a-table-column title="Chunk 内容">
+                <template #cell="{ record: row, rowIndex: index }">
+                  <a-button
                     :data-testid="`trace-chunk-${row.chunk_id ?? index}`"
                     title="点击查看 Chunk 详情"
                     @click="openChunk(row)"
+                    type="text"
+                    html-type="button"
+                    class="chunk-content-trigger"
                   >
                     <span class="chunk-content-preview">
                       <template
                         v-for="(segment, segmentIndex) in chunkSegments(row)"
                         :key="segmentIndex"
                       >
-                        <mark v-if="segment.highlighted">{{ segment.text }}</mark>
+                        <mark v-if="segment.highlighted">
+                          {{ segment.text }}
+                        </mark>
                         <template v-else>{{ segment.text }}</template>
                       </template>
                     </span>
                     <PanelRightOpen :size="14" aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  </a-button>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
         </div>
-        <div v-else class="empty-state compact"><Search :size="20" /><span>该阶段无候选</span></div>
-      </section>
+        <a-empty v-else class="page-empty">
+          <template #image><Search :size="20" /></template>
+          <span>该阶段无候选</span>
+        </a-empty>
+      </a-card>
 
       <a-drawer
         v-model:visible="drawerVisible"
@@ -420,37 +570,47 @@ onBeforeUnmount(() => {
         title="Chunk 详情"
         unmount-on-close
       >
-        <div v-if="selectedChunk && !selectedChunk.restricted" class="chunk-detail-panel">
+        <div
+          v-if="selectedChunk && !selectedChunk.restricted"
+          class="chunk-detail-panel"
+        >
           <div class="chunk-detail-toolbar">
             <span class="muted-text">
               {{ selectedChunk.document_name || selectedChunk.id }}
             </span>
-            <button
-              class="secondary-button"
-              type="button"
+            <a-button
               data-testid="copy-chunk-json"
               @click="copyChunkJson"
+              type="secondary"
+              html-type="button"
             >
               <Copy :size="16" />
               {{ copied ? '已复制' : '复制原始 JSON' }}
-            </button>
+            </a-button>
           </div>
-          <dl class="chunk-field-list">
-            <div v-for="field in chunkFields" :key="field.label" class="chunk-field">
-              <dt>{{ field.label }}</dt>
-              <dd>
-                <pre v-if="field.block" class="chunk-field-block">{{ field.value }}</pre>
-                <span v-else>{{ field.value }}</span>
-              </dd>
-            </div>
-          </dl>
+          <a-descriptions :column="1" bordered class="detail-descriptions">
+            <a-descriptions-item
+              v-for="field in chunkFields"
+              :key="field.label"
+            >
+              <template #label>{{ field.label }}</template>
+              <pre v-if="field.block" class="chunk-field-block">{{
+                field.value
+              }}</pre>
+              <span v-else>{{ field.value }}</span>
+            </a-descriptions-item>
+          </a-descriptions>
         </div>
-        <div v-else class="empty-state compact">
-          <AlertTriangle :size="20" />
+        <a-empty v-else class="page-empty">
+          <template #image><AlertTriangle :size="20" /></template>
           <span>
-            {{ selectedChunk ? '该 Chunk 属于私有文档，当前账号无权查看详情' : 'Chunk 记录已不存在' }}
+            {{
+              selectedChunk
+                ? '该 Chunk 属于私有文档，当前账号无权查看详情'
+                : 'Chunk 记录已不存在'
+            }}
           </span>
-        </div>
+        </a-empty>
       </a-drawer>
     </template>
   </div>

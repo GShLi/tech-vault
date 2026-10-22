@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -7,7 +8,12 @@ import { useTeamStore } from '@/stores/team'
 import DocumentUploadView from './DocumentUploadView.vue'
 
 const apiMocks = vi.hoisted(() => ({
-  listKbs: vi.fn(),
+  getKb: vi.fn(),
+  uploadLimits: vi.fn(),
+  createUploadBatch: vi.fn(),
+  uploadDocument: vi.fn(),
+  sealUploadBatch: vi.fn(),
+  getUploadBatch: vi.fn(),
 }))
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -77,6 +83,8 @@ async function mountPage() {
     routes: [
       { path: '/knowledge-bases/:kbId/upload', component: DocumentUploadView },
       { path: '/knowledge-bases', component: { template: '<div />' } },
+      { path: '/tasks/:runId', component: { template: '<div />' } },
+      { path: '/upload-batches/:batchId', component: { template: '<div />' } },
     ],
   })
   await router.push('/knowledge-bases/kb-1/upload')
@@ -92,41 +100,61 @@ async function mountPage() {
 describe('DocumentUploadView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    apiMocks.getKb.mockResolvedValue(knowledgeBase('kb-1', 'Java 资料'))
+    apiMocks.uploadLimits.mockResolvedValue({ max_files: 200, max_total_bytes: 2147483648, max_file_bytes: 52428800, upload_concurrency: 3 })
+    apiMocks.createUploadBatch.mockResolvedValue({ id: 'batch-1' })
+    apiMocks.uploadDocument.mockResolvedValue({ ingestion_run_id: 'run-1', document: { id: 'doc-1' } })
+    apiMocks.sealUploadBatch.mockResolvedValue({ id: 'batch-1' })
   })
 
-  it('loads every knowledge base page into the member upload selector', async () => {
-    apiMocks.listKbs
-      .mockResolvedValueOnce(page([knowledgeBase('kb-1', 'Java 资料')], 'cursor-1'))
-      .mockResolvedValueOnce(page([knowledgeBase('kb-2', 'Spring 资料')]))
-
+  it('locks the upload target to the knowledge base in the route', async () => {
     const wrapper = await mountPage()
-
-    expect(apiMocks.listKbs).toHaveBeenNthCalledWith(1, 'team-1', null, 100)
-    expect(apiMocks.listKbs).toHaveBeenNthCalledWith(2, 'team-1', 'cursor-1', 100)
-    expect(wrapper.text()).toContain('Java 资料')
-    expect(wrapper.text()).toContain('Spring 资料')
-    expect(wrapper.findAll('button').some((button) => button.text().includes('上传文件'))).toBe(true)
+    expect(apiMocks.getKb).toHaveBeenCalledWith('team-1', 'kb-1')
+    expect(wrapper.get('[data-testid="upload-target"]').text()).toBe('Java 资料')
+    expect(wrapper.get('input[type="file"]').attributes()).toHaveProperty('multiple')
+    expect(wrapper.text()).toContain('200')
+    wrapper.unmount()
   })
 
-  it('submits product and version metadata with the upload form', async () => {
-    apiMocks.listKbs.mockResolvedValue(page([knowledgeBase('kb-1', 'Java 资料')]))
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true })
-    vi.stubGlobal('fetch', fetchMock)
+  it('submits shared metadata, seals the batch and lets the user continue uploading', async () => {
     const wrapper = await mountPage()
-
     const input = wrapper.get('input[type="file"]')
-    Object.defineProperty(input.element, 'files', {
-      value: [new File(['# Guide'], 'guide.md', { type: 'text/markdown' })],
-    })
+    Object.defineProperty(input.element, 'files', { value: [
+      new File(['# Guide'], 'guide.md', { type: 'text/markdown' }),
+      new File(['# Records'], 'records.md', { type: 'text/markdown' }),
+    ] })
     await input.trigger('change')
-    await wrapper.get('[data-testid="upload-product"]').setValue('TechVault')
-    await wrapper.get('[data-testid="upload-versions"]').setValue('1.0, 2.0')
+    await setControlValue(control(wrapper, '[data-testid="upload-product"]'), 'TechVault')
+    await setControlValue(control(wrapper, '[data-testid="upload-versions"]'), '1.0, 2.0')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-
-    const body = fetchMock.mock.calls[0][1].body as FormData
-    expect(body.get('product')).toBe('TechVault')
-    expect(body.getAll('version_values')).toEqual(['1.0', '2.0'])
-    vi.unstubAllGlobals()
+    expect(apiMocks.createUploadBatch).toHaveBeenCalledWith(expect.objectContaining({ team_id: 'team-1', kb_id: 'kb-1', product: 'TechVault', version_values: ['1.0', '2.0'] }))
+    expect(apiMocks.createUploadBatch.mock.calls[0][0].files).toHaveLength(2)
+    expect(apiMocks.uploadDocument).toHaveBeenCalledTimes(2)
+    const form = apiMocks.uploadDocument.mock.calls[0][0] as FormData
+    expect(form.get('batch_id')).toBe('batch-1')
+    expect(form.get('kb_id')).toBe('kb-1')
+    expect(apiMocks.sealUploadBatch).toHaveBeenCalledWith('team-1', 'batch-1')
+    expect(wrapper.text()).toContain('查看处理进度')
+    const button = wrapper.findAll('button').find((button) => button.text() === '继续上传')!
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选 0 个文件')
+    wrapper.unmount()
   })
+  it.each([[1, '/tasks/run-1'], [2, '/upload-batches/batch-1']] as const)(
+    'routes %i uploaded files to the matching task or batch', async (count, path) => {
+      const wrapper = await mountPage()
+      const input = wrapper.get('input[type="file"]')
+      Object.defineProperty(input.element, 'files', { value: Array.from({ length: count }, (_, index) => new File(['Java'], `${index}.md`)) })
+      await input.trigger('change')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '查看处理进度')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.vm.$router.currentRoute.value.path).toBe(path)
+      wrapper.unmount()
+    },
+  )
+
 })

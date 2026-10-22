@@ -5,8 +5,6 @@ from sqlalchemy import select
 
 from backend.app.api.v1 import evaluations as evaluations_module
 from backend.app.db.models import AuditLog, ChunkRecord
-from backend.app.modules.sources import github as github_source_module
-from backend.app.modules.sources.github import GitHubSyncSummary
 
 
 RAW_DOCUMENT_TEXT = "raw document body must never enter audit details"
@@ -403,114 +401,6 @@ def test_evaluation_success_paths_are_audited_once(
     _assert_audit_details_safe(records)
 
 
-def test_source_and_credential_success_paths_are_audited_once(
-    api_client, api_app, admin_headers, monkeypatch
-):
-    team = _create_team(api_client, admin_headers, "Audit Source Team")
-    kb = _create_kb(api_client, admin_headers, team["id"], "Source KB")
-
-    credential = api_client.post(
-        "/api/v1/credentials/create",
-        json={"team_id": team["id"], "name": "GitHub", "secret": SOURCE_SECRET},
-        headers=admin_headers,
-    )
-    assert credential.status_code == 201, credential.text
-    credential_id = credential.json()["data"]["id"]
-
-    source = api_client.post(
-        "/api/v1/sources/github/create",
-        json={
-            "team_id": team["id"],
-            "kb_id": kb["id"],
-            "repo_url": "https://{0}@github.com/acme/handbook.git".format(
-                SOURCE_SECRET
-            ),
-            "branch": "main",
-            "path_filters": ["docs/"],
-            "credentials_id": credential_id,
-        },
-        headers=admin_headers,
-    )
-    assert source.status_code == 201, source.text
-    source_id = source.json()["data"]["id"]
-
-    updated = api_client.post(
-        "/api/v1/sources/update",
-        json={
-            "team_id": team["id"],
-            "source_id": source_id,
-            "branch": "release",
-            "path_filters": ["docs/", "runbooks/"],
-        },
-        headers=admin_headers,
-    )
-    assert updated.status_code == 200, updated.text
-
-    paused = api_client.post(
-        "/api/v1/sources/pause",
-        json={"team_id": team["id"], "source_id": source_id},
-        headers=admin_headers,
-    )
-    assert paused.status_code == 200, paused.text
-
-    resumed = api_client.post(
-        "/api/v1/sources/resume",
-        json={"team_id": team["id"], "source_id": source_id},
-        headers=admin_headers,
-    )
-    assert resumed.status_code == 200, resumed.text
-
-    def fake_sync(source, session, settings):
-        source.status = "active"
-        return GitHubSyncSummary(
-            source_id=source.id,
-            status="active",
-            cursor="commit-sha",
-            files_seen=1,
-            documents_created=1,
-            documents_updated=0,
-            documents_unchanged=0,
-            documents_deleted=0,
-            documents_failed=0,
-        )
-
-    monkeypatch.setattr(github_source_module, "sync_github_source", fake_sync)
-    synced = api_client.post(
-        "/api/v1/sources/sync",
-        json={"team_id": team["id"], "source_id": source_id},
-        headers=admin_headers,
-    )
-    assert synced.status_code == 202, synced.text
-
-    deleted_source = api_client.post(
-        "/api/v1/sources/delete",
-        json={"team_id": team["id"], "source_id": source_id},
-        headers=admin_headers,
-    )
-    assert deleted_source.status_code == 200, deleted_source.text
-
-    deleted_credential = api_client.post(
-        "/api/v1/credentials/delete",
-        json={"team_id": team["id"], "credential_id": credential_id},
-        headers=admin_headers,
-    )
-    assert deleted_credential.status_code == 200, deleted_credential.text
-
-    records = _audit_records(api_app, team["id"])
-    _assert_actions_once(
-        records,
-        {
-            "source.create",
-            "source.update",
-            "source.delete",
-            "source.pause",
-            "source.resume",
-            "source.sync",
-            "credential.create",
-            "credential.delete",
-        },
-    )
-    _assert_audit_details_safe(records)
 
 
 def test_chunk_success_paths_are_audited_once(
@@ -534,7 +424,7 @@ def test_chunk_success_paths_are_audited_once(
 
     with api_app.state.session_factory() as session:
         chunk = session.scalar(
-            select(ChunkRecord).where(ChunkRecord.document_id == document_id)
+            select(ChunkRecord).where(ChunkRecord.chunk_level == "child").where(ChunkRecord.document_id == document_id)
         )
         assert chunk is not None
         chunk_id = chunk.id

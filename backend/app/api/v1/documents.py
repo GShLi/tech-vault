@@ -209,7 +209,8 @@ def _new_ingestion_run(session: Session, document: Document) -> IngestionRun:
         current_stage="queued",
         stage_progress_pct=0,
     )
-    document.doc_status = "building"
+    if document.doc_status != "active":
+        document.doc_status = "building"
     session.add(run)
     session.commit()
     return run
@@ -224,15 +225,6 @@ def _prepare_rebuild_document(
         session,
         session.get(KnowledgeBase, document.knowledge_base_id).team_id,
     )
-    if generation_id and settings.enable_indexing:
-        asyncio.run(delete_document_from_indexes(settings, generation_id, document.id))
-    _set_document_chunk_state(
-        session,
-        document.id,
-        document_status="building",
-        chunk_status="disabled",
-    )
-    session.commit()
     run = _new_ingestion_run(session, document)
     return run, generation_id
 
@@ -366,6 +358,8 @@ def upload_document(
     version_values: Optional[List[str]] = Form(None),
     visibility: str = Form("team_shared"),
     data_classification: str = Form("internal"),
+    batch_id: Optional[str] = Form(None),
+    batch_file_id: Optional[str] = Form(None),
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -377,6 +371,12 @@ def upload_document(
         safe_file_name = normalize_file_name(file.filename or "")
     except ValueError as error:
         raise ApiError(400, "INVALID_ARGUMENT", str(error)) from error
+    from backend.app.rag.parsing.router import validate_document_type
+    from backend.app.rag.parsing.contracts import ParseError
+    try:
+        mime_type = validate_document_type(safe_file_name, file.content_type or "")
+    except ParseError as error:
+        raise ApiError(400, error.code, str(error)) from error
     ext = "." + safe_file_name.rsplit(".", 1)[-1].lower()
     if ext not in _ALLOWED_EXTENSIONS:
         raise ApiError(
@@ -389,6 +389,29 @@ def upload_document(
         version_values=version_values,
         metadata=metadata,
     )
+
+    batch = batch_item = None
+    if bool(batch_id) != bool(batch_file_id):
+        raise ApiError(400, "INVALID_ARGUMENT", "Both batch_id and batch_file_id are required.")
+    if batch_id:
+        from backend.app.api.v1.upload_batches import authorized_batch
+        from backend.app.db.models import UploadBatchFile
+        batch = authorized_batch(session, team_id, batch_id, user, lock=True)
+        batch_item = session.scalar(select(UploadBatchFile).where(
+            UploadBatchFile.batch_id == batch.id, UploadBatchFile.client_id == batch_file_id,
+        ).with_for_update())
+        if batch.kb_id != kb_id or batch_item is None or batch_item.file_name != safe_file_name:
+            raise ApiError(409, "BATCH_FILE_MISMATCH", "File does not match the upload manifest.")
+        if file.size is not None and file.size != batch_item.size_bytes:
+            raise ApiError(409, "BATCH_FILE_MISMATCH", "File size does not match the upload manifest.")
+        if batch_item.document_id:
+            existing = _document_or_error(session, team_id, batch_item.document_id, user)
+            return envelope({"document": _document_view(existing),
+                             "document_version_id": existing.current_version_id,
+                             "ingestion_run_id": batch_item.run_id}, request.state.request_id)
+        shared = json.loads(batch.metadata_json)
+        effective_product, effective_versions = shared["product"] or None, shared["version_values"]
+        visibility, data_classification = shared["visibility"], shared["data_classification"]
 
     document_id = new_ulid()
     version_id = new_ulid()
@@ -422,6 +445,7 @@ def upload_document(
         knowledge_base_id=kb_id,
         owner_user_id=user.id,
         file_name=safe_file_name,
+        mime_type=mime_type,
         source_uri=str(stored_file.path),
         object_uri=stored_file.object_uri,
         product=effective_product,
@@ -450,6 +474,14 @@ def upload_document(
         stage_progress_pct=0,
     )
     session.add(ingestion_run)
+    if batch_item:
+        if stored_file.size_bytes != batch_item.size_bytes:
+            raise ApiError(409, "BATCH_FILE_MISMATCH", "File size does not match the upload manifest.")
+        session.flush()
+        batch_item.document_id, batch_item.run_id = document.id, ingestion_run.id
+        batch.updated_at = utc_now()
+        if batch.sealed_at:
+            batch.status = "queued"
     write_audit(
         session,
         team_id=team_id,
@@ -467,12 +499,8 @@ def upload_document(
     )
     session.commit()
 
-    _dispatch_ingestion(
-        document,
-        ingestion_run,
-        session,
-        request.app.state.settings,
-    )
+    if batch is None:
+        _dispatch_ingestion(document, ingestion_run, session, request.app.state.settings)
 
     return envelope(
         {
@@ -491,6 +519,7 @@ def list_documents(
     kb_id: str,
     limit: int = 20,
     cursor: Optional[str] = None,
+    q: Optional[str] = None,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -503,6 +532,8 @@ def list_documents(
         Document.doc_status != "deleted",
     )
     query = query.where(_readable_documents_filter(session, team_id, user))
+    if q and q.strip():
+        query = query.where(Document.file_name.icontains(q.strip(), autoescape=True))
     if cursor is not None:
         after_created, after_id = decode_cursor(cursor)
         query = query.where(
@@ -537,8 +568,15 @@ def get_document(
 ):
     _membership_or_error(session, team_id, user.id)
     document = _document_or_error(session, team_id, document_id, user)
+    version = session.get(DocumentVersion, document.current_version_id) if document.current_version_id else None
+    run = session.scalar(select(IngestionRun).where(IngestionRun.document_version_id == document.current_version_id)
+                         .order_by(IngestionRun.created_at.desc(), IngestionRun.id.desc()))
     return envelope(
         DocumentDetailView(
+            parse_metadata=json.loads(version.parse_metadata or "{}") if version else {},
+            chunking_metadata=json.loads(version.chunking_metadata or "{}") if version else {},
+            quality_metrics=json.loads(run.quality_metrics or "{}") if run else {},
+            failure_details=json.loads(run.failure_details or "{}") if run else {},
             id=document.id,
             knowledge_base_id=document.knowledge_base_id,
             owner_user_id=document.owner_user_id,
@@ -568,6 +606,7 @@ def list_ingestion_runs(
     team_id: str,
     limit: int = 20,
     cursor: Optional[str] = None,
+    kb_id: Optional[str] = None,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -588,6 +627,9 @@ def list_ingestion_runs(
         ),
         _readable_documents_filter(session, team_id, user),
     )
+    if kb_id:
+        _kb_or_error(session, team_id, kb_id, user.id)
+        query = query.where(Document.knowledge_base_id == kb_id)
     if cursor is not None:
         after_created, after_id = decode_cursor(cursor)
         query = query.where(
@@ -605,10 +647,16 @@ def list_ingestion_runs(
         encode_cursor(page_rows[-1].created_at, page_rows[-1].id)
         if has_more and page_rows else None
     )
+    names = dict(session.execute(select(DocumentVersion.id, Document.file_name).join(
+        Document, DocumentVersion.document_id == Document.id,
+    ).where(DocumentVersion.id.in_([run.document_version_id for run in page_rows]))).all())
     return page_envelope(
         [
             IngestionRunView(
+                quality_metrics=json.loads(run.quality_metrics or "{}"),
+                failure_details=json.loads(run.failure_details or "{}"),
                 id=run.id,
+                file_name=names.get(run.document_version_id),
                 document_version_id=run.document_version_id,
                 status=run.status,
                 current_stage=run.current_stage,
@@ -636,6 +684,8 @@ def get_ingestion_run(
     run = _run_or_error(session, team_id, run_id, user)
     return envelope(
         IngestionRunView(
+                quality_metrics=json.loads(run.quality_metrics or "{}"),
+                failure_details=json.loads(run.failure_details or "{}"),
             id=run.id,
             document_version_id=run.document_version_id,
             status=run.status,

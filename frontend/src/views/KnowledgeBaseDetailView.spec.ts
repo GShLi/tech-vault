@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -12,8 +13,8 @@ const apiMocks = vi.hoisted(() => ({
   listIngestions: vi.fn(),
   listKbMembers: vi.fn(),
   listMembers: vi.fn(),
-  listSources: vi.fn(),
   updateKbMembers: vi.fn(),
+  updateKb: vi.fn(),
 }))
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -167,9 +168,14 @@ async function mountPage(role: 'leader' | 'member' | 'viewer' = 'leader') {
     routes: [
       { path: '/knowledge-bases/:kbId', component: KnowledgeBaseDetailView },
       { path: '/knowledge-bases', component: { template: '<div />' } },
-      { path: '/knowledge-bases/:kbId/settings', component: { template: '<div />' } },
-      { path: '/knowledge-bases/:kbId/sources/github', component: { template: '<div />' } },
-      { path: '/knowledge-bases/:kbId/upload', component: { template: '<div />' } },
+      {
+        path: '/knowledge-bases/:kbId/settings',
+        component: { template: '<div />' },
+      },
+      {
+        path: '/knowledge-bases/:kbId/upload',
+        component: { template: '<div />' },
+      },
       { path: '/documents/:documentId', component: { template: '<div />' } },
       { path: '/tasks', component: { template: '<div />' } },
       { path: '/tasks/:taskId', component: { template: '<div />' } },
@@ -198,10 +204,6 @@ describe('KnowledgeBaseDetailView member scope', () => {
       data: [],
       meta: { next_cursor: null, has_more: false, request_id: 'req-docs' },
     })
-    apiMocks.listSources.mockResolvedValue({
-      data: [],
-      meta: { next_cursor: null, has_more: false, request_id: 'req-sources' },
-    })
     apiMocks.listIngestions.mockResolvedValue({
       data: [],
       meta: { next_cursor: null, has_more: false, request_id: 'req-tasks' },
@@ -222,7 +224,12 @@ describe('KnowledgeBaseDetailView member scope', () => {
   it('loads and displays the current knowledge base member scope', async () => {
     const wrapper = await mountPage('member')
 
-    expect(apiMocks.listKbMembers).toHaveBeenCalledWith('team-1', 'kb-1', null, 100)
+    expect(apiMocks.listKbMembers).toHaveBeenCalledWith(
+      'team-1',
+      'kb-1',
+      null,
+      100,
+    )
     expect(wrapper.text()).toContain('Leader')
     expect(wrapper.text()).toContain('leader@example.com')
     expect(wrapper.text()).toContain('Member')
@@ -232,17 +239,33 @@ describe('KnowledgeBaseDetailView member scope', () => {
 
   it('lets a leader select any active team member and refreshes after save', async () => {
     apiMocks.listKbMembers
-      .mockResolvedValueOnce(pageEnvelope([kbMember('user-1'), kbMember('user-2')]))
-      .mockResolvedValueOnce(pageEnvelope([kbMember('user-1'), kbMember('user-3')]))
+      .mockResolvedValueOnce(
+        pageEnvelope([kbMember('user-1'), kbMember('user-2')]),
+      )
+      .mockResolvedValueOnce(
+        pageEnvelope([kbMember('user-1'), kbMember('user-3')]),
+      )
 
     const wrapper = await mountPage('leader')
 
-    expect(wrapper.find('[data-testid="kb-member-option-user-2"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="kb-member-option-user-3"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="kb-member-option-user-4"]').exists()).toBe(false)
+    expect(
+      control(wrapper, '[data-testid="kb-member-option-user-2"]').exists(),
+    ).toBe(true)
+    expect(
+      control(wrapper, '[data-testid="kb-member-option-user-3"]').exists(),
+    ).toBe(true)
+    expect(
+      wrapper.find('[data-testid="kb-member-option-user-4"]').exists(),
+    ).toBe(false)
 
-    await wrapper.get('[data-testid="kb-member-option-user-2"]').setValue(false)
-    await wrapper.get('[data-testid="kb-member-option-user-3"]').setValue(true)
+    await setControlValue(
+      control(wrapper, '[data-testid="kb-member-option-user-2"]'),
+      false,
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="kb-member-option-user-3"]'),
+      true,
+    )
     await wrapper.get('[data-testid="kb-member-save"]').trigger('click')
     await flushPromises()
 
@@ -260,8 +283,12 @@ describe('KnowledgeBaseDetailView member scope', () => {
     async (role) => {
       const wrapper = await mountPage(role)
 
-      expect(wrapper.find('[data-testid="kb-member-option-user-1"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="kb-member-save"]').exists()).toBe(false)
+      expect(
+        wrapper.find('[data-testid="kb-member-option-user-1"]').exists(),
+      ).toBe(false)
+      expect(wrapper.find('[data-testid="kb-member-save"]').exists()).toBe(
+        false,
+      )
       expect(apiMocks.listMembers).not.toHaveBeenCalled()
       expect(wrapper.text()).toContain('leader@example.com')
     },
@@ -278,20 +305,23 @@ describe('KnowledgeBaseDetailView member scope', () => {
     expect(wrapper.find('[data-testid="kb-member-save"]').exists()).toBe(false)
   })
 
-  it('shows upload and source entry points to an ordinary member', async () => {
+  it('shows upload without a GitHub source entry point', async () => {
     const wrapper = await mountPage('member')
 
     expect(wrapper.text()).toContain('上传文档')
-    expect(wrapper.text()).toContain('来源')
+    expect(wrapper.text()).not.toContain('来源')
     expect(
       wrapper.find('a[href="/knowledge-bases/kb-1/settings"]').exists(),
     ).toBe(false)
   })
 
-  it('loads every document page before rendering aggregate and selector data', async () => {
+  it('loads document pages on demand and filters tasks by knowledge base', async () => {
     apiMocks.listDocs
       .mockResolvedValueOnce(
-        pageEnvelopeWithCursor([documentView('doc-1', 'first.md')], 'cursor-docs'),
+        pageEnvelopeWithCursor(
+          [documentView('doc-1', 'first.md')],
+          'cursor-docs',
+        ),
       )
       .mockResolvedValueOnce(
         pageEnvelopeWithCursor([documentView('doc-2', 'second.md')], null),
@@ -304,16 +334,50 @@ describe('KnowledgeBaseDetailView member scope', () => {
       'team-1',
       'kb-1',
       null,
-      100,
+      20,
+      '',
     )
+    expect(apiMocks.listDocs).toHaveBeenCalledTimes(1)
+    const more = wrapper.findAll('button').find((button) => button.text() === '加载更多文档')!
+    await more.trigger('click')
+    await flushPromises()
     expect(apiMocks.listDocs).toHaveBeenNthCalledWith(
       2,
       'team-1',
       'kb-1',
       'cursor-docs',
-      100,
+      20,
+      '',
     )
     expect(wrapper.text()).toContain('first.md')
     expect(wrapper.text()).toContain('second.md')
+    expect(apiMocks.listIngestions).toHaveBeenCalledWith('team-1', null, 5, 'kb-1')
   })
+  it('edits the title in place and can cancel without saving', async () => {
+    const wrapper = await mountPage('leader')
+    await wrapper.get('[data-testid="kb-inline-edit"]').trigger('click')
+    await setControlValue(control(wrapper, '[data-testid="kb-inline-name"]'), '新版 Java 资料')
+    const cancel = wrapper.findAll('button').find((button) => button.text() === '取消')!
+    await cancel.trigger('click')
+    expect(apiMocks.updateKb).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Java 资料')
+    await wrapper.get('[data-testid="kb-inline-edit"]').trigger('click')
+    apiMocks.updateKb.mockResolvedValue({ ...kb, name: '新版 Java 资料', version: 2 })
+    await setControlValue(control(wrapper, '[data-testid="kb-inline-name"]'), '新版 Java 资料')
+    await wrapper.get('[data-testid="kb-inline-save"]').trigger('click')
+    await flushPromises()
+    expect(apiMocks.updateKb).toHaveBeenCalledWith({ team_id: 'team-1', kb_id: 'kb-1', name: '新版 Java 资料', description: kb.description }, 1)
+    expect(wrapper.text()).toContain('新版 Java 资料')
+  })
+
+  it('searches documents when Enter is pressed', async () => {
+    const wrapper = await mountPage('member')
+    const input = wrapper.get('input[placeholder="搜索文件名"]')
+    await input.setValue(' records ')
+    await input.trigger('keydown', { key: 'Enter', code: 'Enter', keyCode: 13 })
+    await flushPromises()
+    expect(apiMocks.listDocs).toHaveBeenLastCalledWith('team-1', 'kb-1', null, 20, 'records')
+    wrapper.unmount()
+  })
+
 })

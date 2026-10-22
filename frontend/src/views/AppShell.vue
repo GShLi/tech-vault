@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import {
+  Button as AButton,
+  Menu as AMenu,
+  MenuItem as AMenuItem,
+  MenuItemGroup as AMenuItemGroup,
+  Option as AOption,
+  Select as ASelect,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onBeforeUnmount, onMounted, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -60,8 +70,18 @@ const governanceItems: NavItem[] = [
 const adminItems: NavItem[] = [
   { to: '/admin/users', label: '用户管理', icon: UserPlus, adminOnly: true },
   { to: '/admin/audit', label: '全局审计', icon: ScrollText, adminOnly: true },
-  { to: '/admin/model-policy', label: '系统级模型策略', icon: ShieldCheck, adminOnly: true },
-  { to: '/admin/model-providers', label: '供应商准入', icon: KeyRound, adminOnly: true },
+  {
+    to: '/admin/model-policy',
+    label: '系统级模型策略',
+    icon: ShieldCheck,
+    adminOnly: true,
+  },
+  {
+    to: '/admin/model-providers',
+    label: '供应商准入',
+    icon: KeyRound,
+    adminOnly: true,
+  },
   { to: '/admin/system', label: '系统状态', icon: Server, adminOnly: true },
 ]
 
@@ -71,11 +91,24 @@ function visible(item: NavItem): boolean {
   return true
 }
 
+const activeNavKey = computed(() => {
+  const paths = [...workspaceItems, ...governanceItems, ...adminItems].map(
+    (item) => item.to,
+  )
+  return (
+    paths.find(
+      (path) => route.path === path || route.path.startsWith(`${path}/`),
+    ) ?? route.path
+  )
+})
+
 const pageTitle = computed(() => String(route.meta.title ?? 'TechVault'))
 
-function onTeamChange(event: Event): void {
-  const teamId = (event.target as HTMLSelectElement).value
+async function onTeamChange(value: unknown): Promise<void> {
+  const teamId = String(value)
   if (!teamId) return
+  if (teamId === team.selectedTeamId) return
+  if (team.beforeChange && !await team.beforeChange()) return
   team.selectTeam(teamId)
   if (route.path === '/teams') router.push('/knowledge-bases')
 }
@@ -113,41 +146,136 @@ onBeforeUnmount(() => {
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark"><BookOpen :size="20" /></div>
-        <div class="brand-copy"><strong>TechVault</strong><span>典阁</span></div>
+        <div class="brand-copy">
+          <strong>TechVault</strong>
+          <span>典阁</span>
+        </div>
       </div>
 
       <div v-if="team.memberships.length" class="team-control">
         <label for="team-selector">当前团队</label>
-        <select id="team-selector" data-testid="team-selector" :value="team.selectedTeamId ?? ''" @change="onTeamChange">
-          <option value="" disabled>选择团队</option>
-          <option v-for="membership in team.memberships" :key="membership.team_id" :value="membership.team_id">{{ membership.team_name }}</option>
-        </select>
-        <span v-if="team.currentMembership" class="team-role">{{ roleLabels[team.currentMembership.role] ?? team.currentMembership.role }}</span>
+        <a-select
+          id="team-selector"
+          data-testid="team-selector"
+          @change="onTeamChange"
+          :model-value="team.selectedTeamId ?? ''"
+        >
+          <a-option value="" disabled>选择团队</a-option>
+          <a-option
+            v-for="membership in team.memberships"
+            :key="membership.team_id"
+            :value="membership.team_id"
+          >
+            {{ membership.team_name }}
+          </a-option>
+        </a-select>
+        <span v-if="team.currentMembership" class="team-role">
+          {{
+            roleLabels[team.currentMembership.role] ??
+            team.currentMembership.role
+          }}
+        </span>
       </div>
 
       <nav class="nav" aria-label="主导航">
-        <span class="nav-section-label">工作区</span>
-        <RouterLink v-for="item in workspaceItems.filter(visible)" :key="item.to" :to="item.to" class="nav-link"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span></RouterLink>
-        <span class="nav-section-label">治理</span>
-        <RouterLink v-for="item in governanceItems.filter(visible)" :key="item.to" :to="item.to" class="nav-link"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span></RouterLink>
-        <template v-if="auth.me?.user.is_super_admin">
-          <span class="nav-section-label">平台管理</span>
-          <RouterLink v-for="item in adminItems.filter(visible)" :key="item.to" :to="item.to" class="nav-link"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span></RouterLink>
-        </template>
-        <span class="nav-section-label">团队</span>
-        <RouterLink to="/teams" class="nav-link"><Users :size="18" /><span>团队选择</span></RouterLink>
+        <a-menu
+          theme="dark"
+          :selected-keys="[activeNavKey]"
+          @menu-item-click="router.push($event)"
+        >
+          <a-menu-item-group title="工作区">
+            <a-menu-item
+              v-for="item in workspaceItems.filter(visible)"
+              :key="item.to"
+            >
+              <template #icon>
+                <component :is="item.icon" :size="18" />
+              </template>
+              {{ item.label }}
+            </a-menu-item>
+          </a-menu-item-group>
+          <a-menu-item-group title="治理">
+            <a-menu-item
+              v-for="item in governanceItems.filter(visible)"
+              :key="item.to"
+            >
+              <template #icon>
+                <component :is="item.icon" :size="18" />
+              </template>
+              {{ item.label }}
+            </a-menu-item>
+          </a-menu-item-group>
+          <a-menu-item-group
+            v-if="auth.me?.user.is_super_admin"
+            title="平台管理"
+          >
+            <a-menu-item
+              v-for="item in adminItems.filter(visible)"
+              :key="item.to"
+            >
+              <template #icon>
+                <component :is="item.icon" :size="18" />
+              </template>
+              {{ item.label }}
+            </a-menu-item>
+          </a-menu-item-group>
+          <a-menu-item-group title="团队">
+            <a-menu-item key="/teams">
+              <template #icon><Users :size="18" /></template>
+              团队选择
+            </a-menu-item>
+          </a-menu-item-group>
+        </a-menu>
       </nav>
 
       <div class="sidebar-footer">
-        <div class="user-block"><span class="user-name">{{ auth.me?.user.display_name ?? '正在加载' }}</span><span class="user-email">{{ auth.me?.user.email ?? '' }}</span></div>
-        <button class="icon-button sidebar-logout" data-testid="logout-button" type="button" title="退出登录" @click="logout"><LogOut :size="18" /></button>
+        <div class="user-block">
+          <span class="user-name">
+            {{ auth.me?.user.display_name ?? '正在加载' }}
+          </span>
+          <span class="user-email">{{ auth.me?.user.email ?? '' }}</span>
+        </div>
+        <a-button
+          data-testid="logout-button"
+          title="退出登录"
+          @click="logout"
+          type="text"
+          html-type="button"
+          class="sidebar-logout"
+          shape="square"
+          aria-label="退出登录"
+        >
+          <LogOut :size="18" />
+        </a-button>
       </div>
     </aside>
 
     <main class="main-panel">
       <header class="topbar">
-        <div><h1>{{ pageTitle }}</h1><p v-if="team.currentMembership">{{ team.currentMembership.team_name }}</p></div>
-        <div class="topbar-actions"><span v-if="team.canManage" class="role-pill">团队管理员</span><RouterLink v-if="team.canManage" class="icon-button" to="/settings/index-generations" title="索引管理"><DatabaseZap :size="18" /></RouterLink></div>
+        <div>
+          <h1>{{ pageTitle }}</h1>
+          <p v-if="team.currentMembership">
+            {{ team.currentMembership.team_name }}
+          </p>
+        </div>
+        <div class="topbar-actions">
+          <a-tag v-if="team.canManage">团队管理员</a-tag>
+          <RouterLink
+            v-if="team.canManage"
+            to="/settings/index-generations"
+            custom
+            v-slot="{ href, navigate }"
+          >
+            <a-button
+              type="text"
+              :href="href"
+              @click="navigate"
+              title="索引管理"
+            >
+              <DatabaseZap :size="18" />
+            </a-button>
+          </RouterLink>
+        </div>
       </header>
       <section class="content"><router-view /></section>
     </main>

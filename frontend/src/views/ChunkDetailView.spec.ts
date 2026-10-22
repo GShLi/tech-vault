@@ -70,7 +70,10 @@ function history(id: string, content: string): ChunkHistoryView {
   }
 }
 
-function historyPage(data: ChunkHistoryView[], nextCursor: string | null = null) {
+function historyPage(
+  data: ChunkHistoryView[],
+  nextCursor: string | null = null,
+) {
   return {
     data,
     meta: {
@@ -81,11 +84,13 @@ function historyPage(data: ChunkHistoryView[], nextCursor: string | null = null)
   }
 }
 
-async function mountPage(options: {
-  role?: 'leader' | 'member' | 'viewer'
-  userId?: string
-  ownerUserId?: string
-} = {}) {
+async function mountPage(
+  options: {
+    role?: 'leader' | 'member' | 'viewer'
+    userId?: string
+    ownerUserId?: string
+  } = {},
+) {
   const {
     role = 'leader',
     userId = role === 'leader' ? 'user-1' : 'user-2',
@@ -141,7 +146,9 @@ describe('ChunkDetailView pagination', () => {
     vi.clearAllMocks()
     apiMocks.getChunk.mockResolvedValue(chunk)
     apiMocks.getChunkHistory
-      .mockResolvedValueOnce(historyPage([history('history-1', '初始记录')], 'cursor-1'))
+      .mockResolvedValueOnce(
+        historyPage([history('history-1', '初始记录')], 'cursor-1'),
+      )
       .mockResolvedValueOnce(historyPage([history('history-2', '更早记录')]))
   })
 
@@ -149,9 +156,13 @@ describe('ChunkDetailView pagination', () => {
     const wrapper = await mountPage()
 
     expect(wrapper.text()).toContain('初始记录')
-    expect(wrapper.find('[data-testid="chunk-history-load-more"]').exists()).toBe(true)
+    expect(
+      wrapper.find('[data-testid="chunk-history-load-more"]').exists(),
+    ).toBe(true)
 
-    await wrapper.get('[data-testid="chunk-history-load-more"] button').trigger('click')
+    await wrapper
+      .get('[data-testid="chunk-history-load-more"] button')
+      .trigger('click')
     await flushPromises()
 
     expect(apiMocks.getChunkHistory).toHaveBeenLastCalledWith(
@@ -160,7 +171,9 @@ describe('ChunkDetailView pagination', () => {
       'cursor-1',
     )
     expect(wrapper.text()).toContain('更早记录')
-    expect(wrapper.find('[data-testid="chunk-history-load-more"]').exists()).toBe(false)
+    expect(
+      wrapper.find('[data-testid="chunk-history-load-more"]').exists(),
+    ).toBe(false)
   })
 
   it('allows a member who owns the document to edit the chunk', async () => {

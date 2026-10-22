@@ -141,3 +141,18 @@ def test_document_retention_is_read_from_environment(monkeypatch):
 def test_document_retention_is_bounded(days):
     with pytest.raises(ValueError, match="document retention days"):
         Settings(environment="development", document_retention_days=days)
+
+
+def test_production_rejects_default_or_short_bootstrap_admin_password():
+    with pytest.raises(ValueError, match="admin password"):
+        Settings(environment="production", jwt_secret="unique-secret-" + "a" * 32)
+    with pytest.raises(ValueError, match="admin password"):
+        Settings(environment="production", jwt_secret="unique-secret-" + "a" * 32, admin_password="short")
+    with pytest.raises(ValueError, match="admin password"):
+        Settings(environment="production", jwt_secret="unique-secret-" + "a" * 32, admin_password=" " * 12)
+
+
+def test_production_accepts_explicit_bootstrap_admin_password():
+    settings = Settings(environment="production", jwt_secret="unique-secret-" + "a" * 32,
+                        admin_password="test-only-strong-password")
+    assert settings.environment == "production"

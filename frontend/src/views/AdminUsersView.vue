@@ -1,12 +1,33 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  normalizeApiError as toApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  InputPassword as AInputPassword,
+  Message,
+  Option as AOption,
+  Select as ASelect,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+
 import { Ban, RefreshCw, ShieldCheck, UserPlus } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import type { AdminUser, Membership, Team } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 
 type TeamRole = 'leader' | 'member' | 'viewer'
 
@@ -25,12 +46,6 @@ const loadingUsers = ref(false)
 const loadingMoreUsers = ref(false)
 const saving = ref(false)
 const actionKey = ref('')
-
-function toApiError(caught: unknown): ApiRequestError {
-  return caught instanceof ApiRequestError
-    ? caught
-    : new ApiRequestError(caught instanceof Error ? caught.message : '请求失败')
-}
 
 function membershipKey(userId: string, teamIdValue: string): string {
   return `${userId}:${teamIdValue}`
@@ -63,7 +78,9 @@ async function loadUsers(reset = true): Promise<void> {
     const page = await api.listUsers(reset ? null : usersNextCursor.value)
     const rows = reset
       ? page.data
-      : page.data.filter((item) => !users.value.some((user) => user.id === item.id))
+      : page.data.filter(
+          (item) => !users.value.some((user) => user.id === item.id),
+        )
     users.value = reset ? rows : [...users.value, ...rows]
     usersNextCursor.value = page.meta.next_cursor
     usersHasMore.value = page.meta.has_more
@@ -155,136 +172,242 @@ onMounted(async () => {
         <h2>用户管理</h2>
         <p>创建平台用户、调整账号状态并分配已有团队的成员角色。</p>
       </div>
-      <button class="secondary-button" type="button" :disabled="loadingUsers" @click="loadUsers(true)">
+      <a-button
+        :disabled="loadingUsers"
+        @click="loadUsers(true)"
+        type="secondary"
+        html-type="button"
+      >
         <RefreshCw :size="16" />
         刷新
-      </button>
+      </a-button>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-    </div>
+    </a-alert>
 
-    <section class="panel detail-panel">
+    <a-card class="page-card">
       <div class="detail-heading">
         <div class="detail-icon"><UserPlus :size="20" /></div>
-        <div><h3>创建用户</h3><p>外部注册已关闭，账号只能由平台管理员开通。</p></div>
+        <div>
+          <h3>创建用户</h3>
+          <p>外部注册已关闭，账号只能由平台管理员开通。</p>
+        </div>
       </div>
-      <form class="form-grid" @submit.prevent="createUser">
-        <label class="field">
-          <span>所属团队</span>
-          <select v-model="teamId" data-testid="admin-user-team" required>
-            <option value="" disabled>选择团队</option>
-            <option v-for="team in teams" :key="team.id" :value="team.id">
+      <a-form
+        class="form-grid"
+        :model="{ teamId, role, displayName, email, password }"
+        layout="vertical"
+        @submit-success="createUser"
+      >
+        <a-form-item
+          field="teamId"
+          :rules="[{ required: true, message: '请填写所属团队' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>所属团队</template>
+          <a-select v-model="teamId" data-testid="admin-user-team">
+            <a-option value="" disabled>选择团队</a-option>
+            <a-option v-for="team in teams" :key="team.id" :value="team.id">
               {{ team.name }}
-            </option>
-          </select>
-        </label>
-        <label class="field">
-          <span>团队角色</span>
-          <select v-model="role" data-testid="admin-user-role">
-            <option value="leader">团队管理员</option>
-            <option value="member">成员</option>
-            <option value="viewer">只读成员</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>显示名</span>
-          <input v-model="displayName" data-testid="admin-user-name" type="text" required />
-        </label>
-        <label class="field">
-          <span>邮箱</span>
-          <input v-model="email" data-testid="admin-user-email" type="email" required />
-        </label>
-        <label class="field">
-          <span>初始密码</span>
-          <input v-model="password" data-testid="admin-user-password" type="password" minlength="8" required />
-        </label>
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="role">
+          <template #label>团队角色</template>
+          <a-select v-model="role" data-testid="admin-user-role">
+            <a-option value="leader">团队管理员</a-option>
+            <a-option value="member">成员</a-option>
+            <a-option value="viewer">只读成员</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          field="displayName"
+          :rules="[{ required: true, message: '请填写显示名' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>显示名</template>
+          <a-input
+            v-model="displayName"
+            data-testid="admin-user-name"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item
+          field="email"
+          :rules="[
+            { required: true, message: '请填写邮箱' },
+            { type: 'email', message: '请输入有效的邮箱地址' },
+          ]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>邮箱</template>
+          <a-input
+            v-model="email"
+            data-testid="admin-user-email"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item
+          field="password"
+          :rules="[
+            { required: true, message: '请填写初始密码' },
+            { minLength: 8, message: '至少输入 8 个字符' },
+          ]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>初始密码</template>
+          <a-input-password
+            v-model="password"
+            data-testid="admin-user-password"
+            :input-attrs="{ required: true, minlength: '8' }"
+          ></a-input-password>
+        </a-form-item>
         <div class="form-actions">
-          <button class="primary-button" data-testid="admin-user-submit" type="submit" :disabled="saving || !teamId">
+          <a-button
+            data-testid="admin-user-submit"
+            :disabled="saving || !teamId"
+            type="primary"
+            html-type="submit"
+          >
             <UserPlus :size="16" />
             {{ saving ? '创建中' : '创建用户' }}
-          </button>
+          </a-button>
         </div>
-      </form>
-    </section>
+      </a-form>
+    </a-card>
 
-    <section class="panel detail-panel">
+    <a-card class="page-card">
       <div class="section-heading">
-        <div><h3>平台用户</h3><span class="muted-text">{{ users.length }} 个已加载账号</span></div>
+        <div>
+          <h3>平台用户</h3>
+          <span class="muted-text">{{ users.length }} 个已加载账号</span>
+        </div>
       </div>
-
-      <div v-if="loadingUsers && !users.length" class="loading-state">正在加载用户...</div>
+      <div v-if="loadingUsers && !users.length" class="loading-state">
+        正在加载用户...
+      </div>
       <div v-else-if="users.length" class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>用户</th><th>状态</th><th>团队与角色</th><th>创建时间</th><th class="actions-column">操作</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in users" :key="user.id">
-              <td data-label="用户">
+        <a-table
+          :data="users"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="用户">
+              <template #cell="{ record: user }">
                 <strong>{{ user.display_name }}</strong>
                 <span class="cell-subtitle">{{ user.email }}</span>
-                <span v-if="user.is_builtin" class="inline-badge"><ShieldCheck :size="13" />内置管理员</span>
-              </td>
-              <td data-label="状态"><StatusPill :status="user.status" /></td>
-              <td data-label="团队与角色">
-                <div v-if="user.memberships.length" class="membership-editor-list">
-                  <div v-for="membership in user.memberships" :key="membership.team_id" class="membership-editor">
-                    <span><strong>{{ membership.team_name }}</strong><small>{{ shortId(membership.team_id) }}</small></span>
+                <span v-if="user.is_builtin" class="inline-badge">
+                  <ShieldCheck :size="13" />
+                  内置管理员
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: user }">
+                <a-tag :color="statusColor(user.status)">
+                  {{ statusLabel(user.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="团队与角色">
+              <template #cell="{ record: user }">
+                <div
+                  v-if="user.memberships.length"
+                  class="membership-editor-list"
+                >
+                  <div
+                    v-for="membership in user.memberships"
+                    :key="membership.team_id"
+                    class="membership-editor"
+                  >
+                    <span>
+                      <strong>{{ membership.team_name }}</strong>
+                      <small>{{ shortId(membership.team_id) }}</small>
+                    </span>
                     <template v-if="!user.is_builtin">
-                      <select
-                        v-model="membershipRoles[membershipKey(user.id, membership.team_id)]"
+                      <a-select
+                        v-model="
+                          membershipRoles[
+                            membershipKey(user.id, membership.team_id)
+                          ]
+                        "
                         :data-testid="`admin-user-role-${user.id}-${membership.team_id}`"
                       >
-                        <option value="leader">团队管理员</option>
-                        <option value="member">成员</option>
-                        <option value="viewer">只读成员</option>
-                      </select>
-                      <button
-                        class="ghost-button"
-                        type="button"
+                        <a-option value="leader">团队管理员</a-option>
+                        <a-option value="member">成员</a-option>
+                        <a-option value="viewer">只读成员</a-option>
+                      </a-select>
+                      <a-button
                         :data-testid="`admin-user-role-save-${user.id}-${membership.team_id}`"
-                        :disabled="actionKey === `role:${membershipKey(user.id, membership.team_id)}`"
+                        :disabled="
+                          actionKey ===
+                          `role:${membershipKey(user.id, membership.team_id)}`
+                        "
                         @click="saveMembershipRole(user, membership)"
+                        type="text"
+                        html-type="button"
                       >
                         保存
-                      </button>
+                      </a-button>
                     </template>
                     <span v-else class="muted-text">{{ membership.role }}</span>
                   </div>
                 </div>
                 <span v-else class="muted-text">无团队成员关系</span>
-              </td>
-              <td data-label="创建时间">{{ formatDate(user.created_at) }}</td>
-              <td data-label="操作" class="actions-column">
-                <button
+              </template>
+            </a-table-column>
+            <a-table-column title="创建时间" :width="180">
+              <template #cell="{ record: user }">
+                {{ formatDate(user.created_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: user }">
+                <a-button
                   v-if="!user.is_builtin"
-                  class="ghost-button"
                   :class="{ 'danger-text': user.status === 'active' }"
-                  type="button"
                   :data-testid="`admin-user-${user.status === 'active' ? 'disable' : 'enable'}-${user.id}`"
                   :disabled="actionKey === `status:${user.id}`"
                   @click="toggleStatus(user)"
+                  type="text"
+                  html-type="button"
                 >
                   <Ban :size="14" />
                   {{ user.status === 'active' ? '停用' : '启用' }}
-                </button>
+                </a-button>
                 <span v-else class="muted-text">受保护</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
-      <div v-else class="empty-state"><UserPlus :size="24" /><span>暂无用户</span></div>
-
-      <div v-if="usersHasMore" class="load-more" data-testid="admin-users-load-more">
-        <button class="secondary-button" type="button" :disabled="loadingMoreUsers" @click="loadUsers(false)">
+      <a-empty v-else class="page-empty">
+        <template #image><UserPlus :size="24" /></template>
+        <span>暂无用户</span>
+      </a-empty>
+      <div
+        v-if="usersHasMore"
+        class="load-more"
+        data-testid="admin-users-load-more"
+      >
+        <a-button
+          :disabled="loadingMoreUsers"
+          @click="loadUsers(false)"
+          type="secondary"
+          html-type="button"
+        >
           {{ loadingMoreUsers ? '加载中' : '加载更多' }}
-        </button>
+        </a-button>
       </div>
-    </section>
+    </a-card>
   </div>
 </template>
 

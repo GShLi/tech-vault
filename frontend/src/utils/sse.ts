@@ -10,7 +10,7 @@ export function parseSseEventBlock(block: string): ParsedSseEvent | null {
   let id = ''
   const dataLines: string[] = []
 
-  for (const line of block.replace(/\r\n/g, '\n').split('\n')) {
+  for (const line of block.replace(/\r\n|\r/g, '\n').split('\n')) {
     if (!line || line.startsWith(':')) continue
     const colon = line.indexOf(':')
     const field = colon >= 0 ? line.slice(0, colon) : line
@@ -56,19 +56,38 @@ export async function readSseEvents(
     if (event) await onEvent(event)
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      if (block.trim()) await dispatch(block)
-      boundary = buffer.indexOf('\n\n')
+  // Normalize line endings across reads: CR and LF may arrive in different chunks.
+  let previousWasCr = false
+  const append = (text: string): void => {
+    for (const char of text) {
+      if (char === '\n' && previousWasCr) {
+        previousWasCr = false
+        continue
+      }
+      buffer += char === '\r' ? '\n' : char
+      previousWasCr = char === '\r'
     }
   }
 
-  buffer += decoder.decode().replace(/\r\n/g, '\n')
-  if (buffer.trim()) await dispatch(buffer)
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      append(done ? decoder.decode() : decoder.decode(value, { stream: true }))
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        if (block.trim()) await dispatch(block)
+        boundary = buffer.indexOf('\n\n')
+      }
+      if (done) break
+    }
+    if (buffer.trim()) await dispatch(buffer)
+  } catch (error) {
+    // Stop the transport if the consumer fails, without masking its original error.
+    await reader.cancel(error).catch(() => undefined)
+    throw error
+  } finally {
+    reader.releaseLock()
+  }
 }

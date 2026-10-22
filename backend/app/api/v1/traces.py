@@ -299,24 +299,7 @@ def get_trace(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    trace = _trace_or_error(session, team_id, trace_id, user)
-    feedback_by_message = _feedback_by_message(
-        session,
-        team_id,
-        [trace.message_id] if trace.message_id is not None else [],
-    )
-    trace_view = _trace_view(
-        trace,
-        feedback_by_message.get(trace.message_id or "", []),
-    )
-    return envelope(
-        _trace_view(
-            trace,
-            feedback_by_message.get(trace.message_id or "", []),
-            _trace_chunk_details(session, trace, user, trace_view),
-        ),
-        request.state.request_id,
-    )
+    return _trace_detail_response(request, session, team_id, trace_id, user)
 
 
 @router.get("/traces/export")
@@ -327,6 +310,10 @@ def export_trace(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    return _trace_detail_response(request, session, team_id, trace_id, user)
+
+
+def _trace_detail_response(request, session, team_id, trace_id, user):
     trace = _trace_or_error(session, team_id, trace_id, user)
     feedback_by_message = _feedback_by_message(
         session,

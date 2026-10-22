@@ -88,7 +88,7 @@ describe('P0 operations views', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('embedding')
+    expect(wrapper.text()).toContain('向量化中')
     expect(wrapper.text()).toContain('62%')
     expect(wrapper.text()).toContain('EMBEDDING_TIMEOUT')
     expect(wrapper.find('[data-testid="task-retry-run-1"]').exists()).toBe(true)

@@ -80,7 +80,10 @@ def _upload(api_client, headers, team_id, kb_id, file_name, body, visibility):
 def _chunk_id(api_app, document_id):
     with api_app.state.session_factory() as session:
         return session.scalar(
-            select(ChunkRecord.id).where(ChunkRecord.document_id == document_id)
+            select(ChunkRecord.id).where(
+                ChunkRecord.document_id == document_id,
+                ChunkRecord.chunk_level == "child",
+            )
         )
 
 

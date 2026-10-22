@@ -165,11 +165,6 @@ async function mountPage() {
       plugins: [makePinia(), router],
       stubs: {
         ASpin: { template: '<span />' },
-        ADrawer: {
-          props: ['visible'],
-          template:
-            '<div v-if="visible" data-testid="chunk-detail-drawer"><slot /></div>',
-        },
       },
     },
   })
@@ -227,8 +222,9 @@ describe('TraceDetailView', () => {
     )
 
     await trigger.trigger('click')
+    await flushPromises()
 
-    const drawer = wrapper.get('[data-testid="chunk-detail-drawer"]')
+    const drawer = wrapper.get('.arco-drawer')
     expect(drawer.text()).toContain('文档名称')
     expect(drawer.text()).toContain('virtual-threads.md')
     expect(drawer.text()).toContain('知识库')
@@ -265,8 +261,11 @@ describe('TraceDetailView', () => {
     expect(trigger.text()).toContain('无权查看该 Chunk 内容')
 
     await trigger.trigger('click')
-    const drawer = wrapper.get('[data-testid="chunk-detail-drawer"]')
-    expect(drawer.text()).toContain('该 Chunk 属于私有文档，当前账号无权查看详情')
+    await flushPromises()
+    const drawer = wrapper.get('.arco-drawer')
+    expect(drawer.text()).toContain(
+      '该 Chunk 属于私有文档，当前账号无权查看详情',
+    )
     expect(drawer.text()).not.toContain(
       'Virtual threads are lightweight Java threads.',
     )

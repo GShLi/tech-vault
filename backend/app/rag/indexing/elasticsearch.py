@@ -67,6 +67,11 @@ class ElasticsearchIndexWriter:
                 "_meta": {"synonym_version": SYNONYM_VERSION},
                 "properties": {
                     "chunk_id": {"type": "keyword"},
+                    "parent_chunk_id": {"type": "keyword"},
+                    "chunk_level": {"type": "keyword"},
+                    "node_type": {"type": "keyword"},
+                    "token_count": {"type": "integer"},
+                    "page_no": {"type": "integer"},
                     "document_id": {"type": "keyword"},
                     "document_version_id": {"type": "keyword"},
                     "team_id": {"type": "keyword"},
@@ -106,18 +111,26 @@ class ElasticsearchIndexWriter:
 
         actions: List[dict] = []
         for chunk in chunks:
+            if chunk.chunk_level != "child":
+                continue
             actions.append({"index": {"_id": chunk.chunk_id}})
             actions.append(self._document(chunk))
 
         for start in range(0, len(actions), 200):
             batch = actions[start : start + 200]
-            await self._request(
+            response = await self._request(
                 "POST",
                 "/" + index + "/_bulk",
                 content=self._bulk_body(batch),
                 headers={"Content-Type": "application/x-ndjson"},
             )
 
+            payload = response.json()
+            if payload.get("errors") or any(
+                operation.get("error") or operation.get("status", 200) >= 300
+                for item in payload.get("items", []) for operation in item.values()
+            ):
+                raise RuntimeError("Elasticsearch rejected one or more index operations")
         await self._request("POST", "/" + index + "/_refresh")
         self._staged.add(generation_id)
         self._validated.discard(generation_id)
@@ -248,6 +261,11 @@ class ElasticsearchIndexWriter:
             "heading_path": list(chunk.heading_path),
             "content": chunk.content,
             "content_vector": list(vector),
+            "source_locator": dict(chunk.source_locator),
+            **{name: getattr(chunk, name) for name in (
+                "parent_chunk_id", "chunk_level", "child_order", "node_type", "token_count", "page_no",
+                "parse_version", "chunking_version", "embedding_model", "tokenizer_model",
+            )},
         }
 
     async def validate(self, generation_id: str) -> ValidationResult:

@@ -6,11 +6,10 @@ from backend.app.core.config import Settings
 from backend.app.workers.tasks import (
     ingest_document,
     ingest_document_record,
+    ingest_upload_batch,
     reindex_generation,
     reindex_generation_record,
     run_evaluation,
-    sync_github_source_record,
-    sync_github_source_task,
 )
 
 
@@ -25,6 +24,13 @@ def dispatch_document_ingestion(
     *,
     run_id: str | None = None,
 ) -> dict:
+    from sqlalchemy import select
+    from backend.app.db.models import UploadBatchFile
+    item = session.scalar(select(UploadBatchFile).where(UploadBatchFile.run_id == run_id)) if run_id else None
+    if item:
+        item.processing_retries = 0
+        session.commit()
+        return dispatch_upload_batch(session, item.batch_id, settings)
     if settings.task_execution_mode == "inline":
         return ingest_document_record(
             session,
@@ -39,14 +45,20 @@ def dispatch_document_ingestion(
     return {"document_id": document_id, "status": "queued"}
 
 
-def dispatch_source_sync(session, source_id: str, settings: Settings) -> dict:
+def dispatch_upload_batch(session, batch_id: str, settings: Settings) -> dict:
     if settings.task_execution_mode == "inline":
-        return sync_github_source_record(session, source_id, settings)
+        from backend.app.modules.documents.batch_processing import process_upload_batch
+        # Inline mode is only used by local tests. Bound work even on errors.
+        for _ in range(settings.upload_batch_max_files * 4 + 1):
+            result = process_upload_batch(session, batch_id, settings)
+            if not result.get("deferred"):
+                return result
+        return result
     try:
-        sync_github_source_task.apply_async(args=[source_id], retry=False)
-    except Exception as error:  # noqa: BLE001
-        raise TaskDispatchError("The source synchronization queue is unavailable.") from error
-    return {"source_id": source_id, "status": "queued"}
+        ingest_upload_batch.apply_async(args=[batch_id], retry=False)
+    except Exception as error:
+        raise TaskDispatchError("The upload batch queue is unavailable.") from error
+    return {"batch_id": batch_id, "status": "queued"}
 
 
 def dispatch_generation_reindex(

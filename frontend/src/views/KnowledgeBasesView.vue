@@ -1,144 +1,73 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { Archive, BookOpen, Pencil, Plus } from 'lucide-vue-next'
-import { Message, Modal } from '@arco-design/web-vue'
-
-import { api, ApiRequestError } from '@/api/client'
+import { ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { Alert as AAlert, Button as AButton, Dropdown as ADropdown, Doption as ADoption,
+  Empty as AEmpty, Form as AForm, FormItem as AFormItem, Input as AInput, Message,
+  Modal, Modal as AModal, Spin as ASpin, Table as ATable, TableColumn as ATableColumn,
+  Tag as ATag, Textarea as ATextarea } from '@arco-design/web-vue'
+import { BookOpen, MoreHorizontal, Plus } from 'lucide-vue-next'
+import { api, normalizeApiError, type ApiRequestError } from '@/api/client'
+import { useCursorList } from '@/composables/useCursorList'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { useTeamStore } from '@/stores/team'
+import { formatDate, statusLabel as policyLabel } from '@/utils/format'
 import type { KnowledgeBase } from '@/types/api'
 
 const team = useTeamStore()
-
-const items = ref<KnowledgeBase[]>([])
-const loading = ref(false)
-const error = ref<ApiRequestError | null>(null)
-const nextCursor = ref<string | null>(null)
-const hasMore = ref(false)
+const router = useRouter()
+const { items, loading, error, hasMore, load } = useCursorList<KnowledgeBase>(
+  () => team.selectedTeamId, (teamId, cursor) => api.listKbs(teamId, cursor),
+)
 const modalVisible = ref(false)
-const editing = ref<KnowledgeBase | null>(null)
 const name = ref('')
 const description = ref('')
 const saving = ref(false)
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value))
+const formError = ref<ApiRequestError | null>(null)
+const discardDraft = useUnsavedChanges(
+  () => modalVisible.value && Boolean(name.value.trim() || description.value.trim()),
+  () => { modalVisible.value = false },
+)
+watch(() => team.selectedTeamId, () => { modalVisible.value = false; formError.value = null })
+function openCreate() {
+  name.value = ''; description.value = ''; formError.value = null; modalVisible.value = true
 }
-
-function policyLabel(value: string): string {
-  const labels: Record<string, string> = {
-    local_only: '仅本地模型',
-    external_allowed: '允许外部模型',
-    external_required: '仅外部模型',
-  }
-  return labels[value] ?? value
+async function closeCreate() {
+  if (saving.value) return
+  if (await discardDraft()) modalVisible.value = false
 }
-
-async function load(reset = true): Promise<void> {
+async function save() {
   const teamId = team.selectedTeamId
-  if (!teamId) {
-    items.value = []
+  if (!teamId || saving.value) return
+  if (!name.value.trim() || name.value.trim().length > 120 || description.value.length > 2000) {
+    formError.value = normalizeApiError(new Error('名称需为 1–120 字符，描述最多 2000 字符。'))
     return
   }
-
-  loading.value = true
-  error.value = null
+  saving.value = true; formError.value = null
   try {
-    const page = await api.listKbs(
-      teamId,
-      reset ? null : nextCursor.value,
-    )
-    items.value = reset ? page.data : [...items.value, ...page.data]
-    nextCursor.value = page.meta.next_cursor
-    hasMore.value = page.meta.has_more
-  } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
-  } finally {
-    loading.value = false
-  }
-}
-
-function openCreate(): void {
-  editing.value = null
-  name.value = ''
-  description.value = ''
-  modalVisible.value = true
-}
-
-function openEdit(kb: KnowledgeBase): void {
-  editing.value = kb
-  name.value = kb.name
-  description.value = kb.description ?? ''
-  modalVisible.value = true
-}
-
-async function save(): Promise<void> {
-  const teamId = team.selectedTeamId
-  if (!teamId) {
-    return
-  }
-
-  saving.value = true
-  error.value = null
-  try {
-    if (editing.value) {
-      await api.updateKb(
-        {
-          team_id: teamId,
-          kb_id: editing.value.id,
-          name: name.value.trim(),
-          description: description.value.trim() || null,
-        },
-        editing.value.version,
-      )
-      Message.success('知识库已更新')
-    } else {
-      await api.createKb({
-        team_id: teamId,
-        name: name.value.trim(),
-        description: description.value.trim() || null,
-      })
-      Message.success('知识库已创建')
-    }
+    const created = await api.createKb({ team_id: teamId, name: name.value.trim(), description: description.value.trim() || null })
+    if (teamId !== team.selectedTeamId) return
     modalVisible.value = false
-    await load(true)
-  } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
-  } finally {
-    saving.value = false
-  }
+    Message.success('知识库已创建，可以开始上传文档')
+    await router.push(`/knowledge-bases/${created.id}`)
+  } catch (caught) { if (teamId === team.selectedTeamId) formError.value = normalizeApiError(caught) }
+  finally { saving.value = false }
 }
-
-function archive(kb: KnowledgeBase): void {
+function archive(kb: KnowledgeBase) {
   const teamId = team.selectedTeamId
-  if (!teamId) {
-    return
-  }
-
+  if (!teamId) return
   Modal.confirm({
     title: '归档知识库',
-    content: `确认归档「${kb.name}」？归档后将不再出现在可用列表中。`,
-    okText: '归档',
-    cancelText: '取消',
+    content: `归档「${kb.name}」后，成员将无法继续访问或向该库上传文档，该库也不再参与检索。当前页面没有恢复入口，请确认后操作。`,
+    okText: '归档', cancelText: '取消',
     onOk: async () => {
       try {
-        await api.archiveKb(
-          { team_id: teamId, kb_id: kb.id },
-          kb.version,
-        )
+        await api.archiveKb({ team_id: teamId, kb_id: kb.id }, kb.version)
         Message.success('知识库已归档')
-        await load(true)
-      } catch (caught) {
-        error.value = caught instanceof ApiRequestError ? caught : null
-      }
+        if (teamId === team.selectedTeamId) await load()
+      } catch (caught) { if (teamId === team.selectedTeamId) error.value = normalizeApiError(caught) }
     },
   })
 }
-
-onMounted(() => load(true))
-watch(() => team.selectedTeamId, () => load(true))
 </script>
 
 <template>
@@ -147,131 +76,186 @@ watch(() => team.selectedTeamId, () => load(true))
       <div>
         <p>团队共享资料与文档集合。</p>
       </div>
-      <button
+      <a-button
         v-if="team.canManage"
-        class="primary-button"
         data-testid="kb-create-open"
-        type="button"
         @click="openCreate"
+        type="primary"
+        html-type="button"
       >
         <Plus :size="16" />
         新建知识库
-      </button>
+      </a-button>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      <button class="inline-link" type="button" @click="load(true)">重试</button>
-    </div>
+      <a-button @click="load(true)" type="text" html-type="button">
+        重试
+      </a-button>
+    </a-alert>
 
     <div v-if="loading && !items.length" class="panel loading-state">
       <a-spin />
       <span>正在加载知识库</span>
     </div>
 
-    <div v-else-if="!items.length" class="panel empty-state">
-      <BookOpen :size="28" />
+    <a-empty v-else-if="!items.length" class="page-empty">
+      <template #image><BookOpen :size="28" /></template>
       <h3>暂无知识库</h3>
       <p v-if="team.canManage">创建第一个知识库，开始整理团队资料。</p>
       <p v-else>当前团队还没有可用知识库。</p>
-      <button
+      <a-button
         v-if="team.canManage"
-        class="primary-button"
-        type="button"
         @click="openCreate"
+        type="primary"
+        html-type="button"
       >
         <Plus :size="16" />
         新建知识库
-      </button>
-    </div>
+      </a-button>
+    </a-empty>
 
     <div v-else class="panel">
       <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>描述</th>
-              <th>文档数</th>
-              <th>状态</th>
-              <th>更新时间</th>
-              <th v-if="team.canManage" class="actions-column">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="kb in items" :key="kb.id">
-              <td data-label="名称">
+        <a-table
+          :data="items"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="名称" :width="240">
+              <template #cell="{ record: kb }">
                 <RouterLink :to="`/knowledge-bases/${kb.id}`">
                   <strong data-testid="kb-row-name">{{ kb.name }}</strong>
                 </RouterLink>
-                <span class="cell-subtitle">{{ policyLabel(kb.default_model_policy_mode) }}</span>
-              </td>
-              <td class="muted-text" data-label="描述">{{ kb.description || '—' }}</td>
-              <td data-label="文档数">{{ kb.document_count }}</td>
-              <td data-label="状态">
+                <span class="cell-subtitle">
+                  {{ policyLabel(kb.default_model_policy_mode) }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="描述" :width="300">
+              <template #cell="{ record: kb }">
+                {{ kb.description || '—' }}
+              </template>
+            </a-table-column>
+            <a-table-column title="文档数" :width="80">
+              <template #cell="{ record: kb }">
+                {{ kb.document_count }}
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: kb }">
                 <a-tag :color="kb.status === 'active' ? 'green' : 'gray'">
                   {{ kb.status === 'active' ? '使用中' : '已归档' }}
                 </a-tag>
-              </td>
-              <td class="muted-text" data-label="更新时间">{{ formatDate(kb.updated_at) }}</td>
-              <td v-if="team.canManage" class="actions-column" data-label="操作">
-                <RouterLink class="icon-button" :to="`/knowledge-bases/${kb.id}`" title="查看详情">
-                  <BookOpen :size="16" />
+              </template>
+            </a-table-column>
+            <a-table-column title="更新时间" :width="180">
+              <template #cell="{ record: kb }">
+                {{ formatDate(kb.updated_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column v-if="team.canManage" title="操作" :width="180">
+              <template #cell="{ record: kb }">
+                <RouterLink
+                  :to="`/knowledge-bases/${kb.id}`"
+                  custom
+                  v-slot="{ href, navigate }"
+                >
+                  <a-button
+                    type="text"
+                    :href="href"
+                    @click="navigate"
+                    title="查看详情"
+                  >
+                    <BookOpen :size="16" />
+                  </a-button>
                 </RouterLink>
-                <button class="icon-button" type="button" title="编辑" @click="openEdit(kb)">
-                  <Pencil :size="16" />
-                </button>
-                <button class="icon-button danger-icon" type="button" title="归档" @click="archive(kb)">
-                  <Archive :size="16" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <a-dropdown trigger="click">
+                  <a-button type="text" aria-label="更多操作"><MoreHorizontal :size="16" /></a-button>
+                  <template #content>
+                    <a-doption @click="archive(kb)">归档知识库</a-doption>
+                  </template>
+                </a-dropdown>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
       <div v-if="hasMore" class="load-more">
-        <button class="ghost-button" type="button" :disabled="loading" @click="load(false)">
+        <a-button
+          :disabled="loading"
+          @click="load(false)"
+          type="text"
+          html-type="button"
+        >
           {{ loading ? '加载中' : '加载更多' }}
-        </button>
+        </a-button>
       </div>
     </div>
 
     <a-modal
       v-model:visible="modalVisible"
-      :title="editing ? '编辑知识库' : '新建知识库'"
+      title="新建知识库"
+      :mask-closable="false"
+      :on-before-cancel="() => { void closeCreate(); return false }"
       :footer="false"
       width="480px"
     >
-      <form class="form-stack" @submit.prevent="save">
-        <label class="field">
-          <span>名称</span>
-          <input
+      <a-alert v-if="formError" type="error" class="page-alert">{{ formError.message }}</a-alert>
+      <a-alert type="info" class="page-alert">新库默认允许外部模型，实际调用仍受团队策略与数据分类限制。创建后可管理成员访问范围。</a-alert>
+      <a-form
+        class="form-stack"
+        :model="{ name, description }"
+        layout="vertical"
+        @submit-success="save"
+      >
+        <a-form-item
+          field="name"
+          :rules="[{ required: true, message: '请填写名称' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>名称</template>
+          <a-input
             v-model="name"
             data-testid="kb-name-input"
-            type="text"
-            required
             placeholder="例如：Spring 技术资料"
-          />
-        </label>
-        <label class="field">
-          <span>描述</span>
-          <textarea v-model="description" rows="3" placeholder="知识库内容范围" />
-        </label>
+            type="text"
+            :max-length="120"
+            show-word-limit
+          ></a-input>
+        </a-form-item>
+        <a-form-item field="description">
+          <template #label>描述</template>
+          <a-textarea
+            v-model="description"
+            placeholder="知识库内容范围"
+            :max-length="2000"
+            :textarea-attrs="{ rows: '3' }"
+          ></a-textarea>
+        </a-form-item>
         <div class="modal-actions">
-          <button class="ghost-button" type="button" @click="modalVisible = false">
+          <a-button
+            @click="closeCreate"
+            type="text"
+            html-type="button"
+          >
             取消
-          </button>
-          <button
-            class="primary-button"
+          </a-button>
+          <a-button
             data-testid="kb-save"
-            type="submit"
             :disabled="saving"
+            type="primary"
+            html-type="submit"
           >
             {{ saving ? '保存中' : '保存' }}
-          </button>
+          </a-button>
         </div>
-      </form>
+      </a-form>
     </a-modal>
   </div>
 </template>

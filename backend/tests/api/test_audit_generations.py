@@ -77,6 +77,10 @@ def _seed_generations(session_factory, team_id):
                     index_generation=generation.id,
                 )
             )
+        session.flush()
+        from backend.app.rag.indexing.generation import save_generation_members
+        for generation in (first, second):
+            save_generation_members(session, generation.id, session.query(ChunkRecord).filter(ChunkRecord.index_generation == generation.id).all())
         session.commit()
         return first.id, second.id
 

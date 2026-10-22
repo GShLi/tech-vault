@@ -1,15 +1,39 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  loadAllPages,
+  normalizeApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Checkbox as ACheckbox,
+  Empty as AEmpty,
+  FormItem as AFormItem,
+  Message,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Boxes, RefreshCw } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError, loadAllPages } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
-import type { ChunkView, DocumentDetailView, DocumentView, KnowledgeBase } from '@/types/api'
-import { shortId } from '@/utils/format'
+import type {
+  ChunkView,
+  DocumentDetailView,
+  DocumentView,
+  KnowledgeBase,
+} from '@/types/api'
+import { shortId, statusLabel } from '@/utils/format'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -83,7 +107,10 @@ async function loadChunks(): Promise<void> {
     chunks.value = []
     return
   }
-  const page = await api.listChunks(team.selectedTeamId, selectedDocumentId.value)
+  const page = await api.listChunks(
+    team.selectedTeamId,
+    selectedDocumentId.value,
+  )
   chunks.value = page.data
   chunksNextCursor.value = page.meta.next_cursor
   chunksHasMore.value = page.meta.has_more
@@ -91,7 +118,12 @@ async function loadChunks(): Promise<void> {
 }
 
 async function loadMoreChunks(): Promise<void> {
-  if (!team.selectedTeamId || !selectedDocumentId.value || !chunksNextCursor.value) return
+  if (
+    !team.selectedTeamId ||
+    !selectedDocumentId.value ||
+    !chunksNextCursor.value
+  )
+    return
   loadingMoreChunks.value = true
   try {
     const page = await api.listChunks(
@@ -100,11 +132,14 @@ async function loadMoreChunks(): Promise<void> {
       chunksNextCursor.value,
     )
     const existingIds = new Set(chunks.value.map((chunk) => chunk.id))
-    chunks.value = [...chunks.value, ...page.data.filter((chunk) => !existingIds.has(chunk.id))]
+    chunks.value = [
+      ...chunks.value,
+      ...page.data.filter((chunk) => !existingIds.has(chunk.id)),
+    ]
     chunksNextCursor.value = page.meta.next_cursor
     chunksHasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMoreChunks.value = false
   }
@@ -119,7 +154,7 @@ async function load(): Promise<void> {
     await loadDocuments()
     await loadSelectionData()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -128,12 +163,13 @@ async function load(): Promise<void> {
 async function bulk(action: 'enable' | 'disable'): Promise<void> {
   if (!team.selectedTeamId || !selectedChunkIds.value.length) return
   try {
-    if (action === 'enable') await api.enableChunks(team.selectedTeamId, selectedChunkIds.value)
+    if (action === 'enable')
+      await api.enableChunks(team.selectedTeamId, selectedChunkIds.value)
     else await api.disableChunks(team.selectedTeamId, selectedChunkIds.value)
     Message.success(action === 'enable' ? 'Chunk 已启用' : 'Chunk 已禁用')
     await loadChunks()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -152,7 +188,7 @@ async function onKbChange(): Promise<void> {
     await loadDocuments()
     await loadSelectionData()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -160,7 +196,7 @@ async function onDocumentChange(): Promise<void> {
   try {
     await loadSelectionData()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 </script>
@@ -168,45 +204,152 @@ async function onDocumentChange(): Promise<void> {
 <template>
   <div>
     <div class="page-header">
-      <div><h2>Chunk 管理</h2><p>检查分块质量，编辑、启用、禁用或重建文档 Chunk。</p></div>
-      <button class="secondary-button" type="button" :disabled="loading" @click="load"><RefreshCw :size="16" />刷新</button>
+      <div>
+        <h2>Chunk 管理</h2>
+        <p>检查分块质量，编辑、启用、禁用或重建文档 Chunk。</p>
+      </div>
+      <a-button
+        :disabled="loading"
+        @click="load"
+        type="secondary"
+        html-type="button"
+      >
+        <RefreshCw :size="16" />
+        刷新
+      </a-button>
     </div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
 
     <section class="panel toolbar-panel">
-      <label class="inline-field"><span>知识库</span><select v-model="selectedKbId" @change="onKbChange"><option value="" disabled>选择知识库</option><option v-for="kb in kbs" :key="kb.id" :value="kb.id">{{ kb.name }}</option></select></label>
-      <label class="inline-field"><span>文档</span><select v-model="selectedDocumentId" @change="onDocumentChange"><option value="" disabled>选择文档</option><option v-for="document in documents" :key="document.id" :value="document.id">{{ document.file_name }}</option></select></label>
-      <div class="row-actions" v-if="canManageSelectedDocument && selectedChunkIds.length">
+      <a-form-item class="inline-field">
+        <template #label>知识库</template>
+        <a-select v-model="selectedKbId" @change="onKbChange">
+          <a-option value="" disabled>选择知识库</a-option>
+          <a-option v-for="kb in kbs" :key="kb.id" :value="kb.id">
+            {{ kb.name }}
+          </a-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item class="inline-field">
+        <template #label>文档</template>
+        <a-select v-model="selectedDocumentId" @change="onDocumentChange">
+          <a-option value="" disabled>选择文档</a-option>
+          <a-option
+            v-for="document in documents"
+            :key="document.id"
+            :value="document.id"
+          >
+            {{ document.file_name }}
+          </a-option>
+        </a-select>
+      </a-form-item>
+      <div
+        class="row-actions"
+        v-if="canManageSelectedDocument && selectedChunkIds.length"
+      >
         <span class="muted-text">已选 {{ selectedChunkIds.length }}</span>
-        <button class="secondary-button" type="button" @click="bulk('enable')">批量启用</button>
-        <button class="secondary-button danger-text" type="button" @click="bulk('disable')">批量禁用</button>
+        <a-button @click="bulk('enable')" type="secondary" html-type="button">
+          批量启用
+        </a-button>
+        <a-button
+          @click="bulk('disable')"
+          type="secondary"
+          html-type="button"
+          status="danger"
+        >
+          批量禁用
+        </a-button>
       </div>
     </section>
 
-    <div v-if="loading && !chunks.length" class="panel loading-state"><a-spin /><span>正在加载 Chunk</span></div>
-    <div v-else-if="!selectedDocumentId" class="panel empty-state"><Boxes :size="28" /><h3>请选择文档</h3><p>选择知识库和文档后查看分块。</p></div>
-    <div v-else-if="!chunks.length" class="panel empty-state"><Boxes :size="28" /><h3>暂无 Chunk</h3><p>文档可能仍在入库，或尚未成功解析。</p></div>
+    <div v-if="loading && !chunks.length" class="panel loading-state">
+      <a-spin />
+      <span>正在加载 Chunk</span>
+    </div>
+    <a-empty v-else-if="!selectedDocumentId" class="page-empty">
+      <template #image><Boxes :size="28" /></template>
+      <h3>请选择文档</h3>
+      <p>选择知识库和文档后查看分块。</p>
+    </a-empty>
+    <a-empty v-else-if="!chunks.length" class="page-empty">
+      <template #image><Boxes :size="28" /></template>
+      <h3>暂无 Chunk</h3>
+      <p>文档可能仍在入库，或尚未成功解析。</p>
+    </a-empty>
     <div v-else class="panel">
       <div class="table-wrap">
-        <table>
-          <thead><tr><th v-if="canManageSelectedDocument" class="check-column"></th><th>Chunk</th><th>内容</th><th>结构路径</th><th>状态</th><th>版本</th><th class="actions-column">操作</th></tr></thead>
-          <tbody>
-            <tr v-for="chunk in chunks" :key="chunk.id">
-              <td v-if="canManageSelectedDocument" data-label="选择"><input type="checkbox" :checked="selectedChunkIds.includes(chunk.id)" @change="toggleSelection(chunk.id)" /></td>
-              <td data-label="Chunk"><strong>{{ shortId(chunk.id) }}</strong></td>
-              <td data-label="内容"><span class="truncate-cell wide">{{ chunk.content }}</span></td>
-              <td data-label="结构路径">{{ chunk.heading_path.join(' / ') || '—' }}</td>
-              <td data-label="状态"><StatusPill :status="chunk.status" /></td>
-              <td data-label="版本">v{{ chunk.version }}</td>
-              <td data-label="操作"><RouterLink class="ghost-button" :to="`/chunks/${chunk.id}`">{{ canManageSelectedDocument ? '编辑' : '查看' }}</RouterLink></td>
-            </tr>
-          </tbody>
-        </table>
+        <a-table
+          :data="chunks"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column v-if="canManageSelectedDocument">
+              <template #cell="{ record: chunk }">
+                <a-checkbox
+                  @change="toggleSelection(chunk.id)"
+                  :model-value="selectedChunkIds.includes(chunk.id)"
+                  aria-label="选择"
+                ></a-checkbox>
+              </template>
+            </a-table-column>
+            <a-table-column title="Chunk" :width="180">
+              <template #cell="{ record: chunk }">
+                <strong>{{ shortId(chunk.id) }}</strong>
+              </template>
+            </a-table-column>
+            <a-table-column title="内容">
+              <template #cell="{ record: chunk }">
+                <span class="truncate-cell wide">{{ chunk.content }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="结构路径">
+              <template #cell="{ record: chunk }">
+                {{ chunk.heading_path.join(' / ') || '—' }}
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: chunk }">
+                <a-tag :color="statusColor(chunk.status)">
+                  {{ statusLabel(chunk.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="版本" :width="90">
+              <template #cell="{ record: chunk }">
+                v{{ chunk.version }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: chunk }">
+                <RouterLink
+                  :to="`/chunks/${chunk.id}`"
+                  custom
+                  v-slot="{ href, navigate }"
+                >
+                  <a-button type="text" :href="href" @click="navigate">
+                    {{ canManageSelectedDocument ? '编辑' : '查看' }}
+                  </a-button>
+                </RouterLink>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
       <div v-if="chunksHasMore" class="load-more">
-        <button class="secondary-button" type="button" :disabled="loadingMoreChunks" @click="loadMoreChunks">
+        <a-button
+          :disabled="loadingMoreChunks"
+          @click="loadMoreChunks"
+          type="secondary"
+          html-type="button"
+        >
           {{ loadingMoreChunks ? '加载中' : '加载更多' }}
-        </button>
+        </a-button>
       </div>
     </div>
   </div>

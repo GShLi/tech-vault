@@ -86,24 +86,27 @@ export function traceStageMeta(key: string): TraceStageMeta {
   }
 }
 
-export function traceTotalDuration(
+const stageParents: Array<[string, string]> = [
+  ['bm25_ms', 'retrieval_ms'],
+  ['dense_ms', 'retrieval_ms'],
+  ['gateway_query_rewrite_ms', 'rewrite_ms'],
+  ['gateway_embedding_ms', 'embedding_ms'],
+  ['gateway_rerank_ms', 'rerank_ms'],
+  ['gateway_answer_ms', 'generation_ms'],
+]
+
+export function traceStageParent(
+  key: string,
   latencies: Record<string, number>,
-): number {
-  const aliases: Array<[string, string]> = [
-    ['bm25_ms', 'retrieval_ms'],
-    ['dense_ms', 'retrieval_ms'],
-    ['gateway_query_rewrite_ms', 'rewrite_ms'],
-    ['gateway_embedding_ms', 'embedding_ms'],
-    ['gateway_rerank_ms', 'rerank_ms'],
-    ['gateway_answer_ms', 'generation_ms'],
-  ]
-  const excluded = new Set(
-    aliases
-      .filter(([, parent]) => latencies[parent] != null)
-      .map(([child]) => child),
-  )
+): string | null {
+  const parent = stageParents.find(([child]) => child === key)?.[1]
+  return parent && latencies[parent] != null ? parent : null
+}
+
+export function traceTotalDuration(latencies: Record<string, number>): number {
   return Object.entries(latencies).reduce((sum, [key, value]) => {
-    if (excluded.has(key) || !Number.isFinite(value)) return sum
+    if (traceStageParent(key, latencies) != null || !Number.isFinite(value))
+      return sum
     return sum + Math.max(0, value)
   }, 0)
 }

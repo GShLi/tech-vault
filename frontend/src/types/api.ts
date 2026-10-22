@@ -101,6 +101,10 @@ export interface DocumentView {
 }
 
 export interface DocumentDetailView extends DocumentView {
+  parse_metadata?: JsonRecord
+  chunking_metadata?: JsonRecord
+  quality_metrics?: JsonRecord
+  failure_details?: JsonRecord
   owner_user_id: string
   current_version_id: string | null
   source_uri: string | null
@@ -146,7 +150,55 @@ export interface ChunkHistoryView {
   created_at: string
 }
 
+export interface UploadLimits {
+  max_files: number
+  max_total_bytes: number
+  max_file_bytes: number
+  upload_concurrency: number
+}
+
+export interface UploadBatchFile {
+  id: string
+  client_id: string
+  file_name: string
+  size_bytes: number
+  document_id: string | null
+  run_id: string | null
+  status: string
+  stage: string
+  progress: number
+  error_code: string | null
+  failure_details: { message?: string }
+}
+
+export interface UploadBatch {
+  id: string
+  team_id: string
+  kb_id: string
+  status: string
+  sealed: boolean
+  metadata: { product: string; version_values: string[]; visibility: string; data_classification: string }
+  created_at: string
+  files: UploadBatchFile[]
+  counts: Record<string, number>
+  total: number
+}
+
+export interface UploadBatchInput {
+  client_id: string
+  team_id: string
+  kb_id: string
+  files: { client_id: string; file_name: string; size_bytes: number }[]
+  product: string
+  version_values: string[]
+  visibility: string
+  data_classification: string
+}
+
 export interface IngestionRun {
+  file_name?: string | null
+  quality_metrics?: JsonRecord
+  failure_details?: JsonRecord
   id: string
   document_version_id: string
   status: string
@@ -245,29 +297,6 @@ export interface TransferDocumentsResult {
   to_user_id: string
   transferred_documents: number
   transferred_chunks: number
-}
-
-export interface SourceConnection {
-  id: string
-  team_id: string
-  kb_id: string
-  source_type: string
-  repo_url: string
-  branch: string
-  path_filters: string[]
-  credentials_id: string | null
-  status: string
-  sync_cursor: string | null
-  created_by: string
-  created_at: string
-  updated_at: string
-}
-
-export interface CredentialView {
-  id: string
-  name: string
-  secret_masked: string
-  created_at: string
 }
 
 export interface ModelPolicy {

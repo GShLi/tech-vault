@@ -2,10 +2,12 @@ import axios, { AxiosError, AxiosHeaders } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 
 import type {
+  UploadLimits,
+  UploadBatch,
+  UploadBatchInput,
   AuditLogView,
   ChunkHistoryView,
   ChunkView,
-  CredentialView,
   DocumentDetailView,
   DocumentGrantView,
   DocumentVersion,
@@ -39,7 +41,6 @@ import type {
   AdminUser,
   PasswordChangeInput,
   Role,
-  SourceConnection,
   Team,
   TeamCreateInput,
   TeamUpdateInput,
@@ -75,7 +76,6 @@ export type {
   MessageView,
   ModelPolicy,
   ModelProvider,
-  SourceConnection,
   TraceView,
   ChatView,
 } from '@/types/api'
@@ -116,7 +116,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-export function normalizeApiError(error: unknown): ApiRequestError {
+export function normalizeApiError(error: unknown, fallback = '请求失败'): ApiRequestError {
   if (error instanceof ApiRequestError) return error
 
   if (axios.isAxiosError(error)) {
@@ -133,7 +133,7 @@ export function normalizeApiError(error: unknown): ApiRequestError {
     )
   }
 
-  return new ApiRequestError(error instanceof Error ? error.message : '请求失败', 'UNKNOWN_ERROR')
+  return new ApiRequestError(error instanceof Error ? error.message : fallback, 'UNKNOWN_ERROR')
 }
 
 export const http = axios.create({
@@ -231,6 +231,19 @@ async function postData<T>(url: string, body: object, headers?: Record<string, s
 }
 
 export const api = {
+  uploadLimits: () => getData<UploadLimits>('/upload-batches/limits'),
+  createUploadBatch: (body: UploadBatchInput) => postData<UploadBatch>('/upload-batches/create', body),
+  getUploadBatch: (teamId: string, batchId: string) => getData<UploadBatch>('/upload-batches/detail', { team_id: teamId, batch_id: batchId }),
+  listUploadBatches: (teamId: string, kbId: string) => getData<UploadBatch[]>('/upload-batches', { team_id: teamId, kb_id: kbId }),
+  sealUploadBatch: (teamId: string, batchId: string) => postData<UploadBatch>('/upload-batches/seal', { team_id: teamId, batch_id: batchId }),
+  retryUploadBatch: (teamId: string, batchId: string) => postData<UploadBatch>('/upload-batches/retry', { team_id: teamId, batch_id: batchId }),
+  async uploadDocument(form: FormData, onProgress: (percent: number) => void, signal?: AbortSignal) {
+    const response = await http.post<Envelope<{ document: DocumentView; ingestion_run_id: string }>>('/docs/upload', form, {
+      timeout: 0, signal,
+      onUploadProgress: (event) => onProgress(event.total ? Math.round(event.loaded / event.total * 100) : 0),
+    })
+    return response.data.data
+  },
   login(body: { email: string; password: string }): Promise<LoginResponse> {
     return postData<LoginResponse>('/auth/login', body)
   },
@@ -341,11 +354,13 @@ export const api = {
     kbId: string,
     cursor?: string | null,
     limit = 20,
+    query?: string,
   ): Promise<PageEnvelope<DocumentView>> {
     return getPage<DocumentView>('/docs', {
       team_id: teamId,
       kb_id: kbId,
       limit,
+      ...(query ? { q: query } : {}),
       ...(cursor ? { cursor } : {}),
     })
   },
@@ -483,10 +498,12 @@ export const api = {
     teamId: string,
     cursor?: string | null,
     limit = 20,
+    kbId?: string,
   ): Promise<PageEnvelope<IngestionRun>> {
     return getPage<IngestionRun>('/ingestions', {
       team_id: teamId,
       limit,
+      ...(kbId ? { kb_id: kbId } : {}),
       ...(cursor ? { cursor } : {}),
     })
   },
@@ -697,93 +714,6 @@ export const api = {
 
   listFacets(teamId: string): Promise<FacetView> {
     return getData<FacetView>('/facets', { team_id: teamId })
-  },
-
-  listSources(
-    teamId: string,
-    kbId?: string,
-    cursor?: string | null,
-    limit = 20,
-  ): Promise<PageEnvelope<SourceConnection>> {
-    return getPage<SourceConnection>('/sources', {
-      team_id: teamId,
-      ...(kbId ? { kb_id: kbId } : {}),
-      limit,
-      ...(cursor ? { cursor } : {}),
-    })
-  },
-  getSource(teamId: string, sourceId: string): Promise<SourceConnection> {
-    return getData<SourceConnection>('/sources/detail', {
-      team_id: teamId,
-      source_id: sourceId,
-    })
-  },
-  createGithubSource(body: {
-    team_id: string
-    kb_id: string
-    repo_url: string
-    branch: string
-    path_filters: string[]
-    credentials_id?: string | null
-  }): Promise<SourceConnection> {
-    return postData<SourceConnection>('/sources/github/create', body)
-  },
-  updateSource(body: {
-    team_id: string
-    source_id: string
-    repo_url?: string
-    branch?: string
-    path_filters?: string[]
-    credentials_id?: string | null
-  }): Promise<SourceConnection> {
-    return postData<SourceConnection>('/sources/update', body)
-  },
-  deleteSource(teamId: string, sourceId: string) {
-    return postData<{ deleted: string }>('/sources/delete', {
-      team_id: teamId,
-      source_id: sourceId,
-    })
-  },
-  syncSource(teamId: string, sourceId: string) {
-    return postData<{ source_id: string; status: string }>('/sources/sync', {
-      team_id: teamId,
-      source_id: sourceId,
-    })
-  },
-  pauseSource(teamId: string, sourceId: string) {
-    return postData<{ source_id: string; status: string }>('/sources/pause', {
-      team_id: teamId,
-      source_id: sourceId,
-    })
-  },
-  resumeSource(teamId: string, sourceId: string) {
-    return postData<{ source_id: string; status: string }>('/sources/resume', {
-      team_id: teamId,
-      source_id: sourceId,
-    })
-  },
-  listCredentials(
-    teamId: string,
-    cursor?: string | null,
-    limit = 20,
-  ): Promise<PageEnvelope<CredentialView>> {
-    return getPage<CredentialView>('/credentials', {
-      team_id: teamId,
-      limit,
-      ...(cursor ? { cursor } : {}),
-    })
-  },
-  createCredential(teamId: string, name: string, secret: string) {
-    return postData<{ id: string; name: string; secret_masked: string }>(
-      '/credentials/create',
-      { team_id: teamId, name, secret },
-    )
-  },
-  deleteCredential(teamId: string, credentialId: string) {
-    return postData<{ deleted: string }>('/credentials/delete', {
-      team_id: teamId,
-      credential_id: credentialId,
-    })
   },
 
   listTraces(

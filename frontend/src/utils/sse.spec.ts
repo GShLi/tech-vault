@@ -15,7 +15,9 @@ describe('SSE utilities', () => {
   })
 
   it('retains non-JSON diagnostic data', () => {
-    expect(parseSseEventBlock('event: error\ndata: queue unavailable')).toMatchObject({
+    expect(
+      parseSseEventBlock('event: error\ndata: queue unavailable'),
+    ).toMatchObject({
       event: 'error',
       data: { content: 'queue unavailable' },
     })
@@ -26,7 +28,9 @@ describe('SSE utilities', () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode('event: progress\ndata: {"percent":'))
-        controller.enqueue(encoder.encode('40}\n\nevent: completed\ndata: {"percent":100}\n\n'))
+        controller.enqueue(
+          encoder.encode('40}\n\nevent: completed\ndata: {"percent":100}\n\n'),
+        )
         controller.close()
       },
     })
@@ -38,4 +42,46 @@ describe('SSE utilities', () => {
 
     expect(events).toEqual(['progress:40', 'completed:100'])
   })
+})
+
+it.each(['\r\n', '\r', '\n'])(
+  'reads byte-fragmented UTF-8 events with %j endings',
+  async (ending) => {
+    const bytes = new TextEncoder().encode(
+      `event: token${ending}data: {"content":"中文"}${ending}${ending}event: done${ending}data: {}${ending}${ending}`,
+    )
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(new Uint8Array([byte]))
+        controller.close()
+      },
+    })
+    const events: unknown[] = []
+    await readSseEvents(new Response(stream), (event) => {
+      events.push([event.event, event.data])
+    })
+    expect(events).toEqual([
+      ['token', { content: '中文' }],
+      ['done', {}],
+    ])
+    expect(stream.locked).toBe(false)
+  },
+)
+
+it('cancels the stream and releases its reader when the consumer fails', async () => {
+  const cancel = vi.fn()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {}\n\n'))
+    },
+    cancel,
+  })
+  const failure = new Error('consumer failed')
+  await expect(
+    readSseEvents(new Response(stream), () => {
+      throw failure
+    }),
+  ).rejects.toBe(failure)
+  expect(cancel).toHaveBeenCalledWith(failure)
+  expect(stream.locked).toBe(false)
 })

@@ -75,7 +75,7 @@ def test_processor_ingests_docx_content(tmp_path, monkeypatch):
     monkeypatch.setattr(
         processor_module.EmbeddingClient,
         "embed",
-        lambda self, texts: [[0.1, 0.2] for _ in texts],
+        lambda self, texts: [[0.1] * 1024 for _ in texts],
     )
 
     chunk_ids = process_document(document, run, session, settings)
@@ -93,13 +93,13 @@ def test_processor_persists_stable_source_locator_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(
         processor_module.EmbeddingClient,
         "embed",
-        lambda self, texts: [[0.1, 0.2] for _ in texts],
+        lambda self, texts: [[0.1] * 1024 for _ in texts],
     )
 
     chunk_ids = process_document(document, run, session, settings)
 
     assert chunk_ids
-    chunk = session.query(ChunkRecord).one()
+    chunk = session.query(ChunkRecord).filter(ChunkRecord.chunk_level == "child").one()
     locator = json.loads(chunk.source_locator)
     knowledge_base = session.get(KnowledgeBase, document.knowledge_base_id)
     assert knowledge_base is not None
@@ -123,7 +123,7 @@ def test_processor_marks_unreadable_document_as_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(
         processor_module.EmbeddingClient,
         "embed",
-        lambda self, texts: [[0.1, 0.2] for _ in texts],
+        lambda self, texts: [[0.1] * 1024 for _ in texts],
     )
 
     chunk_ids = process_document(document, run, session, settings)
@@ -132,6 +132,27 @@ def test_processor_marks_unreadable_document_as_failed(tmp_path, monkeypatch):
     assert run.status == "failed"
     assert run.error_code == "DOCUMENT_PARSE_FAILED"
     assert document.doc_status == "failed"
+    session.close()
+
+
+def test_processor_preserves_quality_failure_reason_and_location(tmp_path, monkeypatch):
+    from backend.app.rag.chunking.semantic import SemanticChunker
+    from backend.app.rag.parsing.contracts import ParseError
+
+    session, document, run, settings, path = _ingestion_context(tmp_path, "quality.md")
+    path.write_text("# Guide\n\nA document with a problematic table.", encoding="utf-8")
+
+    def fail_chunking(*args, **kwargs):
+        raise ParseError("CHUNK_QUALITY_FAILED", "A table row exceeds its token budget.",
+                         details={"page_no": 42, "maximum_tokens": 512})
+
+    monkeypatch.setattr(SemanticChunker, "chunk", fail_chunking)
+    assert process_document(document, run, session, settings) == []
+    failure = json.loads(run.failure_details)
+    assert failure["message"] == "A table row exceeds its token budget."
+    assert failure["stage"] == "chunking"
+    assert failure["details"] == {"page_no": 42, "maximum_tokens": 512}
+    assert run.error_code == "CHUNK_QUALITY_FAILED"
     session.close()
 
 
@@ -169,7 +190,7 @@ def test_processor_honors_cancellation_that_arrives_during_embedding(
             concurrent_run.current_stage = "cancelled"
             concurrent_run.retryable = True
             concurrent.commit()
-        return [[0.1, 0.2] for _ in texts]
+        return [[0.1] * 1024 for _ in texts]
 
     monkeypatch.setattr(
         processor_module.EmbeddingClient,

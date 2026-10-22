@@ -1,3 +1,4 @@
+import { config } from '@vue/test-utils'
 import { vi } from 'vitest'
 
 class ResizeObserverMock {
@@ -34,3 +35,6 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', {
   writable: true,
   value: vi.fn(),
 })
+
+// Keep dialog content in the mounted tree while exercising real Arco dialogs.
+config.global.stubs = { ...config.global.stubs, teleport: true }

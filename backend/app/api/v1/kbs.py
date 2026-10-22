@@ -218,6 +218,7 @@ def create_kb(
         team_id=body.team_id,
         name=body.name.strip(),
         description=body.description,
+        model_policy_mode="external_allowed",
         created_by=user.id,
     )
     try:

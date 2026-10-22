@@ -1,4 +1,29 @@
 <script setup lang="ts">
+import { useProviderSelection } from '@/composables/useProviderSelection'
+import {
+  ApiRequestError,
+  api,
+  getAccessToken,
+  loadAllPages,
+  normalizeApiError as toApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Checkbox as ACheckbox,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Message as ArcoMessage,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Switch as ASwitch,
+  Tag as ATag,
+  Textarea as ATextarea,
+} from '@arco-design/web-vue'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -16,10 +41,8 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { Message as ArcoMessage } from '@arco-design/web-vue'
 
-import { api, ApiRequestError, getAccessToken, loadAllPages } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type {
   AskChatInput,
@@ -31,12 +54,8 @@ import type {
   MessageView,
   ModelProvider,
 } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
-
-interface StreamEvent {
-  event: string
-  data: Record<string, unknown>
-}
+import { formatDate, shortId, statusLabel } from '@/utils/format'
+import { readSseEvents, type ParsedSseEvent } from '@/utils/sse'
 
 interface AskPayload {
   message_id?: string
@@ -103,8 +122,14 @@ const citationsByMessage = ref<Record<string, CitationView[]>>({})
 const selectedKbIds = ref<string[]>([])
 const selectedProduct = ref('')
 const selectedVersion = ref('')
-const selectedProviderId = ref('')
-const selectedModelId = ref('')
+const {
+  selectedProviderId,
+  selectedModelId,
+  eligibleProviders,
+  selectedProvider,
+  modelOptions,
+  hasProviderAndModel,
+} = useProviderSelection(providers, allowedProviderIds)
 const rewrittenQuestion = ref('')
 const newChatTitle = ref('')
 const question = ref('')
@@ -140,38 +165,6 @@ const apiBaseUrl = computed(() =>
 
 const selectedKnowledgeBases = computed(() =>
   knowledgeBases.value.filter((kb) => selectedKbIds.value.includes(kb.id)),
-)
-
-const eligibleProviders = computed(() => {
-  const allowedIds = new Set(allowedProviderIds.value)
-  return providers.value.filter(
-    (provider) =>
-      provider.status === 'active' &&
-      provider.has_api_key === true &&
-      allowedIds.has(provider.id) &&
-      Array.isArray(provider.model_ids) &&
-      provider.model_ids.length > 0,
-  )
-})
-
-const selectedProvider = computed(
-  () =>
-    eligibleProviders.value.find(
-      (provider) => provider.id === selectedProviderId.value,
-    ) ?? null,
-)
-
-const modelOptions = computed(() =>
-  Array.isArray(selectedProvider.value?.model_ids)
-    ? selectedProvider.value?.model_ids ?? []
-    : [],
-)
-
-const hasProviderAndModel = computed(
-  () =>
-    Boolean(selectedProvider.value) &&
-    Boolean(selectedModelId.value) &&
-    modelOptions.value.includes(selectedModelId.value),
 )
 
 const canSubmit = computed(
@@ -215,14 +208,6 @@ const canRegenerate = computed(
     !creatingChat.value &&
     !stopping.value,
 )
-
-function toApiError(caught: unknown, fallback = '请求失败'): ApiRequestError {
-  if (caught instanceof ApiRequestError) return caught
-  return new ApiRequestError(
-    caught instanceof Error ? caught.message : fallback,
-    'UNKNOWN_ERROR',
-  )
-}
 
 function resetConversationState(): void {
   activeAbort.value?.abort()
@@ -274,7 +259,12 @@ async function loadKnowledgeBases(): Promise<void> {
 
 async function loadFacets(): Promise<void> {
   if (!team.selectedTeamId) {
-    facets.value = { products: [], versions: [], sources: [], knowledge_base_ids: [] }
+    facets.value = {
+      products: [],
+      versions: [],
+      sources: [],
+      knowledge_base_ids: [],
+    }
     return
   }
   try {
@@ -287,10 +277,17 @@ async function loadFacets(): Promise<void> {
         ? response.knowledge_base_ids
         : [],
     }
-    if (!facets.value.products.includes(selectedProduct.value)) selectedProduct.value = ''
-    if (!facets.value.versions.includes(selectedVersion.value)) selectedVersion.value = ''
+    if (!facets.value.products.includes(selectedProduct.value))
+      selectedProduct.value = ''
+    if (!facets.value.versions.includes(selectedVersion.value))
+      selectedVersion.value = ''
   } catch {
-    facets.value = { products: [], versions: [], sources: [], knowledge_base_ids: [] }
+    facets.value = {
+      products: [],
+      versions: [],
+      sources: [],
+      knowledge_base_ids: [],
+    }
     selectedProduct.value = ''
     selectedVersion.value = ''
   }
@@ -350,7 +347,8 @@ async function loadChats(showLoading = true): Promise<void> {
     chats.value = rows
     if (currentChat.value) {
       currentChat.value =
-        rows.find((chat) => chat.id === currentChat.value?.id) ?? currentChat.value
+        rows.find((chat) => chat.id === currentChat.value?.id) ??
+        currentChat.value
     }
 
     const routedChatId = String(route.params.chatId ?? '')
@@ -426,7 +424,10 @@ async function loadMessages(reset = true): Promise<void> {
     await hydrateCitations(rows)
     if (reset) await scrollToLatest(false)
   } catch (caught) {
-    error.value = toApiError(caught, reset ? '无法刷新消息' : '无法加载更多消息')
+    error.value = toApiError(
+      caught,
+      reset ? '无法刷新消息' : '无法加载更多消息',
+    )
   } finally {
     if (reset) loadingMessages.value = false
     else loadingMoreMessages.value = false
@@ -447,7 +448,10 @@ function toggleKnowledgeBase(kbId: string): void {
 async function createChat(): Promise<ChatView | null> {
   if (!team.selectedTeamId || creatingChat.value) return null
   if (!selectedKbIds.value.length) {
-    error.value = new ApiRequestError('至少选择一个知识库。', 'INVALID_ARGUMENT')
+    error.value = new ApiRequestError(
+      '至少选择一个知识库。',
+      'INVALID_ARGUMENT',
+    )
     return null
   }
   creatingChat.value = true
@@ -458,7 +462,10 @@ async function createChat(): Promise<ChatView | null> {
       newChatTitle.value.trim() || undefined,
       [...selectedKbIds.value],
     )
-    chats.value = [created, ...chats.value.filter((chat) => chat.id !== created.id)]
+    chats.value = [
+      created,
+      ...chats.value.filter((chat) => chat.id !== created.id),
+    ]
     currentChat.value = created
     messages.value = []
     newChatTitle.value = ''
@@ -527,11 +534,9 @@ async function ensureChat(text: string): Promise<ChatView | null> {
     error.value = new ApiRequestError('请先选择团队。', 'INVALID_ARGUMENT')
     return null
   }
-  const created = await api.createChat(
-    team.selectedTeamId,
-    text.slice(0, 40),
-    [...selectedKbIds.value],
-  )
+  const created = await api.createChat(team.selectedTeamId, text.slice(0, 40), [
+    ...selectedKbIds.value,
+  ])
   chats.value = [created, ...chats.value]
   currentChat.value = created
   await router.push(`/chat/${created.id}`)
@@ -541,7 +546,10 @@ async function ensureChat(text: string): Promise<ChatView | null> {
 async function askQuestion(text: string, context: AskContext): Promise<void> {
   if (!text || sending.value || !team.selectedTeamId) return
   if (!context.knowledgeBaseIds.length) {
-    error.value = new ApiRequestError('至少选择一个知识库。', 'INVALID_ARGUMENT')
+    error.value = new ApiRequestError(
+      '至少选择一个知识库。',
+      'INVALID_ARGUMENT',
+    )
     return
   }
   if (!context.providerId || !context.modelId) {
@@ -613,17 +621,23 @@ async function askQuestion(text: string, context: AskContext): Promise<void> {
       const envelope = await response.json()
       applyAnswerPayload(assistant, (envelope?.data ?? envelope) as AskPayload)
     } else {
-      await consumeEventStream(response, assistant)
+      const streamingAssistant = assistant
+      await readSseEvents(response, (event) =>
+        handleStreamEvent(event, streamingAssistant),
+      )
     }
 
     if (!assistant.content.trim()) {
       assistant.content =
-        assistant.status === 'refused' ? '知识库中没有足够依据。' : '未生成回答内容。'
+        assistant.status === 'refused'
+          ? '知识库中没有足够依据。'
+          : '未生成回答内容。'
     }
     await scrollToLatest()
     void loadChats(false)
   } catch (caught) {
-    const aborted = caught instanceof DOMException && caught.name === 'AbortError'
+    const aborted =
+      caught instanceof DOMException && caught.name === 'AbortError'
     if (assistant) {
       assistant.status = aborted ? 'cancelled' : 'failed'
       if (aborted) {
@@ -656,7 +670,7 @@ async function regenerateLatest(): Promise<void> {
   await askQuestion(pair.user.content, {
     knowledgeBaseIds: selectedKbIds.value.length
       ? [...selectedKbIds.value]
-      : storedContext?.knowledgeBaseIds ?? [],
+      : (storedContext?.knowledgeBaseIds ?? []),
     product: storedContext?.product ?? selectedProduct.value,
     version: storedContext?.version ?? selectedVersion.value,
     providerId: selectedProviderId.value,
@@ -668,11 +682,7 @@ async function stopGenerating(): Promise<void> {
   if (stopping.value) return
   stopping.value = true
   const assistant = activeAssistant.value
-  if (
-    assistant &&
-    team.selectedTeamId &&
-    isServerMessageId(assistant.id)
-  ) {
+  if (assistant && team.selectedTeamId && isServerMessageId(assistant.id)) {
     try {
       await api.cancelMessage(team.selectedTeamId, assistant.id)
       assistant.status = 'cancelled'
@@ -752,67 +762,8 @@ async function responseError(response: Response): Promise<ApiRequestError> {
   )
 }
 
-async function consumeEventStream(
-  response: Response,
-  assistant: MessageView,
-): Promise<void> {
-  const reader = response.body?.getReader()
-  if (!reader) {
-    throw new ApiRequestError('浏览器不支持事件流读取。', 'SSE_UNSUPPORTED')
-  }
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      await dispatchEventBlock(block, assistant)
-      boundary = buffer.indexOf('\n\n')
-    }
-  }
-  buffer += decoder.decode().replace(/\r\n/g, '\n')
-  if (buffer.trim()) await dispatchEventBlock(buffer, assistant)
-}
-
-async function dispatchEventBlock(
-  block: string,
-  assistant: MessageView,
-): Promise<void> {
-  const event = parseEventBlock(block)
-  if (event) await handleStreamEvent(event, assistant)
-}
-
-function parseEventBlock(block: string): StreamEvent | null {
-  let event = 'message'
-  const dataLines: string[] = []
-  for (const line of block.split('\n')) {
-    if (!line || line.startsWith(':')) continue
-    const colon = line.indexOf(':')
-    const field = colon >= 0 ? line.slice(0, colon) : line
-    let value = colon >= 0 ? line.slice(colon + 1) : ''
-    if (value.startsWith(' ')) value = value.slice(1)
-    if (field === 'event') event = value
-    if (field === 'data') dataLines.push(value)
-  }
-  if (!dataLines.length) return null
-  const raw = dataLines.join('\n')
-  try {
-    const data = JSON.parse(raw) as unknown
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      return { event, data: data as Record<string, unknown> }
-    }
-    return { event, data: { content: String(data ?? '') } }
-  } catch {
-    return { event, data: { content: raw } }
-  }
-}
-
 async function handleStreamEvent(
-  event: StreamEvent,
+  event: ParsedSseEvent,
   assistant: MessageView,
 ): Promise<void> {
   const data = event.data
@@ -845,9 +796,7 @@ async function handleStreamEvent(
     updateAssistantId(assistant, stringValue(data.message_id))
     assistant.status = 'refused'
     assistant.content =
-      stringValue(data.message) ||
-      assistant.content ||
-      '知识库中没有足够依据。'
+      stringValue(data.message) || assistant.content || '知识库中没有足够依据。'
     assistant.refusal_reason =
       stringValue(data.reason_code) || 'INSUFFICIENT_EVIDENCE'
     return
@@ -912,7 +861,10 @@ function appendCitation(assistant: MessageView, citation: CitationView): void {
   citationsByMessage.value[assistant.id] = [...existing, citation]
 }
 
-function mergeCitations(assistant: MessageView, citations: CitationView[]): void {
+function mergeCitations(
+  assistant: MessageView,
+  citations: CitationView[],
+): void {
   citations.forEach((citation) => appendCitation(assistant, citation))
 }
 
@@ -920,7 +872,10 @@ function citationId(citation: CitationView): string {
   return citation.citation_id ?? citation.chunk_id ?? ''
 }
 
-function citationStateKey(message: MessageView, citation: CitationView): string {
+function citationStateKey(
+  message: MessageView,
+  citation: CitationView,
+): string {
   return `${message.id}:${citationId(citation)}`
 }
 
@@ -942,7 +897,8 @@ function citationForToken(
 }
 
 function messageSegments(message: MessageView): MessageSegment[] {
-  if (message.role !== 'assistant') return [{ type: 'text', text: message.content }]
+  if (message.role !== 'assistant')
+    return [{ type: 'text', text: message.content }]
   const citationIds = new Set(
     citationsFor(message)
       .map((citation) => citation.citation_id?.toLowerCase())
@@ -992,13 +948,12 @@ function isCitationHighlighted(
   message: MessageView,
   citation: CitationView,
 ): boolean {
-  return Boolean(highlightedCitations.value[citationStateKey(message, citation)])
+  return Boolean(
+    highlightedCitations.value[citationStateKey(message, citation)],
+  )
 }
 
-function toggleCitation(
-  message: MessageView,
-  citation: CitationView,
-): void {
+function toggleCitation(message: MessageView, citation: CitationView): void {
   const key = citationStateKey(message, citation)
   expandedCitations.value = {
     ...expandedCitations.value,
@@ -1208,40 +1163,47 @@ watch(
           <h2>会话</h2>
           <span>{{ chats.length }}</span>
         </div>
-        <button
-          class="icon-button"
-          type="button"
+        <a-button
           title="刷新会话"
           :disabled="loadingChats"
           @click="loadChats()"
+          type="text"
+          html-type="button"
+          shape="square"
+          aria-label="刷新会话"
         >
           <RefreshCw :size="16" :class="{ spinning: loadingChats }" />
-        </button>
+        </a-button>
       </div>
 
-      <form class="new-chat-form" @submit.prevent="createChat">
-        <input
+      <a-form
+        class="new-chat-form"
+        :model="{ newChatTitle }"
+        layout="vertical"
+        @submit-success="createChat"
+      >
+        <a-input
           v-model="newChatTitle"
           data-testid="chat-new-title"
-          type="text"
-          maxlength="200"
           placeholder="新对话标题"
-          aria-label="新对话标题"
-        />
-        <button
-          class="primary-button"
+          type="text"
+          :max-length="200"
+          :input-attrs="{ 'aria-label': '新对话标题' }"
+        ></a-input>
+        <a-button
           data-testid="chat-create"
-          type="button"
           title="创建会话"
           :disabled="creatingChat || !selectedKbIds.length"
           @click="createChat"
+          type="primary"
+          html-type="button"
         >
           <Plus :size="16" />
-        </button>
-      </form>
+        </a-button>
+      </a-form>
 
       <div v-if="loadingChats && !chats.length" class="sidebar-loading">
-        <span class="spinner small" />
+        <a-spin></a-spin>
         <span>加载会话</span>
       </div>
       <div v-else-if="chats.length" class="session-list">
@@ -1251,33 +1213,37 @@ watch(
           class="session-item"
           :class="{ active: currentChat?.id === chat.id }"
         >
-          <button
-            class="session-select"
-            type="button"
+          <a-button
             :aria-current="currentChat?.id === chat.id ? 'page' : undefined"
             @click="selectChat(chat)"
+            type="text"
+            html-type="button"
+            class="session-select"
           >
             <MessageSquare :size="15" />
             <span>
               <strong>{{ chat.title }}</strong>
               <small>{{ formatDate(chat.updated_at) }}</small>
             </span>
-          </button>
-          <button
-            class="icon-button session-delete"
-            type="button"
+          </a-button>
+          <a-button
             title="删除会话"
             :disabled="sending"
             @click="deleteChat(chat)"
+            type="text"
+            html-type="button"
+            class="session-delete"
+            shape="square"
+            aria-label="删除会话"
           >
             <Trash2 :size="14" />
-          </button>
+          </a-button>
         </div>
       </div>
-      <div v-else class="sidebar-empty">
-        <MessageSquare :size="22" />
+      <a-empty v-else class="page-empty">
+        <template #image><MessageSquare :size="22" /></template>
         <span>暂无会话</span>
-      </div>
+      </a-empty>
     </aside>
 
     <section class="chat-main panel">
@@ -1286,87 +1252,105 @@ watch(
           <div class="chat-title-row">
             <MessageSquare :size="19" />
             <h2>{{ currentChat?.title ?? '新对话' }}</h2>
-            <StatusPill v-if="degraded" status="degraded" />
-            <StatusPill
+            <a-tag v-if="degraded" :color="statusColor('degraded')">
+              {{ statusLabel('degraded') }}
+            </a-tag>
+            <a-tag
               v-if="engineMode && !degraded"
-              :status="engineMode"
-              :label="engineMode === 'dual_engine' ? '双引擎' : 'ES 单引擎'"
-            />
+              :color="statusColor(engineMode)"
+            >
+              {{ engineMode === 'dual_engine' ? '双引擎' : 'ES 单引擎' }}
+            </a-tag>
           </div>
-          <div v-if="knowledgeBases.length" class="kb-scope" aria-label="知识库范围">
+          <div
+            v-if="knowledgeBases.length"
+            class="kb-scope"
+            aria-label="知识库范围"
+          >
             <span>知识库</span>
-            <button
+            <a-checkbox
               v-for="kb in knowledgeBases"
               :key="kb.id"
-              class="kb-option"
-              :class="{ selected: selectedKbIds.includes(kb.id) }"
-              type="button"
-              :aria-pressed="selectedKbIds.includes(kb.id)"
               :data-testid="`chat-kb-${kb.id}`"
               :disabled="sending"
-              @click="toggleKnowledgeBase(kb.id)"
+              :model-value="selectedKbIds.includes(kb.id)"
+              @change="toggleKnowledgeBase(kb.id)"
             >
-              <span class="kb-dot" />
               {{ kb.name }}
-            </button>
+            </a-checkbox>
           </div>
-          <div class="chat-filter-row" aria-label="供应商、模型、产品和版本筛选">
-            <label class="chat-filter-field chat-provider-field">
-              <span>供应商</span>
-              <select
+          <div
+            class="chat-filter-row"
+            aria-label="供应商、模型、产品和版本筛选"
+          >
+            <a-form-item class="chat-filter-field chat-provider-field">
+              <template #label>供应商</template>
+              <a-select
                 v-model="selectedProviderId"
                 data-testid="chat-provider-select"
                 :disabled="sending || !eligibleProviders.length"
               >
-                <option value="">选择供应商</option>
-                <option
+                <a-option value="">选择供应商</a-option>
+                <a-option
                   v-for="provider in eligibleProviders"
                   :key="provider.id"
                   :value="provider.id"
                 >
                   {{ provider.name }}
-                </option>
-              </select>
-            </label>
-            <label class="chat-filter-field chat-provider-field">
-              <span>模型</span>
-              <select
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item class="chat-filter-field chat-provider-field">
+              <template #label>模型</template>
+              <a-select
                 v-model="selectedModelId"
                 data-testid="chat-model-select"
                 :disabled="sending || !selectedProvider"
               >
-                <option value="">选择模型</option>
-                <option v-for="model in modelOptions" :key="model" :value="model">
+                <a-option value="">选择模型</a-option>
+                <a-option
+                  v-for="model in modelOptions"
+                  :key="model"
+                  :value="model"
+                >
                   {{ model }}
-                </option>
-              </select>
-            </label>
-            <label class="chat-filter-field">
-              <span>产品</span>
-              <select
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item class="chat-filter-field">
+              <template #label>产品</template>
+              <a-select
                 v-model="selectedProduct"
                 data-testid="chat-product-filter"
                 :disabled="sending"
               >
-                <option value="">全部产品</option>
-                <option v-for="product in facets.products" :key="product" :value="product">
+                <a-option value="">全部产品</a-option>
+                <a-option
+                  v-for="product in facets.products"
+                  :key="product"
+                  :value="product"
+                >
                   {{ product }}
-                </option>
-              </select>
-            </label>
-            <label class="chat-filter-field">
-              <span>版本</span>
-              <select
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item class="chat-filter-field">
+              <template #label>版本</template>
+              <a-select
                 v-model="selectedVersion"
                 data-testid="chat-version-filter"
                 :disabled="sending"
               >
-                <option value="">全部版本</option>
-                <option v-for="version in facets.versions" :key="version" :value="version">
+                <a-option value="">全部版本</a-option>
+                <a-option
+                  v-for="version in facets.versions"
+                  :key="version"
+                  :value="version"
+                >
                   {{ version }}
-                </option>
-              </select>
-            </label>
+                </a-option>
+              </a-select>
+            </a-form-item>
           </div>
           <p
             v-if="rewrittenQuestion"
@@ -1377,71 +1361,88 @@ watch(
           </p>
         </div>
         <div class="chat-actions">
-          <label class="stream-switch">
-            <input
+          <div class="stream-switch">
+            <a-switch
               v-model="streamEnabled"
               data-testid="chat-stream-toggle"
-              type="checkbox"
               :disabled="sending"
-            />
+              aria-label="流式输出"
+            ></a-switch>
             <span>流式</span>
-          </label>
-          <button
-            class="secondary-button"
+          </div>
+          <a-button
             data-testid="chat-regenerate"
-            type="button"
             :disabled="!canRegenerate"
             @click="regenerateLatest"
+            type="secondary"
+            html-type="button"
           >
             <RefreshCw :size="15" />
             重新生成
-          </button>
-          <button
-            class="icon-button"
+          </a-button>
+          <a-button
             data-testid="chat-refresh"
-            type="button"
             title="刷新消息"
             :disabled="!currentChat || loadingMessages || sending"
             @click="refreshCurrent"
+            type="text"
+            html-type="button"
+            shape="square"
+            aria-label="刷新消息"
           >
             <RefreshCw :size="17" :class="{ spinning: loadingMessages }" />
-          </button>
+          </a-button>
         </div>
       </header>
 
-      <div v-if="error" class="chat-error" role="alert">
+      <a-alert v-if="error" type="error" class="page-alert">
         <AlertTriangle :size="17" />
         <div>
           <strong>{{ error.message }}</strong>
           <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
         </div>
-        <button class="icon-button" type="button" title="关闭错误" @click="error = null">
+        <a-button
+          title="关闭错误"
+          @click="error = null"
+          type="text"
+          html-type="button"
+          shape="square"
+          aria-label="关闭错误"
+        >
           <X :size="15" />
-        </button>
-      </div>
+        </a-button>
+      </a-alert>
 
       <div ref="messageList" class="message-scroll" aria-live="polite">
         <div v-if="loadingMessages && !messages.length" class="chat-loading">
-          <span class="spinner" />
+          <a-spin></a-spin>
           <span>正在加载消息</span>
         </div>
 
         <div v-else-if="showKnowledgeBaseEmpty" class="chat-empty">
           <BookOpen :size="30" />
           <h3>当前团队暂无可用知识库</h3>
-          <RouterLink class="secondary-button" to="/knowledge-bases">前往知识库</RouterLink>
+          <RouterLink to="/knowledge-bases" custom v-slot="{ href, navigate }">
+            <a-button type="secondary" :href="href" @click="navigate">
+              前往知识库
+            </a-button>
+          </RouterLink>
         </div>
 
         <div v-else-if="messages.length" class="message-list">
-          <div v-if="messageHasMore" class="load-more" data-testid="chat-load-more">
-            <button
-              class="secondary-button"
-              type="button"
+          <div
+            v-if="messageHasMore"
+            class="load-more"
+            data-testid="chat-load-more"
+          >
+            <a-button
               :disabled="loadingMoreMessages"
               @click="loadMoreMessages"
+              type="secondary"
+              html-type="button"
             >
               {{ loadingMoreMessages ? '加载中' : '继续加载' }}
-            </button>
+            </a-button>
           </div>
           <article
             v-for="message in messages"
@@ -1453,28 +1454,35 @@ watch(
               {{ message.role === 'user' ? '你' : '助手' }}
             </div>
             <div class="message-bubble">
-              <div v-if="isGenerating(message) && !message.content" class="answer-loading">
+              <div
+                v-if="isGenerating(message) && !message.content"
+                class="answer-loading"
+              >
                 <span class="typing-dot" />
                 <span class="typing-dot" />
                 <span class="typing-dot" />
                 <span>正在检索</span>
               </div>
-              <div v-else-if="message.role === 'assistant'" class="message-content">
+              <div
+                v-else-if="message.role === 'assistant'"
+                class="message-content"
+              >
                 <template
                   v-for="(segment, segmentIndex) in messageSegments(message)"
                   :key="`${message.id}-segment-${segmentIndex}`"
                 >
                   <span v-if="segment.type === 'text'">{{ segment.text }}</span>
-                  <button
+                  <a-button
                     v-else-if="segment.matched"
-                    class="citation-token"
-                    type="button"
                     :data-testid="`inline-citation-${segment.citationId}`"
                     :aria-label="`查看引用 ${segment.text}`"
                     @click="activateCitation(message, segment.citationId)"
+                    type="secondary"
+                    html-type="button"
+                    class="citation-token"
                   >
                     {{ segment.text }}
-                  </button>
+                  </a-button>
                   <span
                     v-else
                     class="citation-token citation-token-unavailable"
@@ -1497,7 +1505,9 @@ watch(
               </div>
 
               <div
-                v-if="message.role === 'assistant' && citationsFor(message).length"
+                v-if="
+                  message.role === 'assistant' && citationsFor(message).length
+                "
                 class="citation-list"
               >
                 <div class="citation-heading">
@@ -1508,30 +1518,46 @@ watch(
                   v-for="citation in citationsFor(message)"
                   :key="citation.citation_id ?? citation.chunk_id"
                   class="citation-item"
-                  :ref="(element) => registerCitationEntry(citationStateKey(message, citation), element)"
+                  :ref="
+                    (element) =>
+                      registerCitationEntry(
+                        citationStateKey(message, citation),
+                        element,
+                      )
+                  "
                 >
-                  <button
-                    class="citation-entry"
+                  <a-button
                     :class="{
-                      'citation-item-highlighted': isCitationHighlighted(message, citation),
+                      'citation-item-highlighted': isCitationHighlighted(
+                        message,
+                        citation,
+                      ),
                     }"
-                    type="button"
                     :data-testid="`citation-entry-${citationId(citation)}`"
                     :aria-expanded="isCitationExpanded(message, citation)"
                     :aria-controls="citationDomId(message, citation)"
                     @click="toggleCitation(message, citation)"
+                    type="secondary"
+                    html-type="button"
+                    class="citation-entry"
                   >
                     <span class="citation-title">
                       <strong>{{ citationHeading(citation) }}</strong>
-                      <span v-if="citationContext(citation)">{{ citationContext(citation) }}</span>
+                      <span v-if="citationContext(citation)">
+                        {{ citationContext(citation) }}
+                      </span>
                     </span>
-                    <span class="citation-reference">{{ citationId(citation) }}</span>
+                    <span class="citation-reference">
+                      {{ citationId(citation) }}
+                    </span>
                     <ChevronDown
                       :size="14"
                       class="citation-chevron"
-                      :class="{ expanded: isCitationExpanded(message, citation) }"
+                      :class="{
+                        expanded: isCitationExpanded(message, citation),
+                      }"
                     />
-                  </button>
+                  </a-button>
                   <div
                     v-if="isCitationExpanded(message, citation)"
                     :id="citationDomId(message, citation)"
@@ -1552,25 +1578,28 @@ watch(
               </div>
 
               <div
-                v-if="message.role === 'assistant' && message.status === 'completed'"
+                v-if="
+                  message.role === 'assistant' && message.status === 'completed'
+                "
                 class="feedback-bar"
                 aria-label="回答反馈"
               >
                 <span>反馈</span>
-                <button
+                <a-button
                   v-for="option in feedbackOptions"
                   :key="option.type"
-                  class="feedback-button"
                   :class="{ selected: feedbackSelected(message, option.type) }"
-                  type="button"
                   :data-testid="`chat-feedback-${option.type}-${message.id}`"
                   :aria-pressed="feedbackSelected(message, option.type)"
                   :disabled="!canSubmitFeedback(message)"
                   @click="submitMessageFeedback(message, option.type)"
+                  type="text"
+                  html-type="button"
+                  class="feedback-button"
                 >
                   <component :is="option.icon" :size="13" />
                   {{ option.label }}
-                </button>
+                </a-button>
               </div>
 
               <footer class="message-meta">
@@ -1578,64 +1607,72 @@ watch(
                 <span v-if="message.trace_id" class="trace-reference">
                   Trace {{ shortId(message.trace_id) }}
                 </span>
-                <StatusPill
+                <a-tag
                   v-if="message.role === 'assistant'"
-                  :status="message.status"
-                />
+                  :color="statusColor(message.status)"
+                >
+                  {{ statusLabel(message.status) }}
+                </a-tag>
               </footer>
             </div>
           </article>
         </div>
 
-        <div v-else class="chat-empty chat-empty-ready">
-          <MessageSquare :size="30" />
+        <a-empty v-else class="page-empty">
+          <template #image><MessageSquare :size="30" /></template>
           <h3>{{ currentChat ? '当前会话暂无消息' : '新对话' }}</h3>
           <p v-if="selectedKnowledgeBases.length">
             {{ selectedKnowledgeBases.map((kb) => kb.name).join('、') }}
           </p>
-        </div>
+        </a-empty>
       </div>
 
-      <form class="composer" @submit.prevent="sendQuestion">
-        <textarea
+      <a-form
+        class="composer"
+        :model="{ question }"
+        layout="vertical"
+        @submit-success="sendQuestion"
+      >
+        <a-textarea
           v-model="question"
           data-testid="question-input"
-          rows="3"
-          maxlength="4000"
           placeholder="输入问题"
-          aria-label="问题输入"
           :disabled="sending || showKnowledgeBaseEmpty"
           @keydown.enter.exact.prevent="sendQuestion"
-        />
+          :max-length="4000"
+          :textarea-attrs="{ 'aria-label': '问题输入', rows: '3' }"
+        ></a-textarea>
         <div class="composer-footer">
           <span v-if="selectedKnowledgeBases.length" class="composer-scope">
             {{ selectedKnowledgeBases.length }} 个知识库
           </span>
           <span v-else class="composer-scope warning-text">未选择知识库</span>
-          <button
+          <a-button
             v-if="sending"
-            class="secondary-button danger-text"
             data-testid="chat-stop"
-            type="button"
             :disabled="stopping"
             @click="stopGenerating"
+            type="secondary"
+            html-type="button"
+            status="danger"
           >
             <Square :size="14" />
             {{ stopping ? '停止中' : '停止' }}
-          </button>
-          <button
+          </a-button>
+          <a-button
             v-else
-            class="primary-button chat-send-button"
             data-testid="send-message"
-            type="button"
             :disabled="!canSubmit"
             @click="sendQuestion"
+            type="primary"
+            html-type="button"
+            class="chat-send-button"
           >
             <Send :size="16" />
             发送
-          </button>
+          </a-button>
         </div>
-      </form>
+      </a-form>
     </section>
   </div>
 </template>
@@ -1698,27 +1735,6 @@ watch(
   border-bottom: 1px solid #edf0f3;
 }
 
-.new-chat-form input,
-.composer textarea {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #f8fafb;
-  color: var(--text);
-}
-
-.new-chat-form input {
-  min-width: 0;
-  height: 36px;
-  padding: 0 10px;
-}
-
-.new-chat-form .primary-button {
-  width: 36px;
-  min-height: 36px;
-  padding: 0;
-}
-
 .session-list {
   min-height: 0;
   flex: 1;
@@ -1744,6 +1760,8 @@ watch(
 }
 
 .session-select {
+  height: auto;
+  white-space: normal;
   display: flex;
   min-width: 0;
   align-items: flex-start;
@@ -1796,8 +1814,7 @@ watch(
   opacity: 1;
 }
 
-.sidebar-loading,
-.sidebar-empty {
+.sidebar-loading {
   display: grid;
   flex: 1;
   align-content: center;
@@ -1805,20 +1822,6 @@ watch(
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid #d8e1e7;
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.spinner.small {
-  width: 15px;
-  height: 15px;
 }
 
 .chat-main {
@@ -1870,37 +1873,6 @@ watch(
   font-weight: 600;
 }
 
-.kb-option {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  color: #475569;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.kb-option:hover:not(:disabled),
-.kb-option.selected {
-  border-color: #7cc7bd;
-  background: #ecfdf5;
-  color: var(--accent-strong);
-}
-
-.kb-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #cbd5e1;
-}
-
-.kb-option.selected .kb-dot {
-  background: var(--accent);
-}
-
 .chat-filter-row {
   display: flex;
   min-width: 0;
@@ -1916,17 +1888,6 @@ watch(
   color: var(--muted);
   font-size: 10px;
   font-weight: 650;
-}
-
-.chat-filter-field select {
-  width: 100%;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-  padding: 0 8px;
-  font-size: 12px;
 }
 
 .rewrite-note {
@@ -1954,33 +1915,6 @@ watch(
   border-radius: 6px;
   color: var(--muted);
   font-size: 12px;
-}
-
-.stream-switch input {
-  accent-color: var(--accent);
-}
-
-.chat-error {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  margin: 12px 18px 0;
-  border: 1px solid #f2b8b5;
-  border-radius: 7px;
-  background: var(--danger-soft);
-  color: var(--danger);
-  padding: 10px 12px;
-}
-
-.chat-error > div {
-  display: grid;
-  gap: 3px;
-  font-size: 12px;
-}
-
-.chat-error strong {
-  font-size: 13px;
 }
 
 .message-scroll {
@@ -2349,19 +2283,6 @@ watch(
   border-top: 1px solid #edf0f3;
   background: #fff;
   padding: 13px 18px 16px;
-}
-
-.composer textarea {
-  min-height: 72px;
-  max-height: 180px;
-  resize: vertical;
-  padding: 10px 12px;
-  line-height: 1.55;
-}
-
-.composer textarea:focus {
-  border-color: #7cc7bd;
-  outline: 2px solid #ccfbf1;
 }
 
 .composer-footer {

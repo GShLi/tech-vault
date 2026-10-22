@@ -72,7 +72,7 @@ def _seed_generation(
     monkeypatch.setattr(
         generation_module.EmbeddingClient,
         "embed",
-        lambda self, texts: [[0.1, 0.2] for _ in texts],
+        lambda self, texts: [[0.1] * 1024 for _ in texts],
     )
 
     with factory() as session:
@@ -129,6 +129,9 @@ def _seed_generation(
                     doc_status="active",
                 )
             )
+        session.flush()
+        generation_module.save_generation_members(session, staging.id if chunks_in_staging else old.id,
+                                                   session.scalars(select(ChunkRecord)).all())
         session.commit()
         return factory, team.id, old.id, staging.id, writer, modes
 
@@ -146,7 +149,9 @@ def test_reindex_generation_stages_validates_and_activates_enabled_chunks(monkey
         chunks = session.scalars(
             select(ChunkRecord).where(ChunkRecord.team_id == team_id)
         ).all()
-        assert {chunk.index_generation for chunk in chunks} == {staging_id}
+        assert {chunk.index_generation for chunk in chunks} == {old_id}
+        assert len(generation_module._generation_chunks(session, session.get(IndexGenerationRecord, old_id))) == 2
+        assert len(generation_module._generation_chunks(session, session.get(IndexGenerationRecord, staging_id))) == 2
     assert writer.validated == [staging_id]
     assert writer.activated == [staging_id]
     assert modes == [generation_module.EngineMode.DUAL_ENGINE]

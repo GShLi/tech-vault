@@ -9,7 +9,6 @@ from backend.app.db.models import (
     Chat,
     ChunkHistory,
     ChunkRecord,
-    Credential,
     Document,
     DocumentGrant,
     DocumentVersion,
@@ -21,7 +20,6 @@ from backend.app.db.models import (
     Message,
     ModelCall,
     ModelProvider,
-    SourceConnection,
     TeamMember,
     User,
 )
@@ -34,7 +32,7 @@ from backend.tests.api.conftest import (
 
 
 def _chunk_id(label: str) -> str:
-    return "chk_" + hashlib.sha256(label.encode("utf-8")).hexdigest()
+    return "chd_" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 @pytest.fixture()
@@ -73,31 +71,6 @@ def pagination_context(api_client, api_app):
             .values(joined_at=timestamp)
         )
 
-        sources = [
-            SourceConnection(
-                team_id=team["id"],
-                kb_id=kb["id"],
-                source_type="github",
-                repo_url="https://github.com/acme/repo-{0}.git".format(index),
-                branch="main",
-                path_filters="[]",
-                status="active",
-                created_by=admin.id,
-                created_at=timestamp,
-            )
-            for index in range(3)
-        ]
-        credentials = [
-            Credential(
-                team_id=team["id"],
-                name="credential-{0}".format(index),
-                secret_masked="****{0}".format(index),
-                secret_encrypted="encrypted",
-                created_by=admin.id,
-                created_at=timestamp,
-            )
-            for index in range(3)
-        ]
         document = Document(
             knowledge_base_id=kb["id"],
             owner_user_id=admin.id,
@@ -109,7 +82,7 @@ def pagination_context(api_client, api_app):
             created_at=timestamp,
             updated_at=timestamp,
         )
-        session.add_all(sources + credentials + [document])
+        session.add(document)
         session.flush()
 
         versions = [
@@ -286,8 +259,6 @@ def pagination_context(api_client, api_app):
         expected["members"] = sorted(
             [admin.id] + [user["id"] for user in users], reverse=True
         )
-        expected["sources"] = sorted([row.id for row in sources], reverse=True)
-        expected["credentials"] = sorted([row.id for row in credentials], reverse=True)
         expected["versions"] = sorted([row.id for row in versions], reverse=True)
         expected["tasks"] = sorted([row.id for row in tasks], reverse=True)
         expected["doc_chunks"] = sorted([row.id for row in chunks])
@@ -327,8 +298,6 @@ def pagination_context(api_client, api_app):
             {"team_id": team["id"], "chat_id": expected["chat_id"]},
             "id",
         ),
-        ("sources", "/api/v1/sources", {"team_id": team["id"]}, "id"),
-        ("credentials", "/api/v1/credentials", {"team_id": team["id"]}, "id"),
         (
             "versions",
             "/api/v1/docs/versions",
@@ -510,14 +479,6 @@ def test_p0_list_endpoints_enforce_scope_before_pagination(
             "messages",
             "/api/v1/chats/messages",
             {"team_id": team_id, "chat_id": pagination_context["chat_id"]},
-            outsider_headers,
-            403,
-        ),
-        ("sources", "/api/v1/sources", {"team_id": team_id}, outsider_headers, 403),
-        (
-            "credentials",
-            "/api/v1/credentials",
-            {"team_id": team_id},
             outsider_headers,
             403,
         ),

@@ -1,9 +1,23 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Message,
+  Modal as AModal,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Textarea as ATextarea,
+} from '@arco-design/web-vue'
+
 import { onMounted, ref, watch } from 'vue'
 import { BarChart3, Plus, RefreshCw } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
 import { useTeamStore } from '@/stores/team'
 import type { EvaluationDataset } from '@/types/api'
 import { formatDate } from '@/utils/format'
@@ -30,7 +44,7 @@ async function load(): Promise<void> {
     nextCursor.value = page.meta.next_cursor
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -40,12 +54,15 @@ async function loadMore(): Promise<void> {
   if (!team.selectedTeamId || !nextCursor.value) return
   loadingMore.value = true
   try {
-    const page = await api.listEvalDatasets(team.selectedTeamId, nextCursor.value)
+    const page = await api.listEvalDatasets(
+      team.selectedTeamId,
+      nextCursor.value,
+    )
     datasets.value = [...datasets.value, ...page.data]
     nextCursor.value = page.meta.next_cursor
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMore.value = false
   }
@@ -67,7 +84,7 @@ async function createDataset(): Promise<void> {
     description.value = ''
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -84,94 +101,146 @@ watch(() => team.selectedTeamId, load)
         <h2>评测与黄金集</h2>
         <p>维护可复用查询集，运行 Recall、MRR、nDCG 等检索评测。</p>
       </div>
-      <button
+      <a-button
         v-if="team.canManage"
-        class="primary-button"
         data-testid="eval-create-open"
-        type="button"
         @click="showCreate = true"
+        type="primary"
+        html-type="button"
       >
         <Plus :size="16" />
         新建黄金集
-      </button>
+      </a-button>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      <button class="inline-link" type="button" @click="load">重试</button>
-    </div>
+      <a-button @click="load" type="text" html-type="button">重试</a-button>
+    </a-alert>
 
     <div v-if="loading && !datasets.length" class="panel loading-state">
       <a-spin />
       <span>正在加载黄金集</span>
     </div>
-    <div v-else-if="!datasets.length" class="panel empty-state">
-      <BarChart3 :size="28" />
+    <a-empty v-else-if="!datasets.length" class="page-empty">
+      <template #image><BarChart3 :size="28" /></template>
       <h3>暂无黄金集</h3>
       <p>创建黄金集并加入查询样本后即可开始评测。</p>
-    </div>
+    </a-empty>
     <div v-else class="panel">
       <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>样本数</th>
-              <th>版本</th>
-              <th>创建时间</th>
-              <th class="actions-column">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="dataset in datasets" :key="dataset.id">
-              <td data-label="名称">
-                <RouterLink :to="`/evaluations/${dataset.id}`"><strong>{{ dataset.name }}</strong></RouterLink>
-                <span class="cell-subtitle">{{ dataset.description || '暂无描述' }}</span>
-              </td>
-              <td data-label="样本数">{{ dataset.case_count }}</td>
-              <td data-label="版本">v{{ dataset.version }}</td>
-              <td data-label="创建时间">{{ formatDate(dataset.created_at) }}</td>
-              <td data-label="操作">
-                <RouterLink class="ghost-button" :to="`/evaluations/${dataset.id}`">
-                  查看详情
+        <a-table
+          :data="datasets"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="名称" :width="240">
+              <template #cell="{ record: dataset }">
+                <RouterLink :to="`/evaluations/${dataset.id}`">
+                  <strong>{{ dataset.name }}</strong>
                 </RouterLink>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <span class="cell-subtitle">
+                  {{ dataset.description || '暂无描述' }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="样本数">
+              <template #cell="{ record: dataset }">
+                {{ dataset.case_count }}
+              </template>
+            </a-table-column>
+            <a-table-column title="版本" :width="90">
+              <template #cell="{ record: dataset }">
+                v{{ dataset.version }}
+              </template>
+            </a-table-column>
+            <a-table-column title="创建时间" :width="180">
+              <template #cell="{ record: dataset }">
+                {{ formatDate(dataset.created_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: dataset }">
+                <RouterLink
+                  :to="`/evaluations/${dataset.id}`"
+                  custom
+                  v-slot="{ href, navigate }"
+                >
+                  <a-button type="text" :href="href" @click="navigate">
+                    查看详情
+                  </a-button>
+                </RouterLink>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
       <div v-if="hasMore" class="load-more">
-        <button class="secondary-button" type="button" :disabled="loadingMore" @click="loadMore">
+        <a-button
+          :disabled="loadingMore"
+          @click="loadMore"
+          type="secondary"
+          html-type="button"
+        >
           {{ loadingMore ? '加载中' : '加载更多' }}
-        </button>
+        </a-button>
       </div>
     </div>
 
-    <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
-      <div class="modal-panel">
-        <div class="modal-heading">
-          <h3>新建黄金集</h3>
-          <button class="icon-button" type="button" title="关闭" @click="showCreate = false">×</button>
+    <a-modal
+      v-if="showCreate"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="showCreate = false"
+      width="520px"
+    >
+      <template #title>新建黄金集</template>
+      <a-form
+        class="form-stack"
+        :model="{ name, description }"
+        layout="vertical"
+        @submit-success="createDataset"
+      >
+        <a-form-item
+          field="name"
+          :rules="[{ required: true, message: '请填写名称' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>名称</template>
+          <a-input
+            v-model="name"
+            data-testid="eval-name"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item field="description">
+          <template #label>描述</template>
+          <a-textarea
+            v-model="description"
+            :textarea-attrs="{ rows: '3' }"
+          ></a-textarea>
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="showCreate = false" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button
+            data-testid="eval-create-submit"
+            :disabled="saving"
+            type="primary"
+            html-type="submit"
+          >
+            <RefreshCw v-if="saving" :size="16" />
+            {{ saving ? '创建中' : '创建' }}
+          </a-button>
         </div>
-        <form class="form-stack" @submit.prevent="createDataset">
-          <label class="field">
-            <span>名称</span>
-            <input v-model="name" data-testid="eval-name" type="text" required />
-          </label>
-          <label class="field">
-            <span>描述</span>
-            <textarea v-model="description" rows="3" />
-          </label>
-          <div class="modal-actions">
-            <button class="ghost-button" type="button" @click="showCreate = false">取消</button>
-            <button class="primary-button" data-testid="eval-create-submit" type="submit" :disabled="saving">
-              <RefreshCw v-if="saving" :size="16" />
-              {{ saving ? '创建中' : '创建' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </a-form>
+    </a-modal>
   </div>
 </template>

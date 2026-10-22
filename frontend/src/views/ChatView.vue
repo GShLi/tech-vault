@@ -1,8 +1,15 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Option as AOption,
+  Select as ASelect,
+  Textarea as ATextarea,
+} from '@arco-design/web-vue'
 import { onMounted, ref, watch } from 'vue'
 import { MessageSquare, Send } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
 import { useTeamStore } from '@/stores/team'
 import type { KnowledgeBase } from '@/types/api'
 
@@ -23,15 +30,18 @@ async function loadKnowledgeBases(): Promise<void> {
       selectedKbId.value = page.data[0].id
     }
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
 onMounted(loadKnowledgeBases)
-watch(() => team.selectedTeamId, () => {
-  selectedKbId.value = ''
-  loadKnowledgeBases()
-})
+watch(
+  () => team.selectedTeamId,
+  () => {
+    selectedKbId.value = ''
+    loadKnowledgeBases()
+  },
+)
 </script>
 
 <template>
@@ -41,18 +51,18 @@ watch(() => team.selectedTeamId, () => {
         <div>
           <p>基于当前团队知识库检索并生成带引用的回答。</p>
         </div>
-        <select v-model="selectedKbId" aria-label="知识库范围">
-          <option value="" disabled>选择知识库</option>
-          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+        <a-select v-model="selectedKbId" aria-label="知识库范围">
+          <a-option value="" disabled>选择知识库</a-option>
+          <a-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
             {{ kb.name }}
-          </option>
-        </select>
+          </a-option>
+        </a-select>
       </div>
 
-      <div v-if="error" class="error-banner" role="alert">
+      <a-alert v-if="error" type="error" class="page-alert">
         <strong>{{ error.message }}</strong>
         <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      </div>
+      </a-alert>
 
       <div class="chat-empty">
         <MessageSquare :size="30" />
@@ -61,16 +71,15 @@ watch(() => team.selectedTeamId, () => {
       </div>
 
       <div class="composer">
-        <textarea
-          rows="3"
+        <a-textarea
           disabled
           placeholder="问答接口尚未接入"
-          aria-label="问题输入"
-        />
-        <button class="primary-button" type="button" disabled>
+          :textarea-attrs="{ 'aria-label': '问题输入', rows: '3' }"
+        ></a-textarea>
+        <a-button disabled type="primary" html-type="button">
           <Send :size="16" />
           发送
-        </button>
+        </a-button>
       </div>
     </section>
   </div>

@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import type { ModelPolicy, ModelProvider } from '@/types/api'
@@ -148,17 +149,19 @@ describe('AdminPolicyView provider admission', () => {
     const wrapper = await mountPage()
 
     expect(wrapper.text()).toContain('系统级模型策略')
-    const chatHistory = wrapper.get(
+    const chatHistory = control(
+      wrapper,
       '[data-testid="admin-allow-chat-history"]',
     )
-    const documentMetadata = wrapper.get(
+    const documentMetadata = control(
+      wrapper,
       '[data-testid="admin-allow-document-metadata"]',
     )
-    expect((chatHistory.element as HTMLInputElement).checked).toBe(false)
-    expect((documentMetadata.element as HTMLInputElement).checked).toBe(false)
+    expect(chatHistory.props('modelValue')).toBe(false)
+    expect(documentMetadata.props('modelValue')).toBe(false)
 
-    await chatHistory.setValue(true)
-    await documentMetadata.setValue(true)
+    await setControlValue(chatHistory, true)
+    await setControlValue(documentMetadata, true)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 

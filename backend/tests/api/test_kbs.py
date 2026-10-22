@@ -39,7 +39,7 @@ def test_leader_can_create_list_and_archive_kb(api_client):
     kb = created.json()["data"]
     assert kb["name"] == "Java"
     assert kb["updated_at"]
-    assert kb["default_model_policy_mode"] == "local_only"
+    assert kb["default_model_policy_mode"] == "external_allowed"
     assert kb["document_count"] == 0
 
     listed = api_client.get(
@@ -49,7 +49,7 @@ def test_leader_can_create_list_and_archive_kb(api_client):
     )
     assert [item["id"] for item in listed.json()["data"]] == [kb["id"]]
     assert listed.json()["data"][0]["updated_at"] == kb["updated_at"]
-    assert listed.json()["data"][0]["default_model_policy_mode"] == "local_only"
+    assert listed.json()["data"][0]["default_model_policy_mode"] == "external_allowed"
     assert listed.json()["data"][0]["document_count"] == 0
 
     archived = api_client.post(

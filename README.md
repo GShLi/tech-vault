@@ -1,6 +1,6 @@
 # TechVault 典阁
 
-面向研发团队的私有技术知识库与 RAG 问答系统。P0 已形成可运行的前后端垂直切片：管理员开户、团队与知识库、文件和 GitHub 文档接入、异步入库、Chunk 管理、混合检索、Rerank、带引用问答、检索 Trace、评测、模型策略和审计。
+面向研发团队的私有技术知识库与 RAG 问答系统。P0 已形成可运行的前后端垂直切片：管理员开户、团队与知识库、文件批量接入、异步入库、Chunk 管理、混合检索、Rerank、带引用问答、检索 Trace、评测、模型策略和审计。
 
 完整产品与架构设计见 [项目设计文档](<./TechVault 典阁 — 团队私有技术知识库 RAG 系统.md>)，接口基线见 [API 契约](./docs/api/api-contract.md) 和 [OpenAPI](./docs/api/openapi.yaml)。
 
@@ -8,7 +8,7 @@
 
 - 内置超级管理员，禁止外部注册；用户和团队只能由管理员创建。
 - 平台角色为 `admin`，团队成员角色为 `leader | member | viewer`，无租户字段。
-- 文件上传与 GitHub 来源同步，原始文件进入 MinIO。
+- 文件批量上传，原始文件进入 MinIO。
 - 文档、版本、Chunk、知识库成员范围和私有文档授权。
 - Markdown、TXT、PDF、DOCX 的解析、结构感知分块和索引 generation。
 - `dual_engine`（ES + Qdrant + RRF）与 `elastic_single`（ES 混合检索）两种后端检索模式。
@@ -113,7 +113,11 @@ export TECHVAULT_TASK_EXECUTION_MODE=inline
 .venv/bin/celery -A backend.app.workers.tasks beat --loglevel=info
 ```
 
-`beat` 每小时触发过期文档物理清理。
+`beat` 必须持续运行：每分钟恢复超过两分钟未更新的上传批次，每小时清理过期文档与超过七天的向量缓存。API、Worker 和 Beat 必须连接同一数据库及 Redis。
+
+批量上传默认每批 200 文件、总计 2 GiB、单文件 50 MiB；浏览器并发 3。可通过 `TECHVAULT_UPLOAD_BATCH_MAX_FILES`、`TECHVAULT_UPLOAD_BATCH_MAX_BYTES` 调整批次限制；`TECHVAULT_INGESTION_PUBLISH_GROUP_SIZE` 默认 20，控制合并发布文档数。已接收文件由后台处理，刷新后可在上传批次页查看或补传未接收文件。
+
+开发数据库升级：停止 API、Worker 和 Beat，加载项目环境后运行 `.venv/bin/python -m scripts.migrate_upload_batches`，再启动服务。该命令删除已废弃的 GitHub 连接/凭证表和旧结构向量缓存，保留知识库、文档和模型供应商配置；不提供旧来源接口兼容。全新数据库直接按当前模型初始化。
 
 ### 3. 启动前端
 
@@ -136,6 +140,8 @@ VITE_DEV_API_TARGET=http://127.0.0.1:8000 npm run dev
 ```
 
 首次登录后请立即修改密码。内置管理员不能被删除、停用或降级，但允许修改自己的密码。可通过 `TECHVAULT_ADMIN_EMAIL`、`TECHVAULT_ADMIN_PASSWORD` 和 `TECHVAULT_ADMIN_DISPLAY_NAME` 覆盖初始值。
+
+生产环境启动前必须设置独立的 `TECHVAULT_ADMIN_PASSWORD`（至少 12 个字符，不能使用上述默认值）；配置不满足时启动会直接失败。此设置只用于首次初始化，不会重置已有管理员的密码。
 
 ## 验证
 
@@ -179,7 +185,7 @@ VITE_DEV_API_TARGET=http://127.0.0.1:8001 npm run integration
 - 项目文档和 OpenAPI 是接口事实来源；实现与文档冲突时先修文档或代码，禁止长期双口径。
 - API 路径不包含团队或资源路径参数；写操作参数放 JSON body，查询接口只使用有限 query 参数。
 - 权限过滤必须进入召回条件；禁止先召回再在应用层剔除无权内容。
-- 外部模型调用统一经过 `llm_gateway`，默认 `local_only`。
+- 外部模型调用统一经过 `llm_gateway`；新知识库默认 `external_allowed`，实际外部调用仍受平台、团队策略及数据分级限制。
 - 索引写入使用 staging generation，通过校验后激活；失败保留上一个 active generation。
 - 文档删除先停止召回，保留期内可恢复，过期后由后台任务幂等清理。
 - 任何秘密值只写不读，日志、Trace 和审计不得记录完整密钥或原始文档内容。
@@ -199,3 +205,18 @@ VITE_DEV_API_TARGET=http://127.0.0.1:8001 npm run integration
 ```text
 origin  git@github.com:GShLi/tech-vault.git
 ```
+
+## 结构化解析开发基线（2026-10-21）
+
+新入库链路采用结构化节点、BGE-M3 token 预算与 Parent-Child Chunk。
+仅子块写入检索索引，父块用于重排与回答上下文。扫描及混合 PDF 暂不支持。
+文档详情展示解析器、分块统计与稳定错误码。
+
+此版本要求全新数据库和 ES/Qdrant 索引，不兼容旧开发数据。应用不会自动删除数据；
+请使用独立的新数据库、索引和存储目录验证后，再自行清理旧开发资源。
+首次运行先安装更新后的 `.[test,api,tasks]` 依赖，并重建 embedding 服务镜像。
+入库必须能访问同一 BGE-M3 服务的 `/tokenize` 和 `/embed`，服务不可用会返回失败，
+不会静默写入哈希向量。模型名称、维度和批量大小通过
+`TECHVAULT_EMBEDDING_MODEL`、`TECHVAULT_EMBEDDING_DIMENSION`、
+`TECHVAULT_EMBEDDING_BATCH_SIZE` 配置，默认分别为 `BAAI/bge-m3`、`1024`、`64`。
+PDF 页数上限由 `TECHVAULT_DOCUMENT_MAX_PAGES` 控制，默认 `1000`。

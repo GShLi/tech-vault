@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  InputPassword as AInputPassword,
+} from '@arco-design/web-vue'
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LogIn, ShieldCheck } from 'lucide-vue-next'
@@ -25,10 +33,11 @@ async function submit(): Promise<void> {
     team.restore()
     const redirect =
       typeof route.query.redirect === 'string' ? route.query.redirect : null
-    router.push(redirect ?? (team.selectedTeamId ? '/knowledge-bases' : '/teams'))
+    router.push(
+      redirect ?? (team.selectedTeamId ? '/knowledge-bases' : '/teams'),
+    )
   } catch (caught) {
-    error.value =
-      caught instanceof ApiRequestError ? caught : auth.error
+    error.value = caught instanceof ApiRequestError ? caught : auth.error
   } finally {
     submitting.value = false
   }
@@ -48,45 +57,56 @@ async function submit(): Promise<void> {
 
       <h1>登录工作台</h1>
 
-      <form class="form-stack" @submit.prevent="submit">
-        <label class="field">
-          <span>邮箱</span>
-          <input
+      <a-form
+        class="form-stack"
+        :model="{ email, password }"
+        layout="vertical"
+        @submit-success="submit"
+      >
+        <a-form-item
+          field="email"
+          :rules="[
+            { required: true, message: '请填写邮箱' },
+            { type: 'email', message: '请输入有效的邮箱地址' },
+          ]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>邮箱</template>
+          <a-input
             v-model="email"
             data-testid="login-email"
-            type="email"
-            autocomplete="email"
-            required
             placeholder="name@company.com"
-          />
-        </label>
-        <label class="field">
-          <span>密码</span>
-          <input
+            type="text"
+            :input-attrs="{ required: true, autocomplete: 'email' }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item
+          field="password"
+          :rules="[{ required: true, message: '请填写密码' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>密码</template>
+          <a-input-password
             v-model="password"
             data-testid="login-password"
-            type="password"
-            autocomplete="current-password"
-            required
             placeholder="输入密码"
-          />
-        </label>
-
-        <div v-if="error" class="error-banner" role="alert">
+            :input-attrs="{ required: true, autocomplete: 'current-password' }"
+          ></a-input-password>
+        </a-form-item>
+        <a-alert v-if="error" type="error" class="page-alert">
           <strong>{{ error.message }}</strong>
           <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-        </div>
-
-        <button
-          class="primary-button"
+        </a-alert>
+        <a-button
           data-testid="login-submit"
-          type="submit"
           :disabled="submitting"
+          type="primary"
+          html-type="submit"
         >
           <LogIn :size="17" />
           {{ submitting ? '登录中' : '登录' }}
-        </button>
-      </form>
+        </a-button>
+      </a-form>
 
       <p class="auth-link">账号由平台管理员统一创建。</p>
     </div>

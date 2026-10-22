@@ -27,9 +27,11 @@ class _Writer:
         self.staged_statuses = []
         self.deleted_chunk_batches = []
         self.document_statuses = []
+        self.counts = {}
 
     async def stage(self, generation_id, chunks):
         self.generations.append(generation_id)
+        self.counts[generation_id] = len(chunks)
         self.staged_statuses.append(
             [chunk.doc_status.value for chunk in chunks]
         )
@@ -41,13 +43,13 @@ class _Writer:
         self.document_statuses.append((generation_id, document_id, status))
 
     async def validate(self, generation_id):
-        return ValidationResult(True, (), 1)
+        return ValidationResult(True, (), self.counts[generation_id])
 
     async def activate(self, generation_id):
         return None
 
 
-def test_ingestion_creates_and_reuses_team_active_generation(tmp_path, monkeypatch):
+def test_ingestion_publishes_complete_independent_team_generations(tmp_path, monkeypatch):
     engine = build_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     session_factory = build_session_factory(engine)
@@ -62,7 +64,7 @@ def test_ingestion_creates_and_reuses_team_active_generation(tmp_path, monkeypat
     monkeypatch.setattr(
         processor_module.EmbeddingClient,
         "embed",
-        lambda self, texts: [[0.1, 0.2] for _ in texts],
+        lambda self, texts: [[0.1] * 1024 for _ in texts],
     )
     settings = Settings(
         environment="test",
@@ -128,25 +130,15 @@ def test_ingestion_creates_and_reuses_team_active_generation(tmp_path, monkeypat
         process_document(rebuilt_document, rebuilt_run, session, settings)
 
         generations = session.scalars(select(IndexGenerationRecord)).all()
-        assert len(generations) == 1
-        assert generations[0].status == "active"
-        assert generations[0].chunk_count == len(
-            session.scalars(select(ChunkRecord)).all()
-        )
-        assert set(writer.generations) == {generations[0].id}
-        assert all(
-            chunk.index_generation == generations[0].id
-            for chunk in session.scalars(select(ChunkRecord)).all()
-        )
-        assert writer_modes == [
-            EngineMode.ELASTIC_SINGLE,
-            EngineMode.ELASTIC_SINGLE,
-            EngineMode.ELASTIC_SINGLE,
-        ]
-        assert writer.staged_statuses
-        assert all(
-            set(statuses) <= {"building"}
-            for statuses in writer.staged_statuses
-        )
-        assert writer.document_statuses
-        assert all(status == "active" for _, _, status in writer.document_statuses)
+        assert len(generations) == 3
+        assert [generation.status for generation in generations] == ["validated", "validated", "active"]
+        assert [generation.chunk_count for generation in generations] == [1, 2, 2]
+        assert len(set(writer.generations)) == 3
+        assert writer_modes == [EngineMode.ELASTIC_SINGLE] * 3
+        assert all(set(statuses) == {"active"} for statuses in writer.staged_statuses)
+        # Redelivery of a completed run is a no-op.
+        process_document(rebuilt_document, rebuilt_run, session, settings)
+        assert len(writer.generations) == 3
+        from backend.app.db.models import GenerationChunk
+        members = session.scalars(select(GenerationChunk).where(GenerationChunk.generation_id == generations[0].id)).all()
+        assert len(members) == 2  # one parent and one child remain in the old snapshot

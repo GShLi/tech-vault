@@ -1,9 +1,20 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  normalizeApiError as toApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+} from '@arco-design/web-vue'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, LogIn, ShieldCheck, Users } from 'lucide-vue-next'
 
-import { api, ApiRequestError } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
 import type { InvitationView } from '@/types/api'
@@ -32,7 +43,8 @@ const canAccept = computed(
   () =>
     Boolean(auth.token) &&
     invitation.value?.status === 'pending' &&
-    auth.me?.user.email.toLowerCase() === invitation.value?.email.toLowerCase() &&
+    auth.me?.user.email.toLowerCase() ===
+      invitation.value?.email.toLowerCase() &&
     !accepted.value,
 )
 const emailMismatch = computed(
@@ -41,12 +53,6 @@ const emailMismatch = computed(
     invitation.value?.status === 'pending' &&
     auth.me?.user.email.toLowerCase() !== invitation.value?.email.toLowerCase(),
 )
-
-function toApiError(caught: unknown): ApiRequestError {
-  return caught instanceof ApiRequestError
-    ? caught
-    : new ApiRequestError('邀请操作失败，请稍后重试。', 'UNKNOWN_ERROR')
-}
 
 async function loadInvitation(): Promise<void> {
   loading.value = true
@@ -97,10 +103,10 @@ onMounted(loadInvitation)
       </div>
 
       <div v-if="loading" class="loading-state">正在读取邀请信息...</div>
-      <div v-else-if="error && !invitation" class="error-banner" role="alert">
+      <a-alert v-else-if="error && !invitation" type="error" class="page-alert">
         <strong>{{ error.message }}</strong>
         <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      </div>
+      </a-alert>
       <template v-else-if="invitation">
         <div class="invite-heading">
           <Users :size="28" />
@@ -110,57 +116,73 @@ onMounted(loadInvitation)
           </div>
         </div>
 
-        <dl class="invite-facts">
-          <div><dt>受邀邮箱</dt><dd>{{ invitation.email }}</dd></div>
-          <div><dt>分配角色</dt><dd>{{ roleLabels[invitation.role] ?? invitation.role }}</dd></div>
-          <div><dt>邀请状态</dt><dd>{{ invitation.status }}</dd></div>
-          <div><dt>有效期至</dt><dd>{{ formatDate(invitation.expires_at) }}</dd></div>
-        </dl>
+        <a-descriptions :column="2" bordered class="detail-descriptions">
+          <a-descriptions-item>
+            <template #label>受邀邮箱</template>
+            {{ invitation.email }}
+          </a-descriptions-item>
+          <a-descriptions-item>
+            <template #label>分配角色</template>
+            {{ roleLabels[invitation.role] ?? invitation.role }}
+          </a-descriptions-item>
+          <a-descriptions-item>
+            <template #label>邀请状态</template>
+            {{ invitation.status }}
+          </a-descriptions-item>
+          <a-descriptions-item>
+            <template #label>有效期至</template>
+            {{ formatDate(invitation.expires_at) }}
+          </a-descriptions-item>
+        </a-descriptions>
 
-        <div v-if="error" class="error-banner" role="alert">
+        <a-alert v-if="error" type="error" class="page-alert">
           <strong>{{ error.message }}</strong>
           <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-        </div>
+        </a-alert>
 
-        <div v-if="accepted" class="success-banner">
+        <a-alert v-if="accepted" type="success" class="page-alert">
           <strong>邀请已接受</strong>
           <span>你已加入 {{ invitation.team_name }}。</span>
-        </div>
-        <button
+        </a-alert>
+        <a-button
           v-if="accepted"
-          class="primary-button"
-          type="button"
           @click="router.push('/knowledge-bases')"
+          type="primary"
+          html-type="button"
         >
           进入知识库
           <ArrowRight :size="17" />
-        </button>
+        </a-button>
 
-        <div v-else-if="invitation.status !== 'pending'" class="notice-banner">
+        <a-alert
+          v-else-if="invitation.status !== 'pending'"
+          type="warning"
+          class="page-alert"
+        >
           该邀请当前状态为 {{ invitation.status }}，无法再次接受。
-        </div>
+        </a-alert>
         <div v-else-if="!auth.token" class="invite-actions">
           <p class="muted-text">请使用受邀邮箱对应的账号登录后接受邀请。</p>
-          <button class="primary-button" type="button" @click="loginToAccept">
+          <a-button @click="loginToAccept" type="primary" html-type="button">
             <LogIn :size="17" />
             登录并继续
-          </button>
+          </a-button>
         </div>
-        <div v-else-if="emailMismatch" class="error-banner" role="alert">
+        <a-alert v-else-if="emailMismatch" type="error" class="page-alert">
           <strong>当前账号与受邀邮箱不一致</strong>
           <span>请退出后使用 {{ invitation.email }} 登录。</span>
-        </div>
-        <button
+        </a-alert>
+        <a-button
           v-else
-          class="primary-button"
           data-testid="invite-accept"
-          type="button"
           :disabled="accepting"
           @click="acceptInvitation"
+          type="primary"
+          html-type="button"
         >
           {{ accepting ? '正在加入' : '接受邀请' }}
           <ArrowRight :size="17" />
-        </button>
+        </a-button>
       </template>
 
       <RouterLink class="auth-link" to="/login">返回登录</RouterLink>

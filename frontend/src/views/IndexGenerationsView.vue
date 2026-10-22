@@ -1,13 +1,37 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { CheckCircle2, DatabaseZap, Play, RefreshCcw, RotateCcw, ShieldCheck } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Descriptions as ADescriptions,
+  DescriptionsItem as ADescriptionsItem,
+  Empty as AEmpty,
+  Message,
+  Modal as AModal,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { onMounted, ref, watch } from 'vue'
+import {
+  CheckCircle2,
+  DatabaseZap,
+  Play,
+  RefreshCcw,
+  RotateCcw,
+  ShieldCheck,
+} from 'lucide-vue-next'
+
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
-import type { GenerationReindexResult, GenerationValidation, IndexGeneration } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import type {
+  GenerationReindexResult,
+  GenerationValidation,
+  IndexGeneration,
+} from '@/types/api'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 
 const team = useTeamStore()
 const items = ref<IndexGeneration[]>([])
@@ -25,18 +49,24 @@ async function load(reset = true): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const page = await api.listGenerations(team.selectedTeamId, reset ? null : nextCursor.value)
+    const page = await api.listGenerations(
+      team.selectedTeamId,
+      reset ? null : nextCursor.value,
+    )
     items.value = reset ? page.data : [...items.value, ...page.data]
     nextCursor.value = page.meta.next_cursor
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
 }
 
-async function runAction(action: 'validate' | 'activate', item: IndexGeneration): Promise<void> {
+async function runAction(
+  action: 'validate' | 'activate',
+  item: IndexGeneration,
+): Promise<void> {
   if (!team.selectedTeamId) return
   actionId.value = item.id
   error.value = null
@@ -53,7 +83,7 @@ async function runAction(action: 'validate' | 'activate', item: IndexGeneration)
     }
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     actionId.value = ''
   }
@@ -68,7 +98,7 @@ async function rollback(): Promise<void> {
     Message.success('已回滚到上一个已验证 Generation')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     actionId.value = ''
   }
@@ -86,7 +116,7 @@ async function startReindex(): Promise<void> {
     else Message.success('全量重建已完成')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     actionId.value = ''
   }
@@ -95,28 +125,208 @@ async function startReindex(): Promise<void> {
 async function showValidation(item: IndexGeneration): Promise<void> {
   if (!team.selectedTeamId) return
   try {
-    validation.value = await api.getGenerationValidation(team.selectedTeamId, item.id)
+    validation.value = await api.getGenerationValidation(
+      team.selectedTeamId,
+      item.id,
+    )
     validationGeneration.value = item.id
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
 onMounted(load)
-watch(() => team.selectedTeamId, () => load())
+watch(
+  () => team.selectedTeamId,
+  () => load(),
+)
 </script>
 
 <template>
   <div>
-    <div class="page-header"><div><h2>索引 Generation</h2><p>全量重建、验证、激活和回滚团队检索索引版本。</p></div><div class="row-actions"><button class="secondary-button" type="button" :disabled="loading" @click="load()"><RefreshCcw :size="16" />刷新</button><button v-if="team.canManage" class="secondary-button" type="button" data-testid="generation-reindex" :disabled="loading || actionId === 'reindex'" @click="startReindex"><Play :size="16" />全量重建</button><button v-if="team.canManage" class="secondary-button" type="button" :disabled="actionId === 'rollback'" @click="rollback"><RotateCcw :size="16" />回滚</button></div></div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span><button class="inline-link" type="button" @click="load()">重试</button></div>
-    <div v-if="reindexResult" class="notice-box" data-testid="generation-reindex-status"><strong>Generation {{ shortId(reindexResult.generation.id) }}</strong><span>运行状态：{{ reindexResult.run.status }} · {{ reindexResult.run.execution_mode }} · 检查 Chunk {{ reindexResult.run.checked_chunks }}</span></div>
-    <div v-if="loading && !items.length" class="panel loading-state"><a-spin /><span>正在加载索引版本</span></div>
-    <div v-else-if="!items.length" class="panel empty-state"><DatabaseZap :size="28" /><h3>暂无索引 Generation</h3><p>文档入库后会创建可验证的索引版本。</p></div>
-    <div v-else class="panel">
-      <div class="table-wrap"><table><thead><tr><th>Generation</th><th>状态</th><th>Chunk</th><th>Embedding 模型</th><th>校验/激活时间</th><th class="actions-column">操作</th></tr></thead><tbody><tr v-for="item in items" :key="item.id"><td data-label="Generation"><strong>{{ shortId(item.id) }}</strong><span class="cell-subtitle">{{ formatDate(item.created_at) }}</span></td><td data-label="状态"><StatusPill :status="item.status" /></td><td data-label="Chunk">{{ item.chunk_count }}</td><td data-label="Embedding 模型">{{ item.embedding_model }}</td><td data-label="校验/激活时间">{{ formatDate(item.activated_at || item.validated_at) }}</td><td data-label="操作"><div class="row-actions"><button class="ghost-button" type="button" @click="showValidation(item)"><ShieldCheck :size="14" />校验结果</button><button v-if="team.canManage && item.status !== 'active'" class="ghost-button" type="button" :disabled="actionId === item.id" @click="runAction(item.status === 'validated' ? 'activate' : 'validate', item)"><CheckCircle2 :size="14" />{{ item.status === 'validated' ? '激活' : '验证' }}</button></div></td></tr></tbody></table></div>
-      <div v-if="hasMore" class="load-more"><button class="secondary-button" type="button" :disabled="loading" @click="load(false)">加载更多</button></div>
+    <div class="page-header">
+      <div>
+        <h2>索引 Generation</h2>
+        <p>全量重建、验证、激活和回滚团队检索索引版本。</p>
+      </div>
+      <div class="row-actions">
+        <a-button
+          :disabled="loading"
+          @click="load()"
+          type="secondary"
+          html-type="button"
+        >
+          <RefreshCcw :size="16" />
+          刷新
+        </a-button>
+        <a-button
+          v-if="team.canManage"
+          data-testid="generation-reindex"
+          :disabled="loading || actionId === 'reindex'"
+          @click="startReindex"
+          type="secondary"
+          html-type="button"
+        >
+          <Play :size="16" />
+          全量重建
+        </a-button>
+        <a-button
+          v-if="team.canManage"
+          :disabled="actionId === 'rollback'"
+          @click="rollback"
+          type="secondary"
+          html-type="button"
+        >
+          <RotateCcw :size="16" />
+          回滚
+        </a-button>
+      </div>
     </div>
-    <div v-if="validation" class="modal-backdrop" @click.self="validation = null"><div class="modal-panel"><div class="modal-heading"><div><h3>Generation 校验</h3><span class="cell-subtitle">{{ validationGeneration }}</span></div><button class="icon-button" type="button" @click="validation = null">×</button></div><div class="detail-grid"><div><dt>结果</dt><dd>{{ validation.passed ? '通过' : '失败' }}</dd></div><div><dt>检查 Chunk</dt><dd>{{ validation.checked_chunks }}</dd></div><div><dt>校验时间</dt><dd>{{ formatDate(validation.validated_at) }}</dd></div></div><div v-if="validation.errors.length" class="error-banner" role="alert"><strong>校验错误</strong><span v-for="item in validation.errors" :key="item">{{ item }}</span></div><div v-else class="notice-box"><strong>所有检查已通过</strong><span>该索引可以激活。</span></div></div></div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+      <a-button @click="load()" type="text" html-type="button">重试</a-button>
+    </a-alert>
+    <a-alert
+      v-if="reindexResult"
+      data-testid="generation-reindex-status"
+      type="info"
+      class="page-alert"
+    >
+      <strong>Generation {{ shortId(reindexResult.generation.id) }}</strong>
+      <span>
+        运行状态：{{ reindexResult.run.status }} ·
+        {{ reindexResult.run.execution_mode }} · 检查 Chunk
+        {{ reindexResult.run.checked_chunks }}
+      </span>
+    </a-alert>
+    <div v-if="loading && !items.length" class="panel loading-state">
+      <a-spin />
+      <span>正在加载索引版本</span>
+    </div>
+    <a-empty v-else-if="!items.length" class="page-empty">
+      <template #image><DatabaseZap :size="28" /></template>
+      <h3>暂无索引 Generation</h3>
+      <p>文档入库后会创建可验证的索引版本。</p>
+    </a-empty>
+    <div v-else class="panel">
+      <div class="table-wrap">
+        <a-table
+          :data="items"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="Generation">
+              <template #cell="{ record: item }">
+                <strong>{{ shortId(item.id) }}</strong>
+                <span class="cell-subtitle">
+                  {{ formatDate(item.created_at) }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: item }">
+                <a-tag :color="statusColor(item.status)">
+                  {{ statusLabel(item.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="Chunk" :width="180">
+              <template #cell="{ record: item }">
+                {{ item.chunk_count }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Embedding 模型">
+              <template #cell="{ record: item }">
+                {{ item.embedding_model }}
+              </template>
+            </a-table-column>
+            <a-table-column title="校验/激活时间">
+              <template #cell="{ record: item }">
+                {{ formatDate(item.activated_at || item.validated_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: item }">
+                <div class="row-actions">
+                  <a-button
+                    @click="showValidation(item)"
+                    type="text"
+                    html-type="button"
+                  >
+                    <ShieldCheck :size="14" />
+                    校验结果
+                  </a-button>
+                  <a-button
+                    v-if="team.canManage && item.status !== 'active'"
+                    :disabled="actionId === item.id"
+                    @click="
+                      runAction(
+                        item.status === 'validated' ? 'activate' : 'validate',
+                        item,
+                      )
+                    "
+                    type="text"
+                    html-type="button"
+                  >
+                    <CheckCircle2 :size="14" />
+                    {{ item.status === 'validated' ? '激活' : '验证' }}
+                  </a-button>
+                </div>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+      </div>
+      <div v-if="hasMore" class="load-more">
+        <a-button
+          :disabled="loading"
+          @click="load(false)"
+          type="secondary"
+          html-type="button"
+        >
+          加载更多
+        </a-button>
+      </div>
+    </div>
+    <a-modal
+      v-if="validation"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="validation = null"
+      width="520px"
+    >
+      <template #title>
+        <h3>Generation 校验</h3>
+        <span class="cell-subtitle">{{ validationGeneration }}</span>
+      </template>
+      <a-descriptions
+        :column="{ xs: 1, sm: 2, lg: 3 }"
+        bordered
+        class="detail-descriptions"
+      >
+        <a-descriptions-item label="结果">
+          {{ validation.passed ? '通过' : '失败' }}
+        </a-descriptions-item>
+        <a-descriptions-item label="检查 Chunk">
+          {{ validation.checked_chunks }}
+        </a-descriptions-item>
+        <a-descriptions-item label="校验时间">
+          {{ formatDate(validation.validated_at) }}
+        </a-descriptions-item>
+      </a-descriptions>
+      <a-alert v-if="validation.errors.length" type="error" class="page-alert">
+        <strong>校验错误</strong>
+        <span v-for="item in validation.errors" :key="item">{{ item }}</span>
+      </a-alert>
+      <a-alert v-else type="info" class="page-alert">
+        <strong>所有检查已通过</strong>
+        <span>该索引可以激活。</span>
+      </a-alert>
+    </a-modal>
   </div>
 </template>

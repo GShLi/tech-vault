@@ -30,37 +30,6 @@ def test_create_schema_adds_description_to_legacy_teams_table():
     assert "description" in columns
 
 
-def test_create_schema_adds_secret_encrypted_to_legacy_credentials_table():
-    engine = build_engine("sqlite+pysqlite:///:memory:")
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE credentials ("
-                "id VARCHAR(26) PRIMARY KEY, "
-                "team_id VARCHAR(26) NOT NULL, "
-                "name VARCHAR(120) NOT NULL, "
-                "secret_masked VARCHAR(40) NOT NULL, "
-                "created_by VARCHAR(26) NOT NULL, "
-                "created_at DATETIME NOT NULL"
-                ")"
-            )
-        )
-
-    create_schema(engine)
-    columns = {
-        column["name"] for column in inspect(engine).get_columns("credentials")
-    }
-    assert "secret_encrypted" in columns
-
-    create_schema(engine)
-    columns = [
-        column["name"] for column in inspect(engine).get_columns("credentials")
-    ]
-    assert columns.count("secret_encrypted") == 1
-
-    create_schema(engine)
-    columns = {column["name"] for column in inspect(engine).get_columns("teams")}
-    assert "description" in columns
 
 
 def test_create_schema_adds_provider_fields_to_legacy_evaluation_runs_table():

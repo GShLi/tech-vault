@@ -698,6 +698,11 @@ paths:
         required: false
         schema:
           type: string
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
         default:
           $ref: '#/components/responses/ErrorResponse'
@@ -1031,262 +1036,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
-  /sources:
-    get:
-      tags:
-      - docs
-      summary: List sources in a knowledge base
-      parameters:
-      - name: team_id
-        in: query
-        required: true
-        schema:
-          type: string
-      - name: kb_id
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: limit
-        in: query
-        required: false
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 20
-      - name: cursor
-        in: query
-        required: false
-        schema:
-          type: string
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SourceConnectionPageEnvelope'
-  /sources/github/create:
-    post:
-      tags:
-      - docs
-      summary: Add a GitHub source
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GitHubSourceCreateBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/detail:
-    get:
-      tags:
-      - docs
-      summary: Get a source connection
-      parameters:
-      - name: team_id
-        in: query
-        required: true
-        schema:
-          type: string
-      - name: source_id
-        in: query
-        required: true
-        schema:
-          type: string
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/update:
-    post:
-      tags:
-      - docs
-      summary: Update a source connection
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GitHubSourceUpdateBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/delete:
-    post:
-      tags:
-      - docs
-      summary: Delete a source connection
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourceDeleteBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/sync:
-    post:
-      tags:
-      - docs
-      summary: Trigger an incremental source sync
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourceSyncBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/pause:
-    post:
-      tags:
-      - docs
-      summary: Pause a source connection
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourcePauseBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /sources/resume:
-    post:
-      tags:
-      - docs
-      summary: Resume a source connection
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourceResumeBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /credentials:
-    get:
-      tags:
-      - docs
-      summary: List write-only source credentials
-      parameters:
-      - name: team_id
-        in: query
-        required: true
-        schema:
-          type: string
-      - name: limit
-        in: query
-        required: false
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 20
-      - name: cursor
-        in: query
-        required: false
-        schema:
-          type: string
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CredentialPageEnvelope'
-  /credentials/create:
-    post:
-      tags:
-      - docs
-      summary: Create a source credential
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CredentialCreateBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-  /credentials/delete:
-    post:
-      tags:
-      - docs
-      summary: Delete a source credential
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CredentialDeleteBody'
-      responses:
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
   /ingestions:
     get:
       tags:
@@ -1307,6 +1056,11 @@ paths:
           maximum: 100
           default: 20
       - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: kb_id
         in: query
         required: false
         schema:
@@ -3079,6 +2833,130 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Envelope'
+  /upload-batches:
+    get:
+      tags:
+      - docs
+      summary: List your latest 100 batches in a knowledge base
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatchListEnvelope'
+      parameters:
+      - name: team_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: kb_id
+        in: query
+        required: true
+        schema:
+          type: string
+  /upload-batches/limits:
+    get:
+      tags:
+      - docs
+      summary: Get upload limits
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLimitsEnvelope'
+  /upload-batches/detail:
+    get:
+      tags:
+      - docs
+      summary: Get durable batch progress
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatchEnvelope'
+      parameters:
+      - name: team_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: batch_id
+        in: query
+        required: true
+        schema:
+          type: string
+  /upload-batches/create:
+    post:
+      tags:
+      - docs
+      summary: Create an idempotent upload manifest
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatchEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadBatchCreateBody'
+  /upload-batches/seal:
+    post:
+      tags:
+      - docs
+      summary: Finish uploading and dispatch saved files
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '202':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatchEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadBatchActionBody'
+  /upload-batches/retry:
+    post:
+      tags:
+      - docs
+      summary: Retry failed processing tasks
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '202':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatchEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadBatchActionBody'
 components:
   securitySchemes:
     bearerAuth:
@@ -3318,24 +3196,6 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/EvaluationRun'
-    SourceConnectionPageEnvelope:
-      allOf:
-      - $ref: '#/components/schemas/PageEnvelope'
-      - type: object
-        properties:
-          data:
-            type: array
-            items:
-              $ref: '#/components/schemas/SourceConnection'
-    CredentialPageEnvelope:
-      allOf:
-      - $ref: '#/components/schemas/PageEnvelope'
-      - type: object
-        properties:
-          data:
-            type: array
-            items:
-              $ref: '#/components/schemas/Credential'
     ProviderPageEnvelope:
       allOf:
       - $ref: '#/components/schemas/PageEnvelope'
@@ -3692,6 +3552,12 @@ components:
           $ref: '#/components/schemas/Visibility'
         data_classification:
           $ref: '#/components/schemas/DataClassification'
+        batch_id:
+          type: string
+          description: Upload batch ID; required together with batch_file_id.
+        batch_file_id:
+          type: string
+          description: Client file ID from the batch manifest; replay is idempotent.
     DocumentUpdateBody:
       type: object
       required:
@@ -3784,134 +3650,6 @@ components:
           type: string
           maxLength: 26
         grant_id:
-          type: string
-          maxLength: 26
-    GitHubSourceCreateBody:
-      type: object
-      required:
-      - team_id
-      - kb_id
-      - repo_url
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        kb_id:
-          type: string
-          maxLength: 26
-        repo_url:
-          type: string
-          format: uri
-        branch:
-          type: string
-          maxLength: 120
-        path_filters:
-          type: array
-          items:
-            type: string
-        credentials_id:
-          type: string
-          maxLength: 26
-          nullable: true
-    GitHubSourceUpdateBody:
-      type: object
-      required:
-      - team_id
-      - source_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        source_id:
-          type: string
-          maxLength: 26
-        repo_url:
-          type: string
-          format: uri
-        branch:
-          type: string
-          maxLength: 120
-        path_filters:
-          type: array
-          items:
-            type: string
-        credentials_id:
-          type: string
-          maxLength: 26
-          nullable: true
-    SourceDeleteBody:
-      type: object
-      required:
-      - team_id
-      - source_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        source_id:
-          type: string
-          maxLength: 26
-    SourceSyncBody:
-      type: object
-      required:
-      - team_id
-      - source_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        source_id:
-          type: string
-          maxLength: 26
-    SourcePauseBody:
-      type: object
-      required:
-      - team_id
-      - source_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        source_id:
-          type: string
-          maxLength: 26
-    SourceResumeBody:
-      type: object
-      required:
-      - team_id
-      - source_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        source_id:
-          type: string
-          maxLength: 26
-    CredentialCreateBody:
-      type: object
-      required:
-      - team_id
-      - secret
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        name:
-          type: string
-          maxLength: 120
-        secret:
-          type: string
-          minLength: 1
-    CredentialDeleteBody:
-      type: object
-      required:
-      - team_id
-      - credential_id
-      properties:
-        team_id:
-          type: string
-          maxLength: 26
-        credential_id:
           type: string
           maxLength: 26
     IngestionRetryBody:
@@ -4014,6 +3752,8 @@ components:
           uniqueItems: true
           items:
             type: string
+            minLength: 1
+            maxLength: 68
         action:
           type: string
           enum:
@@ -4914,6 +4654,18 @@ components:
         - source_uri
         - version_family
         properties:
+          parse_metadata:
+            type: object
+            additionalProperties: true
+          chunking_metadata:
+            type: object
+            additionalProperties: true
+          quality_metrics:
+            type: object
+            additionalProperties: true
+          failure_details:
+            type: object
+            additionalProperties: true
           owner_user_id:
             type: string
           current_version_id:
@@ -4982,6 +4734,15 @@ components:
       - created_at
       - updated_at
       properties:
+        file_name:
+          type: string
+          nullable: true
+        quality_metrics:
+          type: object
+          additionalProperties: true
+        failure_details:
+          type: object
+          additionalProperties: true
         id:
           type: string
         document_version_id:
@@ -5127,72 +4888,6 @@ components:
           type: string
           nullable: true
         actor_id:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-    SourceConnection:
-      type: object
-      required:
-      - id
-      - team_id
-      - kb_id
-      - source_type
-      - repo_url
-      - branch
-      - path_filters
-      - credentials_id
-      - created_by
-      - status
-      - sync_cursor
-      - created_at
-      - updated_at
-      properties:
-        id:
-          type: string
-        team_id:
-          type: string
-        kb_id:
-          type: string
-        source_type:
-          type: string
-        repo_url:
-          type: string
-        branch:
-          type: string
-        path_filters:
-          type: array
-          items:
-            type: string
-        credentials_id:
-          type: string
-          nullable: true
-        created_by:
-          type: string
-        status:
-          type: string
-        sync_cursor:
-          type: string
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    Credential:
-      type: object
-      required:
-      - id
-      - name
-      - secret_masked
-      - created_at
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        secret_masked:
           type: string
         created_at:
           type: string
@@ -5878,6 +5573,8 @@ components:
     IngestionStatus:
       type: string
       enum:
+      - running
+      - prepared
       - queued
       - fetching
       - parsing
@@ -5916,3 +5613,243 @@ components:
       - local_only
       - external_allowed
       - external_required
+
+    FileManifest:
+      properties:
+        client_id:
+          maxLength: 64
+          minLength: 1
+          title: Client Id
+          type: string
+        file_name:
+          maxLength: 500
+          minLength: 1
+          title: File Name
+          type: string
+        size_bytes:
+          maximum: 52428800
+          minimum: 1
+          title: Size Bytes
+          type: integer
+      required:
+      - client_id
+      - file_name
+      - size_bytes
+      title: FileManifest
+      type: object
+
+    UploadBatchCreateBody:
+      properties:
+        team_id:
+          title: Team Id
+          type: string
+        kb_id:
+          title: Kb Id
+          type: string
+        client_id:
+          maxLength: 64
+          minLength: 1
+          title: Client Id
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/FileManifest'
+          maxItems: 1000
+          minItems: 1
+          title: Files
+          type: array
+        product:
+          default: ''
+          maxLength: 120
+          title: Product
+          type: string
+        version_values:
+          items:
+            type: string
+          maxItems: 100
+          title: Version Values
+          type: array
+        visibility:
+          default: team_shared
+          title: Visibility
+          type: string
+        data_classification:
+          default: internal
+          title: Data Classification
+          type: string
+      required:
+      - team_id
+      - kb_id
+      - client_id
+      - files
+      title: BatchCreate
+      type: object
+
+    UploadBatchActionBody:
+      properties:
+        team_id:
+          title: Team Id
+          type: string
+        batch_id:
+          title: Batch Id
+          type: string
+      required:
+      - team_id
+      - batch_id
+      title: BatchAction
+      type: object
+    UploadLimits:
+      type: object
+      required:
+      - max_files
+      - max_total_bytes
+      - max_file_bytes
+      - upload_concurrency
+      properties:
+        max_files:
+          type: integer
+          minimum: 1
+        max_total_bytes:
+          type: integer
+          minimum: 1
+        max_file_bytes:
+          type: integer
+          minimum: 1
+        upload_concurrency:
+          type: integer
+          minimum: 1
+    UploadBatchFile:
+      type: object
+      required:
+      - id
+      - client_id
+      - file_name
+      - size_bytes
+      - status
+      - progress
+      - failure_details
+      properties:
+        id:
+          type: string
+        client_id:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+        stage:
+          type: string
+        document_id:
+          type: string
+          nullable: true
+        run_id:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        size_bytes:
+          type: integer
+          format: int64
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        failure_details:
+          type: object
+          additionalProperties: true
+    UploadBatch:
+      type: object
+      required:
+      - id
+      - team_id
+      - kb_id
+      - status
+      - sealed
+      - created_at
+      - metadata
+      - files
+      - counts
+      - total
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        kb_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - uploading
+          - queued
+          - processing
+          - completed
+          - partial_failed
+        sealed:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          required:
+          - product
+          - version_values
+          - visibility
+          - data_classification
+          properties:
+            product:
+              type: string
+            version_values:
+              type: array
+              items:
+                type: string
+            visibility:
+              type: string
+            data_classification:
+              type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadBatchFile'
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    UploadLimitsEnvelope:
+      type: object
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/UploadLimits'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    UploadBatchEnvelope:
+      type: object
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/UploadBatch'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    UploadBatchListEnvelope:
+      type: object
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadBatch'
+        meta:
+          $ref: '#/components/schemas/Meta'

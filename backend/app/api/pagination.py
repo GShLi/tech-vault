@@ -14,7 +14,7 @@ from backend.app.core.ids import is_valid_ulid
 
 
 _MAX_PAGE_LIMIT = 100
-_CHUNK_ID_PATTERN = re.compile(r"chk_[0-9a-f]{64}\Z")
+_CHUNK_ID_PATTERN = re.compile(r"(?:chd|par)_[0-9a-f]{64}\Z")
 
 
 def _encode_payload(payload: dict) -> str:

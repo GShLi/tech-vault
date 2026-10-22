@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.storage import ObjectStorageUnavailable, delete_s3_object
 from backend.app.core.config import Settings
-from backend.app.db.models import ChunkRecord, Document, IndexGenerationRecord, KnowledgeBase
+from backend.app.db.models import ChunkRecord, Document, DocumentVersion, EmbeddingCache, IngestionRun, IndexGenerationRecord, KnowledgeBase, PreparedIngestion
 from backend.app.modules.audit.service import write_audit
 from backend.app.rag.indexing.maintenance import delete_document_from_indexes
 
@@ -142,6 +142,14 @@ def purge_document_record(
     _remove_local_resources(document, settings)
     document.purged_at = now or _utc_now()
     knowledge_base = session.get(KnowledgeBase, document.knowledge_base_id)
+    session.execute(delete(PreparedIngestion).where(PreparedIngestion.run_id.in_(
+        select(IngestionRun.id).join(DocumentVersion, IngestionRun.document_version_id == DocumentVersion.id)
+        .where(DocumentVersion.document_id == document.id)
+    )))
+    if knowledge_base:
+        # Cache entries can be shared by identical documents within a team.
+        # Invalidate that team's cache on physical purge rather than retaining derived content.
+        session.execute(delete(EmbeddingCache).where(EmbeddingCache.team_id == knowledge_base.team_id))
     write_audit(
         session,
         team_id=knowledge_base.team_id if knowledge_base is not None else None,
@@ -162,6 +170,8 @@ def purge_expired_documents_record(
     limit: int = 100,
 ) -> dict:
     current = now or _utc_now()
+    session.execute(delete(EmbeddingCache).where(EmbeddingCache.created_at < current - timedelta(days=7)))
+    session.commit()
     cutoff = current - timedelta(days=settings.document_retention_days)
     documents = session.scalars(
         select(Document)

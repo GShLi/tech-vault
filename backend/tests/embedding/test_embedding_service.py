@@ -9,7 +9,7 @@ def test_embedding_client_bypasses_system_proxy_for_local_model_service(monkeypa
             return None
 
         def json(self):
-            return {"vectors": [[0.1, 0.2]]}
+            return {"vectors": [[0.1, 0.2]], "dimension": 2, "model": "BAAI/bge-m3"}
 
     class Client:
         def __init__(self, **kwargs):
@@ -27,7 +27,7 @@ def test_embedding_client_bypasses_system_proxy_for_local_model_service(monkeypa
     monkeypatch.setattr(embedding_service.httpx, "Client", Client)
 
     vectors = embedding_service.EmbeddingClient(
-        "http://127.0.0.1:58001"
+        "http://127.0.0.1:58001", dimension=2
     ).embed(["virtual threads"])
 
     assert vectors == [[0.1, 0.2]]

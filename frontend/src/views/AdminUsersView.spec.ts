@@ -1,3 +1,4 @@
+import { control, setControlValue } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import AdminUsersView from './AdminUsersView.vue'
@@ -89,22 +90,36 @@ describe('AdminUsersView', () => {
 
     expect(wrapper.text()).toContain('member@example.com')
     expect(wrapper.text()).toContain('Platform')
-    expect(wrapper.find('[data-testid="admin-user-disable-admin-1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="admin-user-role-user-2-team-1"]').exists()).toBe(true)
+    expect(
+      wrapper.find('[data-testid="admin-user-disable-admin-1"]').exists(),
+    ).toBe(false)
+    expect(
+      control(
+        wrapper,
+        '[data-testid="admin-user-role-user-2-team-1"]',
+      ).exists(),
+    ).toBe(true)
   })
 
   it('updates account status and membership role through typed bodies', async () => {
     const wrapper = await mountPage()
 
-    await wrapper.get('[data-testid="admin-user-disable-user-2"]').trigger('click')
+    await wrapper
+      .get('[data-testid="admin-user-disable-user-2"]')
+      .trigger('click')
     await flushPromises()
     expect(apiMocks.updateUser).toHaveBeenCalledWith({
       user_id: 'user-2',
       status: 'disabled',
     })
 
-    await wrapper.get('[data-testid="admin-user-role-user-2-team-1"]').setValue('leader')
-    await wrapper.get('[data-testid="admin-user-role-save-user-2-team-1"]').trigger('click')
+    await setControlValue(
+      control(wrapper, '[data-testid="admin-user-role-user-2-team-1"]'),
+      'leader',
+    )
+    await wrapper
+      .get('[data-testid="admin-user-role-save-user-2-team-1"]')
+      .trigger('click')
     await flushPromises()
     expect(apiMocks.updateUser).toHaveBeenCalledWith({
       user_id: 'user-2',
@@ -119,7 +134,9 @@ describe('AdminUsersView', () => {
       .mockResolvedValueOnce(page([memberUser]))
     const wrapper = await mountPage()
 
-    await wrapper.get('[data-testid="admin-users-load-more"] button').trigger('click')
+    await wrapper
+      .get('[data-testid="admin-users-load-more"] button')
+      .trigger('click')
     await flushPromises()
 
     expect(apiMocks.listUsers).toHaveBeenLastCalledWith('cursor-2')

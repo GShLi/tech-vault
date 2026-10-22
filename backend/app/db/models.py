@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -48,6 +49,8 @@ class AuthSession(Base):
 class Document(Base):
     __tablename__ = "documents"
 
+    mime_type: Mapped[str] = mapped_column(String(120), default="")
+
     id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
     knowledge_base_id: Mapped[str] = mapped_column(
         String(26), ForeignKey("knowledge_bases.id"), index=True
@@ -84,6 +87,9 @@ class Document(Base):
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
 
+    parse_metadata: Mapped[str] = mapped_column(Text, default="{}")
+    chunking_metadata: Mapped[str] = mapped_column(Text, default="{}")
+
     id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
     document_id: Mapped[str] = mapped_column(
         String(26), ForeignKey("documents.id"), index=True
@@ -101,6 +107,9 @@ class DocumentVersion(Base):
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
 
+    quality_metrics: Mapped[str] = mapped_column(Text, default="{}")
+    failure_details: Mapped[str] = mapped_column(Text, default="{}")
+
     id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
     document_version_id: Mapped[str] = mapped_column(
         String(26), ForeignKey("document_versions.id"), index=True
@@ -114,6 +123,53 @@ class IngestionRun(Base):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+
+class UploadBatch(Base):
+    __tablename__ = "upload_batches"
+    __table_args__ = (UniqueConstraint("created_by", "client_id"),)
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    client_id: Mapped[str] = mapped_column(String(64))
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    kb_id: Mapped[str] = mapped_column(String(26), ForeignKey("knowledge_bases.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(24), default="uploading", index=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    sealed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
+class UploadBatchFile(Base):
+    __tablename__ = "upload_batch_files"
+    __table_args__ = (UniqueConstraint("batch_id", "client_id"),)
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
+    batch_id: Mapped[str] = mapped_column(String(26), ForeignKey("upload_batches.id"), index=True)
+    client_id: Mapped[str] = mapped_column(String(64))
+    file_name: Mapped[str] = mapped_column(String(500))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    run_id: Mapped[Optional[str]] = mapped_column(String(26), ForeignKey("ingestion_runs.id", ondelete="SET NULL"), nullable=True)
+    document_id: Mapped[Optional[str]] = mapped_column(String(26), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    processing_retries: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PreparedIngestion(Base):
+    __tablename__ = "prepared_ingestions"
+
+    run_id: Mapped[str] = mapped_column(String(26), ForeignKey("ingestion_runs.id", ondelete="CASCADE"), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+
+
+class EmbeddingCache(Base):
+    __tablename__ = "embedding_cache"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
+    vector: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
 
 
 class Team(Base):
@@ -155,7 +211,7 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
-    model_policy_mode: Mapped[str] = mapped_column(String(24), default="local_only")
+    model_policy_mode: Mapped[str] = mapped_column(String(24), default="external_allowed")
     created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -212,6 +268,21 @@ class Message(Base):
 
 class ChunkRecord(Base):
     __tablename__ = "chunks"
+
+    parent_chunk_id: Mapped[Optional[str]] = mapped_column(String(68), nullable=True, index=True)
+    chunk_level: Mapped[str] = mapped_column(String(12), default="child")
+    child_order: Mapped[int] = mapped_column(Integer, default=1)
+    node_type: Mapped[str] = mapped_column(String(20), default="paragraph")
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    page_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    parse_version: Mapped[str] = mapped_column(String(40), default="2")
+    chunking_version: Mapped[str] = mapped_column(String(40), default="2")
+    embedding_model: Mapped[str] = mapped_column(String(120), default="")
+    tokenizer_model: Mapped[str] = mapped_column(String(120), default="")
+    parent_start_offset: Mapped[int] = mapped_column(Integer, default=0)
+    parent_end_offset: Mapped[int] = mapped_column(Integer, default=0)
+    overlap_before_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    unsafe_split: Mapped[bool] = mapped_column(Boolean, default=False)
 
     id: Mapped[str] = mapped_column(String(68), primary_key=True, default=new_ulid)
     document_id: Mapped[str] = mapped_column(String(26), ForeignKey("documents.id"), index=True)
@@ -477,36 +548,6 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
-class SourceConnection(Base):
-    __tablename__ = "source_connections"
-
-    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
-    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
-    kb_id: Mapped[str] = mapped_column(String(26), ForeignKey("knowledge_bases.id"), index=True)
-    source_type: Mapped[str] = mapped_column(String(24), default="github")
-    repo_url: Mapped[str] = mapped_column(String(500))
-    branch: Mapped[str] = mapped_column(String(120), default="main")
-    path_filters: Mapped[str] = mapped_column(Text, default="[]")
-    credentials_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="active")
-    sync_cursor: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
-
-
-class Credential(Base):
-    __tablename__ = "credentials"
-
-    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_ulid)
-    team_id: Mapped[str] = mapped_column(String(26), ForeignKey("teams.id"), index=True)
-    name: Mapped[str] = mapped_column(String(120))
-    secret_masked: Mapped[str] = mapped_column(String(40))
-    secret_encrypted: Mapped[str] = mapped_column(Text, default="")
-    created_by: Mapped[str] = mapped_column(String(26), ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-
 class IndexGenerationRecord(Base):
     __tablename__ = "index_generations"
 
@@ -564,13 +605,17 @@ def sanitize_trace_context(raw_context: Optional[str]) -> str:
     for item in context:
         if not isinstance(item, dict):
             continue
-        sanitized.append(
-            {
-                key: value
-                for key, value in item.items()
-                if key in _TRACE_LOCATION_FIELDS
-            }
-        )
+        location = {
+            key: value for key, value in item.items() if key in _TRACE_LOCATION_FIELDS
+        }
+        evidence = item.get("evidence_chunk_ids")
+        if isinstance(evidence, list):
+            # Only child IDs may survive; arbitrary nested content must stay out of traces.
+            location["evidence_chunk_ids"] = list(dict.fromkeys(
+                value for value in evidence
+                if isinstance(value, str) and re.fullmatch(r"chd_[0-9a-f]{64}", value)
+            ))
+        sanitized.append(location)
     return json.dumps(sanitized, ensure_ascii=False)
 
 
@@ -578,3 +623,17 @@ def sanitize_trace_context(raw_context: Optional[str]) -> str:
 @event.listens_for(TraceRecord, "before_update")
 def _sanitize_trace_context_before_write(_mapper, _connection, target: TraceRecord):
     target.final_context = sanitize_trace_context(target.final_context)
+
+
+class GenerationChunk(Base):
+    __tablename__ = "generation_chunks"
+    snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    generation_id: Mapped[str] = mapped_column(String(26), ForeignKey("index_generations.id"), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(String(68), ForeignKey("chunks.id"), primary_key=True)
+
+
+class ProcessingLease(Base):
+    __tablename__ = "processing_leases"
+    team_id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(32))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())

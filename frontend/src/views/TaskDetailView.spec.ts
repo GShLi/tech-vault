@@ -120,6 +120,20 @@ describe('TaskDetailView ingestion SSE', () => {
     sessionStorage.clear()
   })
 
+  it('explains index waiting without offering a duplicate retry', async () => {
+    apiMocks.getIngestionRun.mockResolvedValue(
+      ingestionRun({ current_stage: 'waiting_index', retryable: true }),
+    )
+    fetchMock.mockResolvedValue(sseResponse([]))
+    const { wrapper } = await mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('等待前序文档处理')
+    expect(wrapper.text()).toContain('本任务会自动继续，无需重新上传')
+    expect(wrapper.findAll('button').some((button) => button.text() === '重试')).toBe(false)
+    expect(wrapper.findAll('button').some((button) => button.text() === '取消')).toBe(true)
+    wrapper.unmount()
+  })
+
   it('automatically applies progress and failed events to the run', async () => {
     fetchMock.mockResolvedValue(
       sseResponse([
@@ -159,31 +173,35 @@ describe('TaskDetailView ingestion SSE', () => {
   it.each([
     ['completed', 100, null, '已完成'],
     ['cancelled', 38, 'CANCELLED', '已取消'],
-  ])('applies a terminal %s event', async (event, percent, errorCode, label) => {
-    fetchMock.mockResolvedValue(
-      sseResponse([
-        eventBlock(event, {
-          run_id: 'run-1',
-          status: event,
-          stage: event === 'completed' ? 'completed' : 'cancelled',
-          percent,
-          error_code: errorCode,
-          retryable: event !== 'completed',
-        }),
-      ]),
-    )
+  ])(
+    'applies a terminal %s event',
+    async (event, percent, errorCode, label) => {
+      fetchMock.mockResolvedValue(
+        sseResponse([
+          eventBlock(event, {
+            run_id: 'run-1',
+            status: event,
+            stage: event === 'completed' ? 'completed' : 'cancelled',
+            percent,
+            error_code: errorCode,
+            retryable: event !== 'completed',
+          }),
+        ]),
+      )
 
-    const { wrapper } = await mountPage()
+      const { wrapper } = await mountPage()
 
-    await vi.waitFor(() => {
-      expect(wrapper.text()).toContain(`${percent}%`)
-    })
-    expect(wrapper.findComponent({ name: 'StatusPill' }).text()).toContain(label)
-    if (errorCode) expect(wrapper.text()).toContain(errorCode)
-  })
+      await vi.waitFor(() => {
+        expect(wrapper.text()).toContain(`${percent}%`)
+      })
+      expect(wrapper.findComponent({ name: 'Tag' }).text()).toContain(label)
+      if (errorCode) expect(wrapper.text()).toContain(errorCode)
+    },
+  )
 
   it('aborts the active event stream when the component unmounts', async () => {
-    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null =
+      null
     fetchMock.mockImplementation((_input, init) => {
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {

@@ -1,3 +1,5 @@
+from backend.app.rag.context.parents import hydrate_parent_chunks
+from backend.app.rag.parsing.contracts import ParseError
 import asyncio
 import json
 import time
@@ -57,6 +59,14 @@ from backend.app.rag.llm_gateway import (
 from backend.app.rag.llm_gateway.providers import (
     ProviderAdapterError,
     build_provider_adapter,
+)
+from backend.app.rag.observability.trace import (
+    candidate_rows as _candidate_rows,
+    rewrite_trace_payload as _rewrite_trace_payload,
+    rewrite_json as _rewrite_json,
+    final_context_rows,
+    effective_stage_latency,
+    total_stage_latency,
 )
 from backend.app.rag.retrieval.config import EngineMode
 from backend.app.rag.retrieval.factory import build_retriever
@@ -266,53 +276,6 @@ def list_messages(
         request_id=request.state.request_id,
         view=_message_view,
         descending=False,
-    )
-
-
-def _candidate_rows(chunks) -> list:
-    return [
-        {
-            "chunk_id": chunk.chunk_id,
-            "rank": chunk.fused_rank,
-            "score": chunk.rerank_score,
-            "bm25_rank": chunk.bm25_rank,
-            "dense_rank": chunk.dense_rank,
-            "bm25_score": chunk.bm25_score,
-            "dense_score": chunk.dense_score,
-            "rrf_score": chunk.rrf_score,
-            "rerank_score": chunk.rerank_score,
-            "matched_terms": list(chunk.matched_terms),
-        }
-        for chunk in chunks
-    ]
-
-
-def _rewrite_trace_payload(rewrite: Optional[Any]) -> dict:
-    if rewrite is None:
-        return {}
-    return {
-        "original_query": rewrite.original_query,
-        "rewritten_query": rewrite.rewritten_query,
-        "changed": rewrite.changed,
-        "route": rewrite.route,
-        "provider_id": rewrite.provider_id,
-        "model_id": rewrite.model_id,
-        "structured_mode": rewrite.structured_mode,
-        "extracted_filters": rewrite.extracted_filters,
-        "applied_filters": rewrite.applied_filters,
-        "dropped_filters": rewrite.dropped_filters,
-        "fallback_reason": rewrite.fallback_reason,
-        "validation_error": rewrite.validation_error,
-        "latency_ms": rewrite.latency_ms,
-        "input_tokens": rewrite.input_tokens,
-        "output_tokens": rewrite.output_tokens,
-    }
-
-
-def _rewrite_json(rewrite: Optional[Any]) -> str:
-    return json.dumps(
-        _rewrite_trace_payload(rewrite),
-        ensure_ascii=False,
     )
 
 
@@ -547,6 +510,7 @@ def _citation_rows(
             {
                 "citation_id": "c{0}".format(source_index),
                 "chunk_id": chunk.chunk_id,
+                **({"evidence_chunk_ids": list(chunk.evidence_chunk_ids)} if chunk.evidence_chunk_ids else {}),
                 "document_version_id": chunk.document_version_id,
                 "excerpt": chunk.content[:500],
                 "source_locator": chunk.source_locator,
@@ -637,26 +601,6 @@ def _stream_answer_response(
                 message.refusal_reason = refusal_reason
             stream_session.commit()
 
-    def effective_stage_latency(
-        *,
-        result: Optional[SearchResult],
-        stage_latency: Optional[dict[str, float]],
-        gateway_instance: Optional[LlmGateway],
-    ) -> dict[str, float]:
-        latency = dict(result.stage_latency) if result is not None else {}
-        if stage_latency:
-            latency.update(stage_latency)
-        if gateway_instance is not None:
-            latency.update(
-                {
-                    "gateway_{0}_ms".format(audit.purpose): float(
-                        audit.latency_ms
-                    )
-                    for audit in gateway_instance.audits
-                }
-            )
-        return latency
-
     def persist_trace(
         *,
         result: Optional[SearchResult],
@@ -730,15 +674,7 @@ def _stream_answer_response(
                 ensure_ascii=False,
             )
             trace.final_context = json.dumps(
-                [
-                    {
-                        "chunk_id": chunk.chunk_id,
-                        "document_version_id": chunk.document_version_id,
-                        "rank": chunk.fused_rank,
-                        "score": chunk.rerank_score,
-                    }
-                    for chunk in (result.chunks if result is not None else ())
-                ],
+                final_context_rows(result.chunks if result is not None else ()),
                 ensure_ascii=False,
             )
             latency = effective_stage_latency(
@@ -931,6 +867,7 @@ def _stream_answer_response(
             started = time.perf_counter()
             rerank_input = list(result.rrf_candidates or result.chunks)
             with session_factory() as stream_session:
+                rerank_input = hydrate_parent_chunks(stream_session, rerank_input)
                 classification = _classification_for_chunks(
                     stream_session, rerank_input
                 )
@@ -1100,12 +1037,12 @@ def _stream_answer_response(
                     "output_tokens": answer.output_tokens,
                     "cost_micros": answer.cost_micros,
                     "latency_ms": int(
-                        sum(
+                        total_stage_latency(
                             effective_stage_latency(
                                 result=result,
                                 stage_latency=stage_latency,
                                 gateway_instance=gateway,
-                            ).values()
+                            )
                         )
                     ),
                 },
@@ -1133,7 +1070,7 @@ def _stream_answer_response(
                 code = "MODEL_UNAVAILABLE"
             elif isinstance(error, ProviderAdapterError):
                 code = error.code
-            elif isinstance(error, ApiError):
+            elif isinstance(error, (ApiError, ParseError)):
                 code = error.code
             persist_message("failed", sent_text)
             persist_trace(
@@ -1291,15 +1228,9 @@ async def ask(
             citation_ids="[]",
         )
         session.add_all([failed_user_message, failed_assistant_message])
-        latency = dict(result.stage_latency) if result is not None else {}
-        latency.update(stage_latency)
-        if gateway_instance is not None:
-            latency.update(
-                {
-                    "gateway_{0}_ms".format(audit.purpose): float(audit.latency_ms)
-                    for audit in gateway_instance.audits
-                }
-            )
+        latency = effective_stage_latency(
+            result=result, stage_latency=stage_latency, gateway_instance=gateway_instance,
+        )
         failure_product, failure_versions = _applied_filter_values(
             rewrite,
             body.filters.product,
@@ -1344,15 +1275,7 @@ async def ask(
                     ensure_ascii=False,
                 ),
                 final_context=json.dumps(
-                    [
-                        {
-                            "chunk_id": chunk.chunk_id,
-                            "document_version_id": chunk.document_version_id,
-                            "rank": chunk.fused_rank,
-                            "score": chunk.rerank_score,
-                        }
-                        for chunk in (result.chunks if result is not None else ())
-                    ],
+                    final_context_rows(result.chunks if result is not None else ()),
                     ensure_ascii=False,
                 ),
                 stage_latency_ms=json.dumps(latency),
@@ -1488,7 +1411,7 @@ async def ask(
             stage_latency["retrieval_ms"] = (time.perf_counter() - started) * 1000.0
 
         started = time.perf_counter()
-        rerank_input = list(result.rrf_candidates or result.chunks)
+        rerank_input = hydrate_parent_chunks(session, list(result.rrf_candidates or result.chunks))
         classification = _classification_for_chunks(session, rerank_input)
         reranked = await asyncio.to_thread(
             gateway.rerank,
@@ -1533,10 +1456,6 @@ async def ask(
                     refusal_reason="INSUFFICIENT_EVIDENCE",
                 )
         citations = _citation_rows(citation_chunks, context_chunks)
-        gateway_latency = {
-            "gateway_{0}_ms".format(audit.purpose): float(audit.latency_ms)
-            for audit in gateway.audits
-        }
         degraded = (
             result.degraded
             or answer.degraded
@@ -1546,10 +1465,9 @@ async def ask(
             result,
             chunks=citation_chunks,
             rerank_candidates=tuple(reranked),
-            stage_latency={
-                **result.stage_latency,
-                **gateway_latency,
-            },
+            stage_latency=effective_stage_latency(
+                result=result, stage_latency=stage_latency, gateway_instance=gateway,
+            ),
             degraded=degraded,
         )
     except PolicyDeniedError as error:
@@ -1585,6 +1503,11 @@ async def ask(
             classification=classification,
         )
         raise ApiError(error.status_code, error.code, str(error)) from error
+    except ParseError as error:
+        session.rollback()
+        persist_failure_trace(error.code, result=result, rewrite=rewrite, policy=policy,
+                              gateway_instance=gateway, classification=classification)
+        raise ApiError(409, error.code, str(error)) from error
     except ApiError as error:
         session.rollback()
         persist_failure_trace(
@@ -1668,15 +1591,7 @@ async def ask(
                 ensure_ascii=False,
             ),
             final_context=json.dumps(
-                [
-                    {
-                        "chunk_id": chunk.chunk_id,
-                        "document_version_id": chunk.document_version_id,
-                        "rank": chunk.fused_rank,
-                        "score": chunk.rerank_score,
-                    }
-                    for chunk in result.chunks
-                ],
+                final_context_rows(result.chunks),
                 ensure_ascii=False,
             ),
             stage_latency_ms=json.dumps(result.stage_latency),

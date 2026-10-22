@@ -1,8 +1,29 @@
 <script setup lang="ts">
+import {
+  ApiRequestError,
+  api,
+  loadAllPages,
+  normalizeApiError as toApiError,
+} from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Modal as AModal,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
 import { computed, onMounted, ref } from 'vue'
 import { Link2, UserPlus, Users, X } from 'lucide-vue-next'
 
-import { api, ApiRequestError, loadAllPages } from '@/api/client'
 import { useTeamStore } from '@/stores/team'
 import type { Role, TeamMemberView } from '@/types/api'
 import { formatDate } from '@/utils/format'
@@ -42,11 +63,6 @@ const activeTransferTargets = computed(() =>
       member.user_id !== removalCandidate.value?.user_id,
   ),
 )
-
-function toApiError(caught: unknown, fallback: string): ApiRequestError {
-  if (caught instanceof ApiRequestError) return caught
-  return new ApiRequestError(caught instanceof Error ? caught.message : fallback)
-}
 
 function statusLabel(status: string): string {
   if (status === 'active') return '活跃'
@@ -101,7 +117,10 @@ async function changeRole(userId: string, role: TeamRole): Promise<void> {
   }
 }
 
-async function setStatus(member: TeamMemberView, status: 'active' | 'disabled'): Promise<void> {
+async function setStatus(
+  member: TeamMemberView,
+  status: 'active' | 'disabled',
+): Promise<void> {
   if (!team.selectedTeamId) return
   pendingUserId.value = member.user_id
   error.value = null
@@ -109,7 +128,10 @@ async function setStatus(member: TeamMemberView, status: 'active' | 'disabled'):
     await api.updateMember(team.selectedTeamId, member.user_id, { status })
     await load()
   } catch (caught) {
-    error.value = toApiError(caught, status === 'active' ? '无法启用成员' : '无法停用成员')
+    error.value = toApiError(
+      caught,
+      status === 'active' ? '无法启用成员' : '无法停用成员',
+    )
   } finally {
     pendingUserId.value = ''
   }
@@ -148,7 +170,12 @@ function closeRemoval(): void {
 }
 
 async function transferPrivateDocuments(): Promise<void> {
-  if (!team.selectedTeamId || !removalCandidate.value || !transferTargetId.value) return
+  if (
+    !team.selectedTeamId ||
+    !removalCandidate.value ||
+    !transferTargetId.value
+  )
+    return
   transferring.value = true
   error.value = null
   transferNotice.value = ''
@@ -218,10 +245,10 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-    </div>
+    </a-alert>
 
     <section v-if="team.canManage" class="panel invite-create-panel">
       <div class="panel-heading">
@@ -230,169 +257,243 @@ onMounted(load)
           <p>仅已由平台管理员创建的账号可以接受邀请。</p>
         </div>
       </div>
-      <form class="inline-form" @submit.prevent="createInvitation">
-        <label class="field">
-          <span>邮箱</span>
-          <input v-model="inviteEmail" data-testid="invite-email" type="email" required placeholder="member@company.com" />
-        </label>
-        <label class="field">
-          <span>角色</span>
-          <select v-model="inviteRole" data-testid="invite-role">
-            <option value="leader">{{ roleLabels.leader }}</option>
-            <option value="member">{{ roleLabels.member }}</option>
-            <option value="viewer">{{ roleLabels.viewer }}</option>
-          </select>
-        </label>
-        <button class="primary-button" data-testid="invite-submit" type="submit" :disabled="inviting || !inviteEmail.trim()">
+      <a-form
+        class="inline-form"
+        :model="{ inviteEmail, inviteRole }"
+        layout="vertical"
+        @submit-success="createInvitation"
+      >
+        <a-form-item
+          field="inviteEmail"
+          :rules="[
+            { required: true, message: '请填写邮箱' },
+            { type: 'email', message: '请输入有效的邮箱地址' },
+          ]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>邮箱</template>
+          <a-input
+            v-model="inviteEmail"
+            data-testid="invite-email"
+            placeholder="member@company.com"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
+        <a-form-item field="inviteRole">
+          <template #label>角色</template>
+          <a-select v-model="inviteRole" data-testid="invite-role">
+            <a-option value="leader">{{ roleLabels.leader }}</a-option>
+            <a-option value="member">{{ roleLabels.member }}</a-option>
+            <a-option value="viewer">{{ roleLabels.viewer }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-button
+          data-testid="invite-submit"
+          :disabled="inviting || !inviteEmail.trim()"
+          type="primary"
+          html-type="submit"
+        >
           <UserPlus :size="17" />
           {{ inviting ? '创建中' : '创建邀请' }}
-        </button>
-      </form>
+        </a-button>
+      </a-form>
       <div v-if="invitationUrl" class="invite-link-result">
         <Link2 :size="17" />
-        <input :value="invitationUrl" readonly aria-label="邀请链接" />
+        <a-input
+          readonly
+          :model-value="invitationUrl"
+          :input-attrs="{ 'aria-label': '邀请链接' }"
+        ></a-input>
       </div>
     </section>
 
     <div class="panel">
       <div v-if="loading && !members.length" class="loading-state">
-        <span class="spinner" />
+        <a-spin></a-spin>
         <span>正在加载成员</span>
       </div>
       <div v-else class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>成员</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th v-if="team.canManage" class="actions-column">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="member in members" :key="member.user_id">
-              <td data-label="成员">
+        <a-table
+          :data="members"
+          :pagination="false"
+          row-key="user_id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="成员">
+              <template #cell="{ record: member }">
                 <strong>{{ member.display_name }}</strong>
                 <span class="cell-subtitle">{{ member.email }}</span>
-                <span class="cell-subtitle">加入于 {{ formatDate(member.joined_at) }}</span>
-              </td>
-              <td data-label="角色">
-                <select
+                <span class="cell-subtitle">
+                  加入于 {{ formatDate(member.joined_at) }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="角色">
+              <template #cell="{ record: member }">
+                <a-select
                   class="member-role-select"
-                  :value="member.role"
-                  :disabled="!team.canManage || pendingUserId === member.user_id || member.status === 'removed'"
-                  @change="changeRole(member.user_id, ($event.target as HTMLSelectElement).value as TeamRole)"
+                  :disabled="
+                    !team.canManage ||
+                    pendingUserId === member.user_id ||
+                    member.status === 'removed'
+                  "
+                  @change="changeRole(member.user_id, $event as TeamRole)"
+                  :model-value="member.role"
                 >
-                  <option value="leader">{{ roleLabels.leader }}</option>
-                  <option value="member">{{ roleLabels.member }}</option>
-                  <option value="viewer">{{ roleLabels.viewer }}</option>
-                </select>
-              </td>
-              <td data-label="状态">
-                <a-tag :color="statusColor(member.status)">{{ statusLabel(member.status) }}</a-tag>
-              </td>
-              <td v-if="team.canManage" data-label="操作" class="actions-column">
+                  <a-option value="leader">{{ roleLabels.leader }}</a-option>
+                  <a-option value="member">{{ roleLabels.member }}</a-option>
+                  <a-option value="viewer">{{ roleLabels.viewer }}</a-option>
+                </a-select>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: member }">
+                <a-tag :color="statusColor(member.status)">
+                  {{ statusLabel(member.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column v-if="team.canManage" title="操作" :width="180">
+              <template #cell="{ record: member }">
                 <div class="member-actions">
-                  <button
+                  <a-button
                     v-if="member.status === 'active'"
-                    class="ghost-button"
                     :data-testid="`member-disable-${member.user_id}`"
-                    type="button"
                     :disabled="pendingUserId === member.user_id"
                     @click="setStatus(member, 'disabled')"
+                    type="text"
+                    html-type="button"
                   >
                     停用
-                  </button>
-                  <button
+                  </a-button>
+                  <a-button
                     v-else-if="member.status === 'disabled'"
-                    class="ghost-button"
                     :data-testid="`member-enable-${member.user_id}`"
-                    type="button"
                     :disabled="pendingUserId === member.user_id"
                     @click="setStatus(member, 'active')"
+                    type="text"
+                    html-type="button"
                   >
                     启用
-                  </button>
-                  <button
+                  </a-button>
+                  <a-button
                     v-if="member.status !== 'removed'"
-                    class="ghost-button danger-text"
                     :data-testid="`member-remove-${member.user_id}`"
-                    type="button"
                     :disabled="pendingUserId === member.user_id"
                     @click="openRemoval(member)"
+                    type="text"
+                    html-type="button"
+                    status="danger"
                   >
                     移除
-                  </button>
+                  </a-button>
                 </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
-      <div v-if="!loading && !members.length" class="empty-state">
-        <Users :size="24" />
+      <a-empty v-if="!loading && !members.length" class="page-empty">
+        <template #image><Users :size="24" /></template>
         <span>暂无成员</span>
-      </div>
+      </a-empty>
       <div v-if="hasMore" class="load-more">
-        <button class="secondary-button" type="button" :disabled="loading" @click="loadMore">
+        <a-button
+          :disabled="loading"
+          @click="loadMore"
+          type="secondary"
+          html-type="button"
+        >
           {{ loading ? '加载中' : '加载更多成员' }}
-        </button>
+        </a-button>
       </div>
     </div>
 
-    <div v-if="removalCandidate" class="modal-backdrop" @click.self="closeRemoval">
-      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="remove-member-title">
-        <div class="modal-heading">
-          <div>
-            <h3 id="remove-member-title">移除 {{ removalCandidate.display_name }}</h3>
-            <span class="cell-subtitle">{{ removalCandidate.email }}</span>
-          </div>
-          <button class="icon-button" type="button" title="关闭" :disabled="removing || transferring" @click="closeRemoval">
-            <X :size="17" />
-          </button>
-        </div>
-        <div class="notice-box removal-notice">
-          <strong>移除前请转移该成员的私有文档</strong>
-          <span>未转移的私有文档可能在账号停用后失去可管理归属。</span>
-        </div>
-        <div class="form-stack">
-          <label class="field">
-            <span>转移到 active 成员</span>
-            <select v-model="transferTargetId" data-testid="transfer-target" :disabled="transferring || removing || loadingTransferTargets || !activeTransferTargets.length">
-              <option v-if="loadingTransferTargets" value="">正在加载全部成员</option>
-              <option v-else-if="!activeTransferTargets.length" value="">暂无其他可接收成员</option>
-              <option v-for="target in activeTransferTargets" :key="target.user_id" :value="target.user_id">
-                {{ target.display_name }} · {{ target.email }}
-              </option>
-            </select>
-          </label>
-          <div v-if="transferNotice" class="notice-box">
-            <strong>转移完成</strong>
-            <span>{{ transferNotice }}</span>
-          </div>
-          <div class="modal-actions member-removal-actions">
-            <button class="ghost-button" type="button" :disabled="removing || transferring" @click="closeRemoval">取消</button>
-            <button
-              class="secondary-button"
-              data-testid="transfer-submit"
-              type="button"
-              :disabled="transferring || removing || !transferTargetId"
-              @click="transferPrivateDocuments"
+    <a-modal
+      v-if="removalCandidate"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="closeRemoval"
+      :closable="!(removing || transferring)"
+      :mask-closable="!(removing || transferring)"
+      :esc-to-close="!(removing || transferring)"
+      width="520px"
+    >
+      <template #title>
+        <h3 id="remove-member-title">
+          移除 {{ removalCandidate.display_name }}
+        </h3>
+        <span class="cell-subtitle">{{ removalCandidate.email }}</span>
+      </template>
+      <a-alert type="info" class="page-alert removal-notice">
+        <strong>移除前请转移该成员的私有文档</strong>
+        <span>未转移的私有文档可能在账号停用后失去可管理归属。</span>
+      </a-alert>
+      <div class="form-stack">
+        <a-form-item>
+          <template #label>转移到 active 成员</template>
+          <a-select
+            v-model="transferTargetId"
+            data-testid="transfer-target"
+            :disabled="
+              transferring ||
+              removing ||
+              loadingTransferTargets ||
+              !activeTransferTargets.length
+            "
+          >
+            <a-option v-if="loadingTransferTargets" value="">
+              正在加载全部成员
+            </a-option>
+            <a-option v-else-if="!activeTransferTargets.length" value="">
+              暂无其他可接收成员
+            </a-option>
+            <a-option
+              v-for="target in activeTransferTargets"
+              :key="target.user_id"
+              :value="target.user_id"
             >
-              {{ transferring ? '转移中' : '转移私有文档' }}
-            </button>
-            <button
-              class="primary-button"
-              data-testid="remove-confirm"
-              type="button"
-              :disabled="removing || transferring"
-              @click="confirmRemoval"
-            >
-              {{ removing ? '移除中' : '确认移除' }}
-            </button>
-          </div>
+              {{ target.display_name }} · {{ target.email }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-alert v-if="transferNotice" type="info" class="page-alert">
+          <strong>转移完成</strong>
+          <span>{{ transferNotice }}</span>
+        </a-alert>
+        <div class="modal-actions member-removal-actions">
+          <a-button
+            :disabled="removing || transferring"
+            @click="closeRemoval"
+            type="text"
+            html-type="button"
+          >
+            取消
+          </a-button>
+          <a-button
+            data-testid="transfer-submit"
+            :disabled="transferring || removing || !transferTargetId"
+            @click="transferPrivateDocuments"
+            type="secondary"
+            html-type="button"
+          >
+            {{ transferring ? '转移中' : '转移私有文档' }}
+          </a-button>
+          <a-button
+            data-testid="remove-confirm"
+            :disabled="removing || transferring"
+            @click="confirmRemoval"
+            type="primary"
+            html-type="button"
+          >
+            {{ removing ? '移除中' : '确认移除' }}
+          </a-button>
         </div>
       </div>
-    </div>
+    </a-modal>
   </div>
 </template>

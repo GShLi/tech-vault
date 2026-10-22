@@ -1,11 +1,20 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Card as ACard,
+  Empty as AEmpty,
+  Message,
+  Tag as ATag,
+} from '@arco-design/web-vue'
+
+import { statusLabel } from '@/utils/format'
 import { onMounted, ref } from 'vue'
 import { RefreshCw, Server } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
 import ProviderCreateForm from '@/components/ProviderCreateForm.vue'
-import StatusPill from '@/components/StatusPill.vue'
+import { statusColor } from '@/utils/status'
 import type { ModelProvider } from '@/types/api'
 import { providerTypeLabel } from '@/utils/providers'
 
@@ -25,7 +34,7 @@ async function load(): Promise<void> {
     nextCursor.value = page.meta.next_cursor
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loading.value = false
   }
@@ -40,7 +49,7 @@ async function loadMore(): Promise<void> {
     nextCursor.value = page.meta.next_cursor
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     loadingMore.value = false
   }
@@ -55,7 +64,7 @@ async function toggleStatus(provider: ModelProvider): Promise<void> {
     Message.success('供应商状态已更新')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -64,38 +73,92 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="page-header"><div><h2>供应商准入</h2><p>管理所有团队可继承的平台模型供应商。</p></div><button class="secondary-button" type="button" :disabled="loading" @click="load"><RefreshCw :size="16" />刷新</button></div>
-    <div v-if="error" class="error-banner" role="alert"><strong>{{ error.message }}</strong><span v-if="error.requestId">请求 ID：{{ error.requestId }}</span></div>
+    <div class="page-header">
+      <div>
+        <h2>供应商准入</h2>
+        <p>管理所有团队可继承的平台模型供应商。</p>
+      </div>
+      <a-button
+        :disabled="loading"
+        @click="load"
+        type="secondary"
+        html-type="button"
+      >
+        <RefreshCw :size="16" />
+        刷新
+      </a-button>
+    </div>
+    <a-alert v-if="error" type="error" class="page-alert">
+      <strong>{{ error.message }}</strong>
+      <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
+    </a-alert>
     <div class="split-grid">
-      <section class="panel detail-panel">
-        <div class="section-heading"><h3>平台供应商</h3><span class="muted-text">{{ providers.length }} 个</span></div>
+      <a-card class="page-card">
+        <div class="section-heading">
+          <h3>平台供应商</h3>
+          <span class="muted-text">{{ providers.length }} 个</span>
+        </div>
         <div v-if="providers.length" class="stack-list">
-          <article v-for="provider in providers" :key="provider.id" class="list-card">
+          <article
+            v-for="provider in providers"
+            :key="provider.id"
+            class="list-card"
+          >
             <div class="list-card-heading">
               <div>
                 <strong>{{ provider.name }}</strong>
-                <span class="cell-subtitle">{{ providerTypeLabel(provider.provider_type) }}<template v-if="provider.api_key_masked"> · API Key {{ provider.api_key_masked }}</template></span>
-                <span v-if="provider.base_url" class="cell-subtitle">{{ provider.base_url }}</span>
+                <span class="cell-subtitle">
+                  {{ providerTypeLabel(provider.provider_type) }}
+                  <template v-if="provider.api_key_masked">
+                    · API Key {{ provider.api_key_masked }}
+                  </template>
+                </span>
+                <span v-if="provider.base_url" class="cell-subtitle">
+                  {{ provider.base_url }}
+                </span>
               </div>
-              <StatusPill :status="provider.status" />
+              <a-tag :color="statusColor(provider.status)">
+                {{ statusLabel(provider.status) }}
+              </a-tag>
             </div>
             <div class="tag-list">
-              <span v-for="model in provider.model_ids || []" :key="model" class="tag">{{ model }}</span>
-              <span v-if="!(provider.model_ids || []).length" class="muted-text">未配置模型</span>
+              <a-tag v-for="model in provider.model_ids || []" :key="model">
+                {{ model }}
+              </a-tag>
+              <span
+                v-if="!(provider.model_ids || []).length"
+                class="muted-text"
+              >
+                未配置模型
+              </span>
             </div>
-            <button class="secondary-button" type="button" @click="toggleStatus(provider)">{{ provider.status === 'active' ? '停用' : '启用' }}</button>
+            <a-button
+              @click="toggleStatus(provider)"
+              type="secondary"
+              html-type="button"
+            >
+              {{ provider.status === 'active' ? '停用' : '启用' }}
+            </a-button>
           </article>
         </div>
-        <div v-else class="empty-state compact"><Server :size="22" /><span>暂无平台供应商</span></div>
+        <a-empty v-else class="page-empty">
+          <template #image><Server :size="22" /></template>
+          <span>暂无平台供应商</span>
+        </a-empty>
         <div v-if="hasMore" class="load-more">
-          <button class="secondary-button" type="button" :disabled="loadingMore" @click="loadMore">
+          <a-button
+            :disabled="loadingMore"
+            @click="loadMore"
+            type="secondary"
+            html-type="button"
+          >
             {{ loadingMore ? '加载中' : '加载更多' }}
-          </button>
+          </a-button>
         </div>
-      </section>
-      <section class="panel detail-panel">
+      </a-card>
+      <a-card class="page-card">
         <ProviderCreateForm admin @created="load" />
-      </section>
+      </a-card>
     </div>
   </div>
 </template>

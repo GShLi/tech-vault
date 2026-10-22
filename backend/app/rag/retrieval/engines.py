@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import html
 import re
 import time
@@ -15,6 +17,7 @@ from backend.app.rag.domain.models import (
     SearchRequest,
     SearchResult,
 )
+from backend.app.rag.domain.ports import Retriever
 from backend.app.rag.fusion.rrf import reciprocal_rank_fusion
 
 from .filters import elasticsearch_bool_query, qdrant_filter
@@ -102,6 +105,8 @@ class _BaseEngine:
             rerank_score=rerank_score,
             matched_terms=matched_terms,
             source_locator=source.get("source_locator", {}),
+            parent_chunk_id=source.get("parent_chunk_id"),
+            index_generation=source.get("index_generation", ""),
         )
 
 
@@ -293,7 +298,7 @@ class QdrantDenseRetriever(_BaseEngine):
 class DualEngineRetriever:
     """ES BM25 plus Qdrant Dense, fused in the application layer."""
 
-    def __init__(self, lexical: Any, dense: Any) -> None:
+    def __init__(self, lexical: Retriever, dense: Retriever) -> None:
         self._lexical = lexical
         self._dense = dense
 
@@ -313,7 +318,7 @@ class DualEngineRetriever:
         dense_ids = [chunk.chunk_id for chunk in dense.chunks]
         fused = reciprocal_rank_fusion(bm25_ids, dense_ids, k=request.rrf_k)
         sources: Dict[str, RetrievedChunk] = {
-            chunk.chunk_id: chunk for chunk in lexical.chunks + dense.chunks
+            chunk.chunk_id: chunk for chunk in dense.chunks + lexical.chunks
         }
         bm25_rank = {chunk.chunk_id: chunk.bm25_rank for chunk in lexical.chunks}
         dense_rank = {chunk.chunk_id: chunk.dense_rank for chunk in dense.chunks}
@@ -325,17 +330,14 @@ class DualEngineRetriever:
         }
 
         rrf_candidates = [
-            RetrievedChunk(
-                chunk_id=candidate.chunk_id,
-                document_version_id=sources[candidate.chunk_id].document_version_id,
-                content=sources[candidate.chunk_id].content,
+            replace(
+                sources[candidate.chunk_id],
                 fused_rank=candidate.fused_rank,
                 bm25_rank=bm25_rank.get(candidate.chunk_id),
                 dense_rank=dense_rank.get(candidate.chunk_id),
                 bm25_score=bm25_scores.get(candidate.chunk_id),
                 dense_score=dense_scores.get(candidate.chunk_id),
                 rrf_score=candidate.fused_score,
-                source_locator=sources[candidate.chunk_id].source_locator,
             )
             for candidate in fused[: request.rerank_input_size]
             if candidate.chunk_id in sources

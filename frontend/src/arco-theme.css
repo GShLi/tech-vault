@@ -1,0 +1,214 @@
+/* TechVault theme: keep Arco behavior and use its public design tokens. */
+body {
+  --primary-1: 240, 253, 250;
+  --primary-2: 204, 251, 241;
+  --primary-3: 153, 246, 228;
+  --primary-4: 94, 234, 212;
+  --primary-5: 45, 160, 149;
+  --primary-6: 15, 118, 110;
+  --primary-7: 17, 94, 89;
+  --primary-8: 19, 78, 74;
+  --primary-9: 16, 65, 62;
+  --primary-10: 12, 49, 47;
+  --color-text-1: #17212b;
+  --color-text-2: #334155;
+  --color-text-3: #64748b;
+  --color-border-2: #dde3e8;
+  --color-fill-2: #f3f5f7;
+  --border-radius-small: 6px;
+  --border-radius-medium: 8px;
+}
+
+.arco-btn {
+  font-weight: 500;
+}
+
+.arco-card {
+  border-color: var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.arco-table-th {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.arco-table-td {
+  font-size: 13px;
+}
+
+.arco-modal-header {
+  border-bottom-color: var(--border);
+}
+
+/* The side navigation uses Arco's dark menu with the existing sidebar palette. */
+.sidebar .arco-menu-dark,
+.sidebar .arco-menu-dark .arco-menu-group-title {
+  background: transparent;
+}
+
+.sidebar .arco-menu-dark .arco-menu-item {
+  background: transparent;
+  color: var(--sidebar-text);
+}
+
+.sidebar .arco-menu-dark .arco-menu-item:hover,
+.sidebar .arco-menu-dark .arco-menu-item.arco-menu-selected {
+  background: var(--sidebar-soft);
+  color: #99f6e4;
+}
+
+.sidebar .arco-menu-group-title {
+  color: var(--sidebar-muted);
+  font-size: 11px;
+}
+
+.sidebar .arco-menu-inner {
+  padding: 0;
+}
+
+.sidebar .arco-select-view-single {
+  background: #17232d;
+  border-color: #3a4e5d;
+  color: var(--sidebar-text);
+}
+
+.sidebar .arco-select-view-suffix {
+  color: var(--sidebar-muted);
+}
+
+/* Standalone filters have no form context: give their labels full-width rows. */
+.chat-filter-row .arco-form-item,
+.toolbar-panel .arco-form-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.chat-filter-row .arco-form-item-label-col,
+.chat-filter-row .arco-form-item-wrapper-col,
+.toolbar-panel .arco-form-item-label-col,
+.toolbar-panel .arco-form-item-wrapper-col {
+  width: 100%;
+  max-width: 100%;
+  flex: none;
+  padding: 0;
+  text-align: left;
+}
+
+.chat-filter-row .arco-form-item-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.chat-filter-row .arco-form-item {
+  min-width: 120px;
+  flex: 1 1 120px;
+}
+
+.chat-filter-row .chat-provider-field {
+  flex-basis: 160px;
+}
+
+.chat-header .chat-heading {
+  flex: 1;
+}
+
+.chat-header {
+  flex-wrap: wrap;
+}
+
+.chat-filter-row {
+  width: 100%;
+}
+
+.chat-main .composer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.chat-main .composer-footer {
+  justify-content: flex-end;
+}
+
+.chat-main .composer-scope {
+  margin-right: auto;
+}
+
+@media (max-width: 720px) {
+  .chat-filter-row .arco-form-item,
+  .chat-filter-row .chat-provider-field {
+    flex-basis: calc(50% - 8px);
+    min-width: 0;
+  }
+}
+
+.chat-filter-row .arco-form-item-label,
+.toolbar-panel .arco-form-item-label {
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 1fr);
+    align-items: start;
+    gap: 10px;
+  }
+
+  .sidebar .brand {
+    padding: 8px 0;
+  }
+
+  .sidebar .team-control {
+    margin: 0;
+    padding: 8px;
+  }
+
+  .sidebar .nav,
+  .sidebar .sidebar-footer {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .sidebar .nav {
+    overflow-x: auto;
+  }
+
+  .sidebar .arco-menu-inner,
+  .sidebar .arco-menu-group {
+    display: flex;
+    gap: 4px;
+  }
+
+  .sidebar .arco-menu-group {
+    flex-shrink: 0;
+  }
+
+  .sidebar .arco-menu-group-title {
+    display: none;
+  }
+
+  .sidebar .arco-menu-item {
+    flex-shrink: 0;
+    width: auto;
+    margin: 0;
+    padding: 0 10px;
+  }
+
+  .sidebar .sidebar-footer {
+    padding-top: 8px;
+  }
+}
+
+.stage-parent-label {
+  display: block;
+  color: var(--color-text-3);
+  font-size: 11px;
+  font-weight: 400;
+}

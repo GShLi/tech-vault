@@ -1,9 +1,24 @@
 <script setup lang="ts">
+import { ApiRequestError, api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Empty as AEmpty,
+  Form as AForm,
+  FormItem as AFormItem,
+  Input as AInput,
+  Message,
+  Modal as AModal,
+  Option as AOption,
+  Select as ASelect,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+} from '@arco-design/web-vue'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { MessageSquare, Pencil, Search, Trash2, X } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
 import { useTeamStore } from '@/stores/team'
 import type { ChatView, KnowledgeBase } from '@/types/api'
 import { formatDate } from '@/utils/format'
@@ -34,10 +49,14 @@ const filtered = computed(() => {
         Number(timeRange.value.replace('d', '')) * 24 * 60 * 60 * 1000
   return chats.value.filter((chat) => {
     if (keyword && !chat.title.toLowerCase().includes(keyword)) return false
-    if (selectedKbId.value && !chat.knowledge_base_ids.includes(selectedKbId.value)) {
+    if (
+      selectedKbId.value &&
+      !chat.knowledge_base_ids.includes(selectedKbId.value)
+    ) {
       return false
     }
-    if (cutoff !== null && new Date(chat.updated_at).getTime() < cutoff) return false
+    if (cutoff !== null && new Date(chat.updated_at).getTime() < cutoff)
+      return false
     return true
   })
 })
@@ -72,7 +91,7 @@ async function load(reset = true): Promise<void> {
     nextCursor.value = page.meta.has_more ? page.meta.next_cursor : null
     hasMore.value = page.meta.has_more
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     if (reset) loading.value = false
     else loadingMore.value = false
@@ -116,7 +135,7 @@ async function rename(): Promise<void> {
     editing.value = null
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     saving.value = false
   }
@@ -136,7 +155,7 @@ async function confirmDelete(): Promise<void> {
     deleteCandidate.value = null
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   } finally {
     deleting.value = false
   }
@@ -165,38 +184,46 @@ watch(
         <h2>会话历史</h2>
         <p>查看、重命名、删除并继续历史问答会话。</p>
       </div>
-      <RouterLink class="primary-button" to="/chat">新建对话</RouterLink>
+      <RouterLink to="/chat" custom v-slot="{ href, navigate }">
+        <a-button type="primary" :href="href" @click="navigate">
+          新建对话
+        </a-button>
+      </RouterLink>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      <button class="inline-link" type="button" @click="load()">重试</button>
-    </div>
+      <a-button @click="load()" type="text" html-type="button">重试</a-button>
+    </a-alert>
 
     <section class="panel toolbar-panel">
-      <label class="search-field">
+      <a-form-item class="search-field">
         <Search :size="16" />
-        <input v-model="query" type="search" placeholder="搜索会话标题" />
-      </label>
-      <label class="filter-field">
-        <span>知识库</span>
-        <select v-model="selectedKbId" data-testid="chat-history-kb-filter">
-          <option value="">全部知识库</option>
-          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+        <a-input
+          v-model="query"
+          placeholder="搜索会话标题"
+          type="text"
+        ></a-input>
+      </a-form-item>
+      <a-form-item class="filter-field">
+        <template #label>知识库</template>
+        <a-select v-model="selectedKbId" data-testid="chat-history-kb-filter">
+          <a-option value="">全部知识库</a-option>
+          <a-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
             {{ kb.name }}
-          </option>
-        </select>
-      </label>
-      <label class="filter-field">
-        <span>时间范围</span>
-        <select v-model="timeRange">
-          <option value="all">全部时间</option>
-          <option value="7d">最近 7 天</option>
-          <option value="30d">最近 30 天</option>
-          <option value="90d">最近 90 天</option>
-        </select>
-      </label>
+          </a-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item class="filter-field">
+        <template #label>时间范围</template>
+        <a-select v-model="timeRange">
+          <a-option value="all">全部时间</a-option>
+          <a-option value="7d">最近 7 天</a-option>
+          <a-option value="30d">最近 30 天</a-option>
+          <a-option value="90d">最近 90 天</a-option>
+        </a-select>
+      </a-form-item>
       <span class="muted-text">{{ filtered.length }} 个会话</span>
     </section>
 
@@ -204,115 +231,170 @@ watch(
       <a-spin />
       <span>正在加载会话</span>
     </div>
-    <div v-else-if="!filtered.length" class="panel empty-state">
-      <MessageSquare :size="28" />
+    <a-empty v-else-if="!filtered.length" class="page-empty">
+      <template #image><MessageSquare :size="28" /></template>
       <h3>{{ hasMore ? '当前筛选下暂无会话' : '暂无会话' }}</h3>
       <p>
-        {{ hasMore ? '可以继续加载后续会话记录。' : '在问答工作台创建对话后会显示在这里。' }}
+        {{
+          hasMore
+            ? '可以继续加载后续会话记录。'
+            : '在问答工作台创建对话后会显示在这里。'
+        }}
       </p>
-      <button
+      <a-button
         v-if="hasMore"
-        class="secondary-button"
-        type="button"
         data-testid="chat-history-load-more"
         :disabled="loadingMore"
         @click="loadMore"
+        type="secondary"
+        html-type="button"
       >
         {{ loadingMore ? '正在加载' : '加载更多' }}
-      </button>
-    </div>
+      </a-button>
+    </a-empty>
     <div v-else class="panel">
       <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>标题</th>
-              <th>知识库范围</th>
-              <th>最近更新</th>
-              <th class="actions-column">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="chat in filtered" :key="chat.id">
-              <td data-label="标题">
-                <RouterLink :to="`/chat/${chat.id}`"><strong>{{ chat.title }}</strong></RouterLink>
-              </td>
-              <td data-label="知识库范围">{{ knowledgeBaseLabel(chat) }}</td>
-              <td data-label="最近更新">{{ formatDate(chat.updated_at) }}</td>
-              <td data-label="操作">
+        <a-table
+          :data="filtered"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="标题" :width="240">
+              <template #cell="{ record: chat }">
+                <RouterLink :to="`/chat/${chat.id}`">
+                  <strong>{{ chat.title }}</strong>
+                </RouterLink>
+              </template>
+            </a-table-column>
+            <a-table-column title="知识库范围">
+              <template #cell="{ record: chat }">
+                {{ knowledgeBaseLabel(chat) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="最近更新">
+              <template #cell="{ record: chat }">
+                {{ formatDate(chat.updated_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: chat }">
                 <div class="row-actions">
-                  <RouterLink class="ghost-button" :to="`/chat/${chat.id}`">继续</RouterLink>
-                  <button class="ghost-button" type="button" @click="openRename(chat)">
-                    <Pencil :size="14" />重命名
-                  </button>
-                  <button
-                    class="ghost-button danger-text"
-                    type="button"
+                  <RouterLink
+                    :to="`/chat/${chat.id}`"
+                    custom
+                    v-slot="{ href, navigate }"
+                  >
+                    <a-button type="text" :href="href" @click="navigate">
+                      继续
+                    </a-button>
+                  </RouterLink>
+                  <a-button
+                    @click="openRename(chat)"
+                    type="text"
+                    html-type="button"
+                  >
+                    <Pencil :size="14" />
+                    重命名
+                  </a-button>
+                  <a-button
                     :data-testid="`chat-history-delete-${chat.id}`"
                     @click="openDelete(chat)"
+                    type="text"
+                    html-type="button"
+                    status="danger"
                   >
-                    <Trash2 :size="14" />删除
-                  </button>
+                    <Trash2 :size="14" />
+                    删除
+                  </a-button>
                 </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
       <div v-if="hasMore" class="pagination-actions">
-        <button
-          class="secondary-button"
-          type="button"
+        <a-button
           data-testid="chat-history-load-more"
           :disabled="loadingMore"
           @click="loadMore"
+          type="secondary"
+          html-type="button"
         >
           {{ loadingMore ? '正在加载' : '加载更多' }}
-        </button>
+        </a-button>
       </div>
     </div>
 
-    <div v-if="editing" class="modal-backdrop" @click.self="editing = null">
-      <div class="modal-panel">
-        <div class="modal-heading">
-          <h3>重命名会话</h3>
-          <button class="icon-button" type="button" @click="editing = null">×</button>
-        </div>
-        <form class="form-stack" @submit.prevent="rename">
-          <label class="field">
-            <span>标题</span>
-            <input v-model="title" type="text" required />
-          </label>
-          <div class="modal-actions">
-            <button class="ghost-button" type="button" @click="editing = null">取消</button>
-            <button class="primary-button" type="submit" :disabled="saving">保存</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <div v-if="deleteCandidate" class="modal-backdrop" @click.self="deleteCandidate = null">
-      <div class="modal-panel">
-        <div class="modal-heading">
-          <h3>确认删除</h3>
-          <button class="icon-button" type="button" @click="deleteCandidate = null">
-            <X :size="16" />
-          </button>
-        </div>
-        <p>删除后该会话及其消息不可恢复，是否继续？</p>
+    <a-modal
+      v-if="editing"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="editing = null"
+      width="520px"
+    >
+      <template #title>重命名会话</template>
+      <a-form
+        class="form-stack"
+        :model="{ title }"
+        layout="vertical"
+        @submit-success="rename"
+      >
+        <a-form-item
+          field="title"
+          :rules="[{ required: true, message: '请填写标题' }]"
+          :validate-trigger="['change', 'blur']"
+        >
+          <template #label>标题</template>
+          <a-input
+            v-model="title"
+            type="text"
+            :input-attrs="{ required: true }"
+          ></a-input>
+        </a-form-item>
         <div class="modal-actions">
-          <button class="ghost-button" type="button" @click="deleteCandidate = null">取消</button>
-          <button
-            class="danger-button"
-            type="button"
-            data-testid="chat-history-delete-confirm"
-            :disabled="deleting"
-            @click="confirmDelete"
-          >
-            删除
-          </button>
+          <a-button @click="editing = null" type="text" html-type="button">
+            取消
+          </a-button>
+          <a-button :disabled="saving" type="primary" html-type="submit">
+            保存
+          </a-button>
         </div>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-if="deleteCandidate"
+      :visible="true"
+      :footer="false"
+      unmount-on-close
+      @cancel="deleteCandidate = null"
+      width="520px"
+    >
+      <template #title>确认删除</template>
+      <p>删除后该会话及其消息不可恢复，是否继续？</p>
+      <div class="modal-actions">
+        <a-button
+          @click="deleteCandidate = null"
+          type="text"
+          html-type="button"
+        >
+          取消
+        </a-button>
+        <a-button
+          data-testid="chat-history-delete-confirm"
+          :disabled="deleting"
+          @click="confirmDelete"
+          type="primary"
+          html-type="button"
+          status="danger"
+        >
+          删除
+        </a-button>
       </div>
-    </div>
+    </a-modal>
   </div>
 </template>

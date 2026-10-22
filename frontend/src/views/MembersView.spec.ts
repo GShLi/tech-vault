@@ -1,3 +1,4 @@
+import { control, setControlValue, selectOptions } from '@/test/arco'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -132,8 +133,14 @@ describe('MembersView', () => {
   it('creates invitations with ids and role in the request contract', async () => {
     const wrapper = await mountPage()
 
-    await wrapper.get('[data-testid="invite-email"]').setValue('new@example.com')
-    await wrapper.get('[data-testid="invite-role"]').setValue('member')
+    await setControlValue(
+      control(wrapper, '[data-testid="invite-email"]'),
+      'new@example.com',
+    )
+    await setControlValue(
+      control(wrapper, '[data-testid="invite-role"]'),
+      'member',
+    )
     await wrapper.get('[data-testid="invite-submit"]').trigger('submit')
     await flushPromises()
 
@@ -173,7 +180,7 @@ describe('MembersView', () => {
 
     expect(wrapper.text()).toContain('移除前请转移该成员的私有文档')
     expect(
-      wrapper.get('[data-testid="transfer-target"]').findAll('option'),
+      await selectOptions(control(wrapper, '[data-testid="transfer-target"]')),
     ).toHaveLength(1)
 
     await wrapper.get('[data-testid="transfer-submit"]').trigger('click')
@@ -207,7 +214,12 @@ describe('MembersView', () => {
     await flushPromises()
 
     expect(apiMocks.listMembers).toHaveBeenNthCalledWith(1, 'team-1', null, 20)
-    expect(apiMocks.listMembers).toHaveBeenNthCalledWith(2, 'team-1', 'cursor-1', 20)
+    expect(apiMocks.listMembers).toHaveBeenNthCalledWith(
+      2,
+      'team-1',
+      'cursor-1',
+      20,
+    )
     expect(wrapper.text()).toContain('Leader')
     expect(wrapper.text()).toContain('Paused')
   })
@@ -233,17 +245,29 @@ describe('MembersView', () => {
             cursor
               ? {
                   data: [allMembers[3]],
-                  meta: { next_cursor: null, has_more: false, request_id: 'req-all-2' },
+                  meta: {
+                    next_cursor: null,
+                    has_more: false,
+                    request_id: 'req-all-2',
+                  },
                 }
               : {
                   data: allMembers.slice(0, 2),
-                  meta: { next_cursor: 'all-cursor-1', has_more: true, request_id: 'req-all-1' },
+                  meta: {
+                    next_cursor: 'all-cursor-1',
+                    has_more: true,
+                    request_id: 'req-all-1',
+                  },
                 },
           )
         }
         return Promise.resolve({
           data: members,
-          meta: { next_cursor: null, has_more: false, request_id: 'req-members' },
+          meta: {
+            next_cursor: null,
+            has_more: false,
+            request_id: 'req-members',
+          },
         })
       },
     )
@@ -252,9 +276,17 @@ describe('MembersView', () => {
     await wrapper.get('[data-testid="member-remove-user-2"]').trigger('click')
     await flushPromises()
 
-    const options = wrapper.get('[data-testid="transfer-target"]').findAll('option')
-    expect(options.map((option) => option.text()).join('\n')).toContain('Later Page Member')
+    const options = await selectOptions(
+      control(wrapper, '[data-testid="transfer-target"]'),
+    )
+    expect(options.map((option) => option.label).join('\n')).toContain(
+      'Later Page Member',
+    )
     expect(apiMocks.listMembers).toHaveBeenCalledWith('team-1', null, 100)
-    expect(apiMocks.listMembers).toHaveBeenCalledWith('team-1', 'all-cursor-1', 100)
+    expect(apiMocks.listMembers).toHaveBeenCalledWith(
+      'team-1',
+      'all-cursor-1',
+      100,
+    )
   })
 })

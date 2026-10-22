@@ -193,7 +193,7 @@ def _bridge_kb_policy(engine: Engine) -> None:
         connection.execute(
             text(
                 "ALTER TABLE knowledge_bases ADD COLUMN "
-                "model_policy_mode VARCHAR(24) NOT NULL DEFAULT 'local_only'"
+                "model_policy_mode VARCHAR(24) NOT NULL DEFAULT 'external_allowed'"
             )
         )
 
@@ -245,23 +245,6 @@ def _bridge_invitation_expiry(engine: Engine) -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
-
-
-def _bridge_credential_encryption(engine: Engine) -> None:
-    inspector = inspect(engine)
-    if not inspector.has_table("credentials"):
-        return
-    columns = {column["name"] for column in inspector.get_columns("credentials")}
-    if "secret_encrypted" in columns:
-        return
-
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "ALTER TABLE credentials ADD COLUMN "
-                "secret_encrypted TEXT NOT NULL DEFAULT ''"
-            )
-        )
 
 
 def _bridge_model_provider_api_key(engine: Engine) -> None:
@@ -530,7 +513,6 @@ def create_schema(engine: Engine) -> None:
     _bridge_kb_policy(engine)
     _bridge_index_generation_validation(engine)
     _bridge_invitation_expiry(engine)
-    _bridge_credential_encryption(engine)
     _bridge_model_provider_api_key(engine)
     _bridge_evaluation_run_provider(engine)
     _bridge_audit_log_nullability(engine)

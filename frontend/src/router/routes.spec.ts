@@ -19,7 +19,6 @@ describe('P0 routes', () => {
     ['/chats', 'chat-history'],
     ['/knowledge-bases/:kbId', 'knowledge-base-detail'],
     ['/knowledge-bases/:kbId/settings', 'knowledge-base-policy'],
-    ['/knowledge-bases/:kbId/sources/github', 'github-source'],
     ['/documents/:documentId/versions/:versionId', 'document-version'],
     ['/tasks', 'tasks'],
     ['/tasks/:runId', 'task-detail'],

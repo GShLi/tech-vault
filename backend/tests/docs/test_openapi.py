@@ -77,7 +77,6 @@ def test_openapi_contains_core_p0_paths():
         "/generations/activate",
         "/generations/rollback",
         "/docs/grants",
-        "/sources/sync",
         "/admin/model-policy",
         "/admin/providers/models",
     }
@@ -109,6 +108,8 @@ def test_document_upload_contract_uses_explicit_metadata_fields_without_owner_ov
         "team_id",
         "kb_id",
         "file",
+        "batch_id",
+        "batch_file_id",
         "product",
         "version_values",
         "visibility",
@@ -119,6 +120,8 @@ def test_document_upload_contract_uses_explicit_metadata_fields_without_owner_ov
         "team_id",
         "kb_id",
         "file",
+        "batch_id",
+        "batch_file_id",
         "product",
         "version_values",
         "visibility",
@@ -544,8 +547,6 @@ def test_pagination_parameters_match_backend_handlers():
         "/evals/datasets": "EvaluationDatasetPageEnvelope",
         "/evals/datasets/cases": "EvaluationCasePageEnvelope",
         "/evals/runs": "EvaluationRunPageEnvelope",
-        "/sources": "SourceConnectionPageEnvelope",
-        "/credentials": "CredentialPageEnvelope",
         "/providers": "ProviderPageEnvelope",
         "/model-calls": "ModelCallPageEnvelope",
         "/audit": "AuditLogPageEnvelope",
@@ -594,8 +595,6 @@ def test_pagination_parameters_match_backend_handlers():
         "EvaluationDatasetPageEnvelope": "EvaluationDataset",
         "EvaluationCasePageEnvelope": "EvaluationCase",
         "EvaluationRunPageEnvelope": "EvaluationRun",
-        "SourceConnectionPageEnvelope": "SourceConnection",
-        "CredentialPageEnvelope": "Credential",
         "ProviderPageEnvelope": "Provider",
         "ModelCallPageEnvelope": "ModelCall",
         "AuditLogPageEnvelope": "AuditLog",
@@ -615,12 +614,6 @@ def test_pagination_parameters_match_backend_handlers():
             == "#/components/schemas/{0}".format(item_schema)
         ), envelope
 
-    assert spec["paths"]["/sources"]["get"]["parameters"][1] == {
-        "name": "kb_id",
-        "in": "query",
-        "required": False,
-        "schema": {"type": "string"},
-    }
     assert {
         parameter["name"]
         for parameter in spec["paths"]["/evals/runs"]["get"]["parameters"]
@@ -650,20 +643,15 @@ def test_p0_write_status_codes_match_backend_handlers():
         "/kbs/policy/update": "200",
         "/kbs/members/update": "200",
         "/docs/upload": "202",
+        "/upload-batches/create": "201",
+        "/upload-batches/seal": "202",
+        "/upload-batches/retry": "202",
         "/docs/update": "200",
         "/docs/delete": "202",
         "/docs/restore": "202",
         "/docs/rebuild": "202",
         "/docs/grants/create": "201",
         "/docs/grants/revoke": "200",
-        "/sources/github/create": "201",
-        "/sources/update": "200",
-        "/sources/delete": "200",
-        "/sources/sync": "202",
-        "/sources/pause": "200",
-        "/sources/resume": "200",
-        "/credentials/create": "201",
-        "/credentials/delete": "200",
         "/ingestions/retry": "202",
         "/ingestions/cancel": "202",
         "/chunks/update": "200",

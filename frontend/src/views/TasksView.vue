@@ -1,41 +1,40 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { Activity, RefreshCw, XCircle } from 'lucide-vue-next'
-import { Message } from '@arco-design/web-vue'
+import { useRoute } from 'vue-router'
+import { useCursorList } from '@/composables/useCursorList'
+import { api, normalizeApiError } from '@/api/client'
+import {
+  Alert as AAlert,
+  Button as AButton,
+  Empty as AEmpty,
+  Message,
+  Progress as AProgress,
+  Spin as ASpin,
+  Table as ATable,
+  TableColumn as ATableColumn,
+  Tag as ATag,
+} from '@arco-design/web-vue'
 
-import { api, ApiRequestError } from '@/api/client'
-import StatusPill from '@/components/StatusPill.vue'
+import { Activity, RefreshCw, XCircle } from 'lucide-vue-next'
+
+import { statusColor } from '@/utils/status'
 import { useTeamStore } from '@/stores/team'
 import type { IngestionRun } from '@/types/api'
-import { formatDate, shortId } from '@/utils/format'
+import { formatDate, shortId, statusLabel } from '@/utils/format'
 
 const team = useTeamStore()
-const items = ref<IngestionRun[]>([])
-const loading = ref(false)
-const error = ref<ApiRequestError | null>(null)
-const nextCursor = ref<string | null>(null)
-const hasMore = ref(false)
+const route = useRoute()
+const {
+  items: items,
+  loading,
+  error,
+  hasMore,
+  load,
+} = useCursorList<IngestionRun>(
+  () => team.selectedTeamId ? JSON.stringify([team.selectedTeamId, route?.query.kbId || null]) : null,
+  (scope, cursor) => { const [teamId, kbId] = JSON.parse(scope); return api.listIngestions(teamId, cursor, 20, kbId || undefined) },
+)
 
-const activeStatuses = new Set(['queued', 'running', 'building', 'parsing'])
-
-async function load(reset = true): Promise<void> {
-  if (!team.selectedTeamId) return
-  loading.value = true
-  error.value = null
-  try {
-    const page = await api.listIngestions(
-      team.selectedTeamId,
-      reset ? null : nextCursor.value,
-    )
-    items.value = reset ? page.data : [...items.value, ...page.data]
-    nextCursor.value = page.meta.next_cursor
-    hasMore.value = page.meta.has_more
-  } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
-  } finally {
-    loading.value = false
-  }
-}
+const activeStatuses = new Set(['queued', 'running', 'building', 'parsing', 'prepared'])
 
 async function retry(run: IngestionRun): Promise<void> {
   if (!team.selectedTeamId) return
@@ -44,7 +43,7 @@ async function retry(run: IngestionRun): Promise<void> {
     Message.success('任务已重新排队')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
 
@@ -55,12 +54,9 @@ async function cancel(run: IngestionRun): Promise<void> {
     Message.success('任务已取消')
     await load()
   } catch (caught) {
-    error.value = caught instanceof ApiRequestError ? caught : null
+    error.value = normalizeApiError(caught)
   }
 }
-
-onMounted(() => load())
-watch(() => team.selectedTeamId, () => load())
 </script>
 
 <template>
@@ -68,92 +64,136 @@ watch(() => team.selectedTeamId, () => load())
     <div class="page-header">
       <div>
         <h2>任务中心</h2>
-        <p>查看解析、切分、向量化和索引任务的处理进度。</p>
+        <p>查看解析、切分、向量化和索引任务的处理进度。<span v-if="route?.query.kbId">（已按当前知识库筛选）</span></p>
       </div>
-      <button class="secondary-button" type="button" :disabled="loading" @click="load()">
+      <a-button
+        :disabled="loading"
+        @click="load()"
+        type="secondary"
+        html-type="button"
+      >
         <RefreshCw :size="16" />
         刷新
-      </button>
+      </a-button>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <a-alert v-if="error" type="error" class="page-alert">
       <strong>{{ error.message }}</strong>
       <span v-if="error.requestId">请求 ID：{{ error.requestId }}</span>
-      <button class="inline-link" type="button" @click="load()">重试</button>
-    </div>
+      <a-button @click="load()" type="text" html-type="button">重试</a-button>
+    </a-alert>
 
     <div v-if="loading && !items.length" class="panel loading-state">
       <a-spin />
       <span>正在加载任务</span>
     </div>
-    <div v-else-if="!items.length" class="panel empty-state">
-      <Activity :size="28" />
+    <a-empty v-else-if="!items.length" class="page-empty">
+      <template #image><Activity :size="28" /></template>
       <h3>暂无任务</h3>
-      <p>上传文档或触发来源同步后，任务会出现在这里。</p>
-    </div>
+      <p>上传文档后，任务会出现在这里。</p>
+    </a-empty>
     <div v-else class="panel">
       <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>任务</th>
-              <th>阶段 / 进度</th>
-              <th>状态</th>
-              <th>失败原因</th>
-              <th>创建时间</th>
-              <th class="actions-column">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="run in items" :key="run.id">
-              <td data-label="任务">
-                <RouterLink :to="`/tasks/${run.id}`"><strong>{{ shortId(run.id) }}</strong></RouterLink>
-                <span class="cell-subtitle">版本 {{ shortId(run.document_version_id) }}</span>
-              </td>
-              <td data-label="阶段 / 进度">
-                <span>{{ run.current_stage || '等待调度' }}</span>
+        <a-table
+          :data="items"
+          :pagination="false"
+          row-key="id"
+          :bordered="false"
+          :scroll="{ x: 960 }"
+        >
+          <template #columns>
+            <a-table-column title="任务">
+              <template #cell="{ record: run }">
+                <RouterLink :to="`/tasks/${run.id}`">
+                  <strong>{{ shortId(run.id) }}</strong>
+                </RouterLink>
+                <span class="cell-subtitle">
+                  版本 {{ shortId(run.document_version_id) }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="阶段 / 进度">
+              <template #cell="{ record: run }">
+                <span>{{ run.current_stage ? statusLabel(run.current_stage) : '等待调度' }}</span>
                 <span class="cell-subtitle">{{ run.stage_progress_pct }}%</span>
-                <div class="progress-track" aria-hidden="true">
-                  <span :style="{ width: `${Math.min(100, Math.max(0, run.stage_progress_pct))}%` }" />
-                </div>
-              </td>
-              <td data-label="状态"><StatusPill :status="run.status" /></td>
-              <td data-label="失败原因">
-                <span v-if="run.error_code" class="danger-text">{{ run.error_code }}</span>
+                <a-progress
+                  :percent="
+                    Math.max(
+                      0,
+                      Math.min(
+                        1,
+                        Math.min(100, Math.max(0, run.stage_progress_pct)) /
+                          100,
+                      ),
+                    )
+                  "
+                  :show-text="false"
+                  size="small"
+                ></a-progress>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record: run }">
+                <a-tag :color="statusColor(run.status)">
+                  {{ statusLabel(run.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="失败原因">
+              <template #cell="{ record: run }">
+                <span v-if="run.error_code" class="danger-text">
+                  {{ run.error_code }}
+                </span>
                 <span v-else class="muted-text">—</span>
-              </td>
-              <td data-label="创建时间">{{ formatDate(run.created_at) }}</td>
-              <td data-label="操作">
+              </template>
+            </a-table-column>
+            <a-table-column title="创建时间" :width="180">
+              <template #cell="{ record: run }">
+                {{ formatDate(run.created_at) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180">
+              <template #cell="{ record: run }">
                 <div class="row-actions">
-                  <button
-                    v-if="run.retryable || run.status === 'failed' || run.status === 'cancelled'"
-                    class="ghost-button"
+                  <a-button
+                    v-if="
+                      run.retryable ||
+                      run.status === 'failed' ||
+                      run.status === 'cancelled'
+                    "
                     :data-testid="`task-retry-${run.id}`"
-                    type="button"
                     @click="retry(run)"
+                    type="text"
+                    html-type="button"
                   >
                     <RefreshCw :size="14" />
                     重试
-                  </button>
-                  <button
+                  </a-button>
+                  <a-button
                     v-if="activeStatuses.has(run.status)"
-                    class="ghost-button danger-text"
-                    type="button"
                     @click="cancel(run)"
+                    type="text"
+                    html-type="button"
+                    status="danger"
                   >
                     <XCircle :size="14" />
                     取消
-                  </button>
+                  </a-button>
                 </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
       </div>
       <div v-if="hasMore" class="load-more">
-        <button class="secondary-button" type="button" :disabled="loading" @click="load(false)">
+        <a-button
+          :disabled="loading"
+          @click="load(false)"
+          type="secondary"
+          html-type="button"
+        >
           加载更多
-        </button>
+        </a-button>
       </div>
     </div>
   </div>
